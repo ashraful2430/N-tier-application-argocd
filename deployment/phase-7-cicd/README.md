@@ -1,42 +1,79 @@
-# phase-7-cicd
+# Phase 7: CI/CD Automation
 
-## Overview
+## Easy Explanation
 
-Phase 7 automates tests, scans, image publishing, deployment, and rollback.
+This phase teaches how teams automate repeatable delivery: linting, tests, frontend builds, image scans, image pushes, Kubernetes rollout, and rollback workflows.
 
-## Prerequisites And Costs
+## What This Phase Teaches
 
-Complete `../phase-0-setup/prerequisites.md`. Local phases use local CPU, memory, and disk. AWS phases may create billable EC2 instances, EKS clusters, load balancers, NAT gateways, EBS volumes, S3 buckets, snapshots, CloudWatch logs, and Secrets Manager secrets. Configure AWS Budgets before cloud labs and clean up at the end.
+- How this deployment style works in real production teams.
+- Which files control infrastructure, application runtime, networking, and verification.
+- How to validate success with simple commands instead of guessing.
+- How to clean up resources so students do not create surprise bills.
 
-## Commands
+## Files In This Phase
+
+`Jenkinsfile` provides a Jenkins pipeline. `.github/workflows/` contains GitHub Actions workflows. `scripts/` contains reusable CI commands.
+
+## Prerequisites
+
+Complete `../phase-0-setup/prerequisites.md` first. Replace `[PROJECT_NAME]`, `[REGION]`, `[AWS_ACCOUNT_ID]`, `[DOMAIN_NAME]`, `[EMAIL]`, `[IMAGE_TAG]`, and `[DB_PASSWORD]` before running commands that use them.
+
+## Cost And Free-Tier Notes
+
+GitHub Actions has free minutes with limits. Jenkins cost depends on where it runs. Docker registry storage and cloud deploy targets may charge.
+
+Always use AWS Budgets for cloud labs: https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html
+
+## Step-By-Step Commands
 
 ```bash
 cd deployment/phase-7-cicd
-find . -maxdepth 3 -type f | sort
+./scripts/run-tests.sh
+./scripts/scan-image.sh [IMAGE]
+./scripts/deploy.sh [IMAGE_TAG]
 ```
 
-Replace placeholders before execution: `[PROJECT_NAME]`, `[REGION]`, `[AWS_ACCOUNT_ID]`, `[DOMAIN_NAME]`, `[EMAIL]`, `[IMAGE_TAG]`, `[DB_PASSWORD]`.
+## Expected Output
 
-## Verification
+Tests and linting pass, Docker image scan exits cleanly, and Kubernetes rollout status completes before the pipeline finishes.
+
+## Verification Checklist
+
+- Required files exist in this phase directory.
+- Secrets are not committed with real values.
+- Health checks pass before moving to the next phase.
+- Logs show normal startup with no repeated crash loops.
+- Cloud resources, if any, have project and owner tags.
+
+## Troubleshooting
+
+If CI passes locally but fails in the runner, check missing secrets, AWS OIDC configuration, working directory, and tool versions. If rollout hangs, inspect Kubernetes events.
+
+Useful first commands:
 
 ```bash
 curl -fsS http://localhost:8000/health
 curl -fsS http://localhost:8000/ready
-curl -fsS http://localhost:8080/healthz
+kubectl get pods -A
+docker ps
 ```
 
-## Troubleshooting
 
-Check logs first, then verify `DATABASE_URL`, `CORS_ORIGINS`, image tags, DNS, security groups, and database readiness. For Kubernetes, use `kubectl describe`, `kubectl logs`, and rollout status commands.
+## Useful URLs
 
-## Documentation
+- FastAPI deployment guide: https://fastapi.tiangolo.com/deployment/
+- Docker documentation: https://docs.docker.com/
+- Docker Compose documentation: https://docs.docker.com/compose/
+- Kubernetes documentation: https://kubernetes.io/docs/
+- Terraform AWS provider: https://registry.terraform.io/providers/hashicorp/aws/latest/docs
+- AWS EKS user guide: https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html
 
-- https://fastapi.tiangolo.com/deployment/
-- https://docs.docker.com/
-- https://kubernetes.io/docs/
-- https://registry.terraform.io/providers/hashicorp/aws/latest/docs
-- https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html
 
-## Cleanup And Next Step
+## Cleanup
 
-Stop containers or destroy cloud resources before moving to the next phase. Continue when all health checks pass and expected cost alerts are configured.
+Stop containers, delete Kubernetes resources, or destroy Terraform-managed cloud resources when the lab is done. Confirm the AWS Billing dashboard does not show unexpected running resources.
+
+## Next Step
+
+Move to Phase 8 to provision the Kubernetes platform on AWS.

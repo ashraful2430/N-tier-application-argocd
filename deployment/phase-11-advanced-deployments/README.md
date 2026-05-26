@@ -1,42 +1,81 @@
-# phase-11-advanced-deployments
+# Phase 11: Advanced Deployment Strategies
 
-## Overview
+## Easy Explanation
 
-Phase 11 practices blue-green, canary, and feature-flag releases.
+This phase teaches release safety. Students compare blue-green deployments, canary releases, and feature flags so production changes can be tested with controlled traffic and fast rollback.
 
-## Prerequisites And Costs
+## What This Phase Teaches
 
-Complete `../phase-0-setup/prerequisites.md`. Local phases use local CPU, memory, and disk. AWS phases may create billable EC2 instances, EKS clusters, load balancers, NAT gateways, EBS volumes, S3 buckets, snapshots, CloudWatch logs, and Secrets Manager secrets. Configure AWS Budgets before cloud labs and clean up at the end.
+- How this deployment style works in real production teams.
+- Which files control infrastructure, application runtime, networking, and verification.
+- How to validate success with simple commands instead of guessing.
+- How to clean up resources so students do not create surprise bills.
 
-## Commands
+## Files In This Phase
+
+`blue-green/` contains blue and green deployments plus traffic switch scripts, `canary/` contains Argo Rollouts resources, `feature-flags/` contains runtime flag config, and `scripts/` automates rollout starts.
+
+## Prerequisites
+
+Complete `../phase-0-setup/prerequisites.md` first. Replace `[PROJECT_NAME]`, `[REGION]`, `[AWS_ACCOUNT_ID]`, `[DOMAIN_NAME]`, `[EMAIL]`, `[IMAGE_TAG]`, and `[DB_PASSWORD]` before running commands that use them.
+
+## Cost And Free-Tier Notes
+
+Mostly cluster compute cost. Running blue and green together doubles backend capacity during the release window. Canary tools may add controller pods.
+
+Always use AWS Budgets for cloud labs: https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html
+
+## Step-By-Step Commands
 
 ```bash
 cd deployment/phase-11-advanced-deployments
-find . -maxdepth 3 -type f | sort
+./scripts/deploy-blue-green.sh
+./blue-green/switch-traffic.sh green
+./blue-green/rollback.sh
+./scripts/deploy-canary.sh
+./canary/monitor-canary.sh
 ```
 
-Replace placeholders before execution: `[PROJECT_NAME]`, `[REGION]`, `[AWS_ACCOUNT_ID]`, `[DOMAIN_NAME]`, `[EMAIL]`, `[IMAGE_TAG]`, `[DB_PASSWORD]`.
+## Expected Output
 
-## Verification
+Blue and green deployments run side by side, service selector controls active traffic, and canary rollout gradually increases traffic weight.
+
+## Verification Checklist
+
+- Required files exist in this phase directory.
+- Secrets are not committed with real values.
+- Health checks pass before moving to the next phase.
+- Logs show normal startup with no repeated crash loops.
+- Cloud resources, if any, have project and owner tags.
+
+## Troubleshooting
+
+If traffic does not switch, inspect the Service selector and pod labels. If Argo commands fail, install Argo Rollouts controller and kubectl plugin.
+
+Useful first commands:
 
 ```bash
 curl -fsS http://localhost:8000/health
 curl -fsS http://localhost:8000/ready
-curl -fsS http://localhost:8080/healthz
+kubectl get pods -A
+docker ps
 ```
 
-## Troubleshooting
 
-Check logs first, then verify `DATABASE_URL`, `CORS_ORIGINS`, image tags, DNS, security groups, and database readiness. For Kubernetes, use `kubectl describe`, `kubectl logs`, and rollout status commands.
+## Useful URLs
 
-## Documentation
+- FastAPI deployment guide: https://fastapi.tiangolo.com/deployment/
+- Docker documentation: https://docs.docker.com/
+- Docker Compose documentation: https://docs.docker.com/compose/
+- Kubernetes documentation: https://kubernetes.io/docs/
+- Terraform AWS provider: https://registry.terraform.io/providers/hashicorp/aws/latest/docs
+- AWS EKS user guide: https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html
 
-- https://fastapi.tiangolo.com/deployment/
-- https://docs.docker.com/
-- https://kubernetes.io/docs/
-- https://registry.terraform.io/providers/hashicorp/aws/latest/docs
-- https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html
 
-## Cleanup And Next Step
+## Cleanup
 
-Stop containers or destroy cloud resources before moving to the next phase. Continue when all health checks pass and expected cost alerts are configured.
+Stop containers, delete Kubernetes resources, or destroy Terraform-managed cloud resources when the lab is done. Confirm the AWS Billing dashboard does not show unexpected running resources.
+
+## Next Step
+
+Move to Phase 12 to prepare for incidents and data loss.
