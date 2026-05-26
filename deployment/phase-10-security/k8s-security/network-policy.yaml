@@ -1,0 +1,11 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: launchboard-default-deny, namespace: devops-launchboard}
+spec: {podSelector: {}, policyTypes: [Ingress, Egress]}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-launchboard-flow, namespace: devops-launchboard}
+spec:
+  podSelector: {matchLabels: {app: launchboard-backend}}
+  ingress: [{from: [{podSelector: {matchLabels: {app: launchboard-frontend}}}], ports: [{protocol: TCP, port: 8000}]}]

@@ -1,0 +1,14 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: sonarqube, namespace: security}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: sonarqube}}
+  template:
+    metadata: {labels: {app: sonarqube}}
+    spec:
+      containers:
+        - name: sonarqube
+          image: sonarqube:10-community
+          ports: [{containerPort: 9000}]
+          resources: {requests: {cpu: 500m, memory: 2Gi}, limits: {cpu: 2, memory: 4Gi}}

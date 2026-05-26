@@ -1,0 +1,14 @@
+name: deploy-k8s
+on: [workflow_dispatch]
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    permissions: {contents: read, id-token: write}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: 'npm', cache-dependency-path: frontend/package-lock.json}
+      - run: chmod +x deployment/phase-7-cicd/scripts/*.sh deployment/phase-3-docker/*.sh
+      - run: deployment/phase-7-cicd/scripts/run-tests.sh

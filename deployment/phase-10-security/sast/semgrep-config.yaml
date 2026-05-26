@@ -1,0 +1,6 @@
+rules:
+  - id: launchboard-no-hardcoded-secret
+    pattern-regex: '(?i)(password|secret|token)\s*=\s*["''][^"'']{8,}["'']'
+    message: Hardcoded secret-like value detected.
+    severity: ERROR
+    languages: [python, javascript, typescript]

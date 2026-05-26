@@ -1,0 +1,5 @@
+# ConfigMap contains non-secret runtime values.
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: launchboard-config, namespace: devops-launchboard}
+data: {APP_ENV: production, CORS_ORIGINS: http://localhost, SEED_DEMO_DATA: "false", POSTGRES_DB: launchboard, POSTGRES_USER: launchboard}

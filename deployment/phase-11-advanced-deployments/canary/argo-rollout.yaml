@@ -1,0 +1,15 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata: {name: launchboard-backend, namespace: devops-launchboard}
+spec:
+  replicas: 4
+  strategy: {canary: {steps: [{setWeight: 20}, {pause: {duration: 2m}}, {setWeight: 50}, {pause: {duration: 5m}}, {setWeight: 100}]}}
+  selector: {matchLabels: {app: launchboard-backend}}
+  template:
+    metadata: {labels: {app: launchboard-backend}}
+    spec:
+      containers:
+        - name: backend
+          image: "[AWS_ACCOUNT_ID].dkr.ecr.[REGION].amazonaws.com/launchboard-backend:[IMAGE_TAG]"
+          ports: [{containerPort: 8000}]
+          resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: 500m, memory: 512Mi}}

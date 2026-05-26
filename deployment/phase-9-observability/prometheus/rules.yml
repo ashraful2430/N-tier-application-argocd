@@ -1,0 +1,8 @@
+groups:
+  - name: launchboard.rules
+    rules:
+      - alert: LaunchboardBackendDown
+        expr: up{job="launchboard-backend"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "LaunchBoard backend is unavailable"}

@@ -1,0 +1,7 @@
+# Ingress routes browser traffic to the frontend.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: launchboard-ingress, namespace: devops-launchboard, annotations: {nginx.ingress.kubernetes.io/proxy-read-timeout: "60"}}
+spec:
+  ingressClassName: nginx
+  rules: [{host: launchboard.local, http: {paths: [{path: /, pathType: Prefix, backend: {service: {name: launchboard-frontend, port: {number: 80}}}}]}}]

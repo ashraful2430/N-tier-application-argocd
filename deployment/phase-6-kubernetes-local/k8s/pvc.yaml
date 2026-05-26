@@ -1,0 +1,5 @@
+# PVC preserves PostgreSQL data across pod restarts.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: launchboard-postgres-pvc, namespace: devops-launchboard}
+spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 5Gi}}}

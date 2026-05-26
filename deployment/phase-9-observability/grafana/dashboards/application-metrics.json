@@ -1,0 +1,12 @@
+{
+  "title": "application-metrics",
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "title": "Service Health",
+      "type": "stat",
+      "targets": []
+    }
+  ],
+  "refresh": "30s"
+}

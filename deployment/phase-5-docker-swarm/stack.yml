@@ -1,0 +1,33 @@
+version: "3.9"
+services:
+  # PostgreSQL persists application data using a Swarm secret for the password.
+  launchboard-db:
+    image: postgres:16-alpine
+    environment: {POSTGRES_DB: launchboard, POSTGRES_USER: launchboard, POSTGRES_PASSWORD_FILE: /run/secrets/db_password}
+    volumes: [launchboard_postgres:/var/lib/postgresql/data]
+    networks: [launchboard]
+    secrets: [db_password]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U launchboard -d launchboard"], interval: 10s, timeout: 5s, retries: 5}
+    deploy: {replicas: 1, restart_policy: {condition: on-failure}}
+  # Backend runs replicated FastAPI pods behind Swarm routing mesh.
+  launchboard-backend:
+    image: "[AWS_ACCOUNT_ID].dkr.ecr.[REGION].amazonaws.com/launchboard-backend:[IMAGE_TAG]"
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://launchboard:[DB_PASSWORD]@launchboard-db:5432/launchboard"
+      APP_ENV: production
+      CORS_ORIGINS: "https://[DOMAIN_NAME]"
+      SEED_DEMO_DATA: "false"
+    networks: [launchboard]
+    ports: ["8000:8000"]
+    healthcheck: {test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"], interval: 15s, timeout: 5s, retries: 5}
+    deploy: {replicas: 2, update_config: {parallelism: 1, order: start-first, failure_action: rollback}, rollback_config: {parallelism: 1, order: stop-first}}
+  # Frontend serves static UI and proxies API traffic.
+  launchboard-frontend:
+    image: "[AWS_ACCOUNT_ID].dkr.ecr.[REGION].amazonaws.com/launchboard-frontend:[IMAGE_TAG]"
+    networks: [launchboard]
+    ports: ["80:8080"]
+    healthcheck: {test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 5s, retries: 5}
+    deploy: {replicas: 2, update_config: {parallelism: 1, order: start-first, failure_action: rollback}}
+networks: {launchboard: {driver: overlay, attachable: true}}
+volumes: {launchboard_postgres: {}}
+secrets: {db_password: {external: true}}

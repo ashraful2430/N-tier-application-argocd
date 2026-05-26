@@ -1,0 +1,7 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: launchboard-deployer, namespace: devops-launchboard}
+rules:
+  - apiGroups: ["", "apps", "batch", "networking.k8s.io", "autoscaling"]
+    resources: ["deployments", "services", "configmaps", "secrets", "jobs", "ingresses", "horizontalpodautoscalers", "pods"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

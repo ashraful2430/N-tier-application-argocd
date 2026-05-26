@@ -1,0 +1,10 @@
+[Unit]
+Description=DevOps LaunchBoard frontend static asset check
+After=nginx.service
+Wants=nginx.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/test -f /var/www/devops-launchboard/index.html
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target

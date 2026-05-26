@@ -1,0 +1,4 @@
+apiVersion: litmuschaos.io/v1alpha1
+kind: ChaosEngine
+metadata: {name: launchboard-chaos, namespace: devops-launchboard}
+spec: {appinfo: {appns: devops-launchboard, applabel: app=launchboard-backend, appkind: deployment}, chaosServiceAccount: litmus-admin, experiments: [{name: pod-delete}]}

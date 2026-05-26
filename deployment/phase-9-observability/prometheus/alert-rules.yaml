@@ -1,0 +1,12 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata: {name: launchboard-alerts, namespace: devops-launchboard}
+spec:
+  groups:
+    - name: launchboard
+      rules:
+        - alert: BackendPodsUnavailable
+          expr: kube_deployment_status_replicas_available{deployment="launchboard-backend"} < 1
+          for: 2m
+          labels: {severity: critical}
+          annotations: {summary: "No LaunchBoard backend pods are available"}

@@ -1,0 +1,2 @@
+variable "db_password" { description = "RDS master password." type = string sensitive = true }
+resource "aws_db_instance" "launchboard" { identifier = "devops-launchboard-db" allocated_storage = 20 engine = "postgres" engine_version = "16" instance_class = "db.t4g.micro" db_name = "launchboard" username = "launchboard" password = var.db_password backup_retention_period = 7 backup_window = "03:00-04:00" deletion_protection = true skip_final_snapshot = false tags = var.tags }

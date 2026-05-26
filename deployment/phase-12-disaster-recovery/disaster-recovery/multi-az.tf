@@ -1,0 +1,2 @@
+resource "aws_db_subnet_group" "launchboard" { name = "devops-launchboard-db" subnet_ids = var.private_subnet_ids tags = var.tags }
+resource "aws_db_instance" "launchboard_multi_az" { identifier = "devops-launchboard-db-multi-az" engine = "postgres" instance_class = "db.t4g.small" allocated_storage = 50 multi_az = true db_subnet_group_name = aws_db_subnet_group.launchboard.name username = "launchboard" password = var.db_password backup_retention_period = 14 deletion_protection = true tags = var.tags }

@@ -1,0 +1,4 @@
+# Namespace isolates LaunchBoard resources.
+apiVersion: v1
+kind: Namespace
+metadata: {name: devops-launchboard, labels: {app.kubernetes.io/part-of: devops-launchboard}}
