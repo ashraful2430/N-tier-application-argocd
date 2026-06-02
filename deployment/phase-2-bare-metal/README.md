@@ -520,13 +520,13 @@ YOUR_EC2_PUBLIC_IP
 Set permissions:
 
 ```bash
-sudo chown launchboard:launchboard /etc/devops-launchboard/backend.env
+sudo chown ubuntu:ubuntu /etc/devops-launchboard/backend.env
 sudo chmod 600 /etc/devops-launchboard/backend.env
 ```
 
 Why this file exists:
 
-systemd loads this file before starting the backend. It keeps production runtime settings outside the Git repository.
+systemd loads this file before starting the backend. The `ubuntu` SSH user also reads it during manual migration and manual backend testing steps. It keeps production runtime settings outside the Git repository.
 
 Line explanation:
 
@@ -541,7 +541,8 @@ Line explanation:
 Run:
 
 ```bash
-sudo -u launchboard vim /opt/devops-launchboard/app-source/frontend/.env.production
+cd /opt/devops-launchboard/app-source/frontend
+vim .env.production
 ```
 
 Paste:
@@ -573,15 +574,20 @@ Reference:
 Run:
 
 ```bash
-sudo -u launchboard bash -lc 'cd /opt/devops-launchboard/app-source/backend && python3 -m venv .venv'
-sudo -u launchboard bash -lc 'cd /opt/devops-launchboard/app-source/backend && . .venv/bin/activate && python -m pip install --upgrade pip'
-sudo -u launchboard bash -lc 'cd /opt/devops-launchboard/app-source/backend && . .venv/bin/activate && pip install -e ".[dev]"'
+cd /opt/devops-launchboard/app-source/backend
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
 ```
 
 Verify:
 
 ```bash
-sudo -u launchboard bash -lc 'cd /opt/devops-launchboard/app-source/backend && . .venv/bin/activate && python --version && pip list'
+cd /opt/devops-launchboard/app-source/backend
+source .venv/bin/activate
+python --version
+pip list
 ```
 
 Why this step exists:
@@ -593,7 +599,12 @@ The backend needs a Python virtual environment and dependencies before it can st
 Run:
 
 ```bash
-sudo -u launchboard bash -lc 'cd /opt/devops-launchboard/app-source/backend && set -a && . /etc/devops-launchboard/backend.env && set +a && . .venv/bin/activate && alembic upgrade head'
+cd /opt/devops-launchboard/app-source/backend
+source .venv/bin/activate
+set -a
+source /etc/devops-launchboard/backend.env
+set +a
+alembic upgrade head
 ```
 
 Verify:
@@ -615,7 +626,12 @@ Reference:
 Run:
 
 ```bash
-sudo -u launchboard bash -lc 'cd /opt/devops-launchboard/app-source/backend && set -a && . /etc/devops-launchboard/backend.env && set +a && . .venv/bin/activate && uvicorn app.main:app --host 127.0.0.1 --port 8000'
+cd /opt/devops-launchboard/app-source/backend
+source .venv/bin/activate
+set -a
+source /etc/devops-launchboard/backend.env
+set +a
+uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 Open a second SSH terminal and test:
@@ -646,8 +662,9 @@ Reference:
 Run:
 
 ```bash
-sudo -u launchboard bash -lc 'cd /opt/devops-launchboard/app-source/frontend && npm install'
-sudo -u launchboard bash -lc 'cd /opt/devops-launchboard/app-source/frontend && npm run build'
+cd /opt/devops-launchboard/app-source/frontend
+npm install
+npm run build
 ```
 
 Verify:
@@ -944,7 +961,8 @@ CORS_ORIGINS=http://launchboard.example.com
 Update frontend env:
 
 ```bash
-sudo -u launchboard vim /opt/devops-launchboard/app-source/frontend/.env.production
+cd /opt/devops-launchboard/app-source/frontend
+vim .env.production
 ```
 
 Set:
@@ -956,7 +974,8 @@ VITE_API_URL=http://launchboard.example.com
 Rebuild and publish:
 
 ```bash
-sudo -u launchboard bash -lc 'cd /opt/devops-launchboard/app-source/frontend && npm run build'
+cd /opt/devops-launchboard/app-source/frontend
+npm run build
 sudo rsync -av --delete /opt/devops-launchboard/app-source/frontend/dist/ /var/www/devops-launchboard/
 sudo chown -R www-data:www-data /var/www/devops-launchboard
 sudo systemctl restart launchboard-backend
@@ -999,7 +1018,8 @@ CORS_ORIGINS=https://launchboard.example.com
 Update frontend:
 
 ```bash
-sudo -u launchboard vim /opt/devops-launchboard/app-source/frontend/.env.production
+cd /opt/devops-launchboard/app-source/frontend
+vim .env.production
 ```
 
 Set:
@@ -1011,7 +1031,8 @@ VITE_API_URL=https://launchboard.example.com
 Rebuild and restart:
 
 ```bash
-sudo -u launchboard bash -lc 'cd /opt/devops-launchboard/app-source/frontend && npm run build'
+cd /opt/devops-launchboard/app-source/frontend
+npm run build
 sudo rsync -av --delete /opt/devops-launchboard/app-source/frontend/dist/ /var/www/devops-launchboard/
 sudo chown -R www-data:www-data /var/www/devops-launchboard
 sudo systemctl restart launchboard-backend
@@ -1083,11 +1104,19 @@ Restore a previous Git version:
 cd /opt/devops-launchboard/app-source
 git log --oneline -5
 git checkout PREVIOUS_COMMIT
-sudo chown -R launchboard:launchboard /opt/devops-launchboard
+sudo chown -R ubuntu:ubuntu /opt/devops-launchboard/app-source
 
-sudo -u launchboard bash -lc 'cd /opt/devops-launchboard/app-source/backend && . .venv/bin/activate && pip install -e ".[dev]"'
-sudo -u launchboard bash -lc 'cd /opt/devops-launchboard/app-source/backend && set -a && . /etc/devops-launchboard/backend.env && set +a && . .venv/bin/activate && alembic upgrade head'
-sudo -u launchboard bash -lc 'cd /opt/devops-launchboard/app-source/frontend && npm install && npm run build'
+cd /opt/devops-launchboard/app-source/backend
+source .venv/bin/activate
+pip install -e ".[dev]"
+set -a
+source /etc/devops-launchboard/backend.env
+set +a
+alembic upgrade head
+
+cd /opt/devops-launchboard/app-source/frontend
+npm install
+npm run build
 
 sudo rsync -av --delete /opt/devops-launchboard/app-source/frontend/dist/ /var/www/devops-launchboard/
 sudo chown -R www-data:www-data /var/www/devops-launchboard

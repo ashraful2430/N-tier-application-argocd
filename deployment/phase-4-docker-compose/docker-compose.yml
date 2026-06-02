@@ -1,45 +1,86 @@
 services:
-  # PostgreSQL stores application data and exposes readiness through pg_isready.
   launchboard-db:
     image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes: [./volumes/postgres:/var/lib/postgresql/data]
-    networks: [launchboard]
-    healthcheck: {test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"], interval: 10s, timeout: 5s, retries: 5}
-  # Migration job applies Alembic revisions before the API accepts traffic.
+    container_name: launchboard-db
+    env_file:
+      - .env
+    volumes:
+      - launchboard-postgres-data:/var/lib/postgresql/data
+    networks:
+      - launchboard
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
   launchboard-migrate:
-    build: {context: ../.., dockerfile: deployment/phase-3-docker/Dockerfile.backend}
+    build:
+      context: ../..
+      dockerfile: deployment/phase-4-docker-compose/Dockerfile.backend
     image: ${BACKEND_IMAGE}
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      APP_ENV: ${APP_ENV}
-      SEED_DEMO_DATA: "false"
+    container_name: launchboard-migrate
+    env_file:
+      - .env
     command: ["alembic", "upgrade", "head"]
-    depends_on: {launchboard-db: {condition: service_healthy}}
-    networks: [launchboard]
+    depends_on:
+      launchboard-db:
+        condition: service_healthy
+    networks:
+      - launchboard
     restart: "no"
-  # FastAPI backend exposes /health, /ready, and /api routes.
+
   launchboard-backend:
-    build: {context: ../.., dockerfile: deployment/phase-3-docker/Dockerfile.backend}
+    build:
+      context: ../..
+      dockerfile: deployment/phase-4-docker-compose/Dockerfile.backend
     image: ${BACKEND_IMAGE}
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      APP_ENV: ${APP_ENV}
-      CORS_ORIGINS: ${CORS_ORIGINS}
-      SEED_DEMO_DATA: ${SEED_DEMO_DATA}
-    ports: ["8000:8000"]
-    depends_on: {launchboard-db: {condition: service_healthy}, launchboard-migrate: {condition: service_completed_successfully}}
-    networks: [launchboard]
-    healthcheck: {test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"], interval: 15s, timeout: 5s, retries: 5}
-  # Frontend serves static assets and proxies API calls inside the Docker network.
+    container_name: launchboard-backend
+    env_file:
+      - .env
+    depends_on:
+      launchboard-db:
+        condition: service_healthy
+      launchboard-migrate:
+        condition: service_completed_successfully
+    networks:
+      - launchboard
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
   launchboard-frontend:
-    build: {context: ../.., dockerfile: deployment/phase-3-docker/Dockerfile.frontend, args: {VITE_API_URL: /api}}
+    build:
+      context: ../..
+      dockerfile: deployment/phase-4-docker-compose/Dockerfile.frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL}
     image: ${FRONTEND_IMAGE}
-    ports: ["8080:8080"]
-    depends_on: {launchboard-backend: {condition: service_healthy}}
-    networks: [launchboard]
-    healthcheck: {test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 5s, retries: 5}
-networks: {launchboard: {driver: bridge}}
+    container_name: launchboard-frontend
+    ports:
+      - "80:8080"
+    depends_on:
+      launchboard-backend:
+        condition: service_healthy
+    networks:
+      - launchboard
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+networks:
+  launchboard:
+    driver: bridge
+
+volumes:
+  launchboard-postgres-data:

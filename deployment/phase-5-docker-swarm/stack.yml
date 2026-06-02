@@ -1,33 +1,153 @@
-version: "3.9"
 services:
-  # PostgreSQL persists application data using a Swarm secret for the password.
   launchboard-db:
     image: postgres:16-alpine
-    environment: {POSTGRES_DB: launchboard, POSTGRES_USER: launchboard, POSTGRES_PASSWORD_FILE: /run/secrets/db_password}
-    volumes: [launchboard_postgres:/var/lib/postgresql/data]
-    networks: [launchboard]
-    secrets: [db_password]
-    healthcheck: {test: ["CMD-SHELL", "pg_isready -U launchboard -d launchboard"], interval: 10s, timeout: 5s, retries: 5}
-    deploy: {replicas: 1, restart_policy: {condition: on-failure}}
-  # Backend runs replicated FastAPI pods behind Swarm routing mesh.
-  launchboard-backend:
-    image: "[AWS_ACCOUNT_ID].dkr.ecr.[REGION].amazonaws.com/launchboard-backend:[IMAGE_TAG]"
     environment:
-      DATABASE_URL: "postgresql+asyncpg://launchboard:[DB_PASSWORD]@launchboard-db:5432/launchboard"
+      POSTGRES_DB: launchboard
+      POSTGRES_USER: launchboard_user
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - launchboard-postgres-data:/var/lib/postgresql/data
+    networks:
+      - launchboard
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U launchboard_user -d launchboard"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+
+  launchboard-migrate:
+    image: launchboard-backend:phase-5
+    environment:
+      APP_NAME: DevOps LaunchBoard API
       APP_ENV: production
-      CORS_ORIGINS: "https://[DOMAIN_NAME]"
+      POSTGRES_HOST: launchboard-db
+      POSTGRES_DB: launchboard
+      POSTGRES_USER: launchboard_user
+      CORS_ORIGINS: http://YOUR_EC2_PUBLIC_IP
       SEED_DEMO_DATA: "false"
-    networks: [launchboard]
-    ports: ["8000:8000"]
-    healthcheck: {test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"], interval: 15s, timeout: 5s, retries: 5}
-    deploy: {replicas: 2, update_config: {parallelism: 1, order: start-first, failure_action: rollback}, rollback_config: {parallelism: 1, order: stop-first}}
-  # Frontend serves static UI and proxies API traffic.
+    secrets:
+      - db_password
+    networks:
+      - launchboard
+    command:
+      - /bin/sh
+      - -c
+      - |
+        until python -c "import socket; s=socket.create_connection(('launchboard-db', 5432), timeout=3); s.close()"; do
+          echo "waiting for postgres"
+          sleep 2
+        done
+        export DATABASE_URL="postgresql+asyncpg://$${POSTGRES_USER}:$$(cat /run/secrets/db_password)@$${POSTGRES_HOST}:5432/$${POSTGRES_DB}"
+        alembic upgrade head
+    deploy:
+      mode: replicated-job
+      replicas: 1
+      restart_policy:
+        condition: none
+
+  launchboard-backend:
+    image: launchboard-backend:phase-5
+    environment:
+      APP_NAME: DevOps LaunchBoard API
+      APP_ENV: production
+      POSTGRES_HOST: launchboard-db
+      POSTGRES_DB: launchboard
+      POSTGRES_USER: launchboard_user
+      CORS_ORIGINS: http://YOUR_EC2_PUBLIC_IP
+      SEED_DEMO_DATA: "true"
+    secrets:
+      - db_password
+    networks:
+      - launchboard
+    command:
+      - /bin/sh
+      - -c
+      - |
+        until python -c "import socket; s=socket.create_connection(('launchboard-db', 5432), timeout=3); s.close()"; do
+          echo "waiting for postgres"
+          sleep 2
+        done
+        export DATABASE_URL="postgresql+asyncpg://$${POSTGRES_USER}:$$(cat /run/secrets/db_password)@$${POSTGRES_HOST}:5432/$${POSTGRES_DB}"
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
   launchboard-frontend:
-    image: "[AWS_ACCOUNT_ID].dkr.ecr.[REGION].amazonaws.com/launchboard-frontend:[IMAGE_TAG]"
-    networks: [launchboard]
-    ports: ["80:8080"]
-    healthcheck: {test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"], interval: 15s, timeout: 5s, retries: 5}
-    deploy: {replicas: 2, update_config: {parallelism: 1, order: start-first, failure_action: rollback}}
-networks: {launchboard: {driver: overlay, attachable: true}}
-volumes: {launchboard_postgres: {}}
-secrets: {db_password: {external: true}}
+    image: launchboard-frontend:phase-5
+    ports:
+      - target: 8080
+        published: 80
+        protocol: tcp
+        mode: ingress
+    networks:
+      - launchboard
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+networks:
+  launchboard:
+    driver: overlay
+    attachable: true
+
+volumes:
+  launchboard-postgres-data:
+
+secrets:
+  db_password:
+    external: true

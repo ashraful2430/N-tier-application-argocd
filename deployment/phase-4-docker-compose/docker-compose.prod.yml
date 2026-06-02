@@ -1,10 +1,12 @@
 services:
   launchboard-db:
-    restart: unless-stopped
-    deploy: {resources: {limits: {cpus: "1.0", memory: 1G}, reservations: {memory: 512M}}}
+    cpus: "1.0"
+    mem_limit: 1g
+
   launchboard-backend:
-    restart: unless-stopped
-    deploy: {resources: {limits: {cpus: "1.0", memory: 512M}, reservations: {memory: 256M}}}
+    cpus: "1.0"
+    mem_limit: 512m
+
   launchboard-frontend:
-    restart: unless-stopped
-    deploy: {resources: {limits: {cpus: "0.5", memory: 128M}, reservations: {memory: 64M}}}
+    cpus: "0.5"
+    mem_limit: 256m
