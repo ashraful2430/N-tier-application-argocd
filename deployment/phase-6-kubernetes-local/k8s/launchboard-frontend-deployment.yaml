@@ -1,20 +1,52 @@
-# Frontend Deployment serves the Vite build through Nginx.
 apiVersion: apps/v1
 kind: Deployment
-metadata: {name: launchboard-frontend, namespace: devops-launchboard}
+metadata:
+  name: launchboard-frontend
+  namespace: devops-launchboard
+  labels:
+    app: launchboard-frontend
 spec:
   replicas: 2
-  strategy: {type: RollingUpdate, rollingUpdate: {maxSurge: 1, maxUnavailable: 0}}
-  selector: {matchLabels: {app: launchboard-frontend}}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: launchboard-frontend
   template:
-    metadata: {labels: {app: launchboard-frontend}}
+    metadata:
+      labels:
+        app: launchboard-frontend
     spec:
-      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: frontend
-          image: launchboard-frontend:local
+          image: launchboard-frontend:phase-6
           imagePullPolicy: IfNotPresent
-          ports: [{containerPort: 8080}]
-          readinessProbe: {httpGet: {path: /healthz, port: 8080}, initialDelaySeconds: 5, periodSeconds: 10}
-          livenessProbe: {httpGet: {path: /healthz, port: 8080}, initialDelaySeconds: 15, periodSeconds: 15}
-          resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {cpu: 250m, memory: 128Mi}}
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi

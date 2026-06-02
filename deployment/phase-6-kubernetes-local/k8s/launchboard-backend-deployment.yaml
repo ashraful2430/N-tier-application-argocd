@@ -1,63 +1,66 @@
-# PostgreSQL Deployment backs the local lab database.
 apiVersion: apps/v1
 kind: Deployment
-metadata: {name: launchboard-db, namespace: devops-launchboard}
-spec:
-  replicas: 1
-  strategy: {type: Recreate}
-  selector: {matchLabels: {app: launchboard-db}}
-  template:
-    metadata: {labels: {app: launchboard-db}}
-    spec:
-      containers:
-        - name: postgres
-          image: postgres:16-alpine
-          imagePullPolicy: IfNotPresent
-          ports: [{containerPort: 5432}]
-          env:
-            - {name: POSTGRES_DB, valueFrom: {configMapKeyRef: {name: launchboard-config, key: POSTGRES_DB}}}
-            - {name: POSTGRES_USER, valueFrom: {configMapKeyRef: {name: launchboard-config, key: POSTGRES_USER}}}
-            - {name: POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: launchboard-secret, key: POSTGRES_PASSWORD}}}
-          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
-          readinessProbe: {exec: {command: ["pg_isready", "-U", "launchboard", "-d", "launchboard"]}, initialDelaySeconds: 10, periodSeconds: 10}
-          livenessProbe: {exec: {command: ["pg_isready", "-U", "launchboard", "-d", "launchboard"]}, initialDelaySeconds: 20, periodSeconds: 15}
-          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: 1000m, memory: 1Gi}}
-      volumes: [{name: data, persistentVolumeClaim: {claimName: launchboard-postgres-pvc}}]
----
-# Migration Job applies Alembic schema changes.
-apiVersion: batch/v1
-kind: Job
-metadata: {name: launchboard-migrate, namespace: devops-launchboard}
-spec:
-  template:
-    spec:
-      restartPolicy: OnFailure
-      containers:
-        - name: migrate
-          image: launchboard-backend:local
-          imagePullPolicy: IfNotPresent
-          command: ["alembic", "upgrade", "head"]
-          envFrom: [{configMapRef: {name: launchboard-config}}, {secretRef: {name: launchboard-secret}}]
-          resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {cpu: 250m, memory: 256Mi}}
----
-# Backend Deployment runs FastAPI with rolling updates.
-apiVersion: apps/v1
-kind: Deployment
-metadata: {name: launchboard-backend, namespace: devops-launchboard}
+metadata:
+  name: launchboard-backend
+  namespace: devops-launchboard
+  labels:
+    app: launchboard-backend
 spec:
   replicas: 2
-  strategy: {type: RollingUpdate, rollingUpdate: {maxSurge: 1, maxUnavailable: 0}}
-  selector: {matchLabels: {app: launchboard-backend}}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: launchboard-backend
   template:
-    metadata: {labels: {app: launchboard-backend}}
+    metadata:
+      labels:
+        app: launchboard-backend
     spec:
-      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: backend
-          image: launchboard-backend:local
+          image: launchboard-backend:phase-6
           imagePullPolicy: IfNotPresent
-          ports: [{containerPort: 8000}]
-          envFrom: [{configMapRef: {name: launchboard-config}}, {secretRef: {name: launchboard-secret}}]
-          readinessProbe: {httpGet: {path: /ready, port: 8000}, initialDelaySeconds: 10, periodSeconds: 10}
-          livenessProbe: {httpGet: {path: /health, port: 8000}, initialDelaySeconds: 20, periodSeconds: 15}
-          resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: 500m, memory: 512Mi}}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until python -c "import socket; s=socket.create_connection(('launchboard-db', 5432), timeout=3); s.close()"; do
+                echo "waiting for postgres"
+                sleep 2
+              done
+              exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: launchboard-config
+            - secretRef:
+                name: launchboard-secret
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

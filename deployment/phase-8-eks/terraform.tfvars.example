@@ -1,8 +1,0 @@
-aws_region = "[REGION]"
-project_name = "devops-launchboard"
-vpc_id = "vpc-xxxxxxxxxxxxxxxxx"
-private_subnet_ids = ["subnet-private-a", "subnet-private-b"]
-public_subnet_ids = ["subnet-public-a", "subnet-public-b"]
-node_instance_types = ["t3.medium"]
-desired_size = 2
-tags = { Project = "devops-launchboard", Environment = "training", Owner = "Ashraful Islam Ashik" }

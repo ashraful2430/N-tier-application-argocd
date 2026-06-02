@@ -1,1 +1,0 @@
-resource "aws_iam_policy" "alb_controller_readonly" { name = "${var.project_name}-alb-controller-readonly" description = "Read-only discovery permissions for ALB controller bootstrap." policy = jsonencode({Version="2012-10-17",Statement=[{Effect="Allow",Action=["elasticloadbalancing:Describe*","ec2:Describe*","acm:ListCertificates"],Resource="*"}]}) }

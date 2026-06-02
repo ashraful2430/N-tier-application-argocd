@@ -1,14 +1,101 @@
-name: deploy-k8s
-on: [workflow_dispatch]
+name: phase-7-deploy-kind
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - backend/**
+      - frontend/**
+      - deployment/phase-7-cicd/**
+      - .github/workflows/deploy-k8s.yml
+
+permissions:
+  contents: read
+
+env:
+  NAMESPACE: devops-launchboard
+  KIND_CLUSTER_NAME: launchboard-cicd
+  PUBLIC_APP_URL: ${{ vars.PHASE7_PUBLIC_APP_URL }}
+  DB_PASSWORD: ${{ secrets.PHASE7_DB_PASSWORD }}
+
 jobs:
-  pipeline:
-    runs-on: ubuntu-latest
-    permissions: {contents: read, id-token: write}
+  deploy:
+    name: Deploy to local Kind cluster
+    runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: '3.12'}
-      - uses: actions/setup-node@v4
-        with: {node-version: '22', cache: 'npm', cache-dependency-path: frontend/package-lock.json}
-      - run: chmod +x deployment/phase-7-cicd/scripts/*.sh deployment/phase-3-docker/*.sh
-      - run: deployment/phase-7-cicd/scripts/run-tests.sh
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Confirm required tools
+        run: |
+          docker --version
+          kind version
+          kubectl version --client
+
+      - name: Create Kind cluster when missing
+        run: |
+          if kind get clusters | grep -qx "${KIND_CLUSTER_NAME}"; then
+            echo "Kind cluster already exists."
+          else
+            kind create cluster --name "${KIND_CLUSTER_NAME}" --config deployment/phase-7-cicd/kind-config.yaml
+          fi
+
+      - name: Install Nginx Ingress Controller
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+          kubectl wait --namespace ingress-nginx --for=condition=ready pod --selector=app.kubernetes.io/component=controller --timeout=180s
+
+      - name: Build backend image
+        run: docker build -f deployment/phase-7-cicd/Dockerfile.backend -t launchboard-backend:phase-7 .
+
+      - name: Build frontend image
+        run: docker build -f deployment/phase-7-cicd/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-7 .
+
+      - name: Load images into Kind
+        run: |
+          kind load docker-image launchboard-backend:phase-7 --name "${KIND_CLUSTER_NAME}"
+          kind load docker-image launchboard-frontend:phase-7 --name "${KIND_CLUSTER_NAME}"
+
+      - name: Create namespace
+        run: kubectl apply -f deployment/phase-7-cicd/k8s/namespace.yaml
+
+      - name: Apply runtime ConfigMap
+        run: |
+          kubectl create configmap launchboard-config \
+            --namespace "${NAMESPACE}" \
+            --from-literal=APP_NAME="DevOps LaunchBoard API" \
+            --from-literal=APP_ENV=production \
+            --from-literal=CORS_ORIGINS="${PUBLIC_APP_URL}" \
+            --from-literal=SEED_DEMO_DATA=true \
+            --from-literal=POSTGRES_DB=launchboard \
+            --from-literal=POSTGRES_USER=launchboard_user \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Apply runtime Secret
+        run: |
+          kubectl create secret generic launchboard-secret \
+            --namespace "${NAMESPACE}" \
+            --from-literal=POSTGRES_PASSWORD="${DB_PASSWORD}" \
+            --from-literal=DATABASE_URL="postgresql+asyncpg://launchboard_user:${DB_PASSWORD}@launchboard-db:5432/launchboard" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Recreate migration job
+        run: kubectl -n "${NAMESPACE}" delete job launchboard-migrate --ignore-not-found
+
+      - name: Apply Kubernetes manifests
+        run: kubectl apply -k deployment/phase-7-cicd/k8s
+
+      - name: Wait for rollout
+        run: |
+          kubectl -n "${NAMESPACE}" rollout status deployment/launchboard-db --timeout=180s
+          kubectl -n "${NAMESPACE}" wait --for=condition=complete job/launchboard-migrate --timeout=180s
+          kubectl -n "${NAMESPACE}" rollout status deployment/launchboard-backend --timeout=180s
+          kubectl -n "${NAMESPACE}" rollout status deployment/launchboard-frontend --timeout=180s
+
+      - name: Verify application
+        run: |
+          curl -fsS http://127.0.0.1/health
+          curl -fsS http://127.0.0.1/ready
+          curl -fsS http://127.0.0.1/api/summary

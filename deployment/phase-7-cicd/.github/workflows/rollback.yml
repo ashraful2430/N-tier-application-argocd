@@ -1,14 +1,42 @@
-name: rollback
-on: [workflow_dispatch]
+name: phase-7-rollback-kind
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment:
+        description: Deployment to rollback
+        required: true
+        default: launchboard-backend
+        type: choice
+        options:
+          - launchboard-backend
+          - launchboard-frontend
+
+permissions:
+  contents: read
+
+env:
+  NAMESPACE: devops-launchboard
+
 jobs:
-  pipeline:
-    runs-on: ubuntu-latest
-    permissions: {contents: read, id-token: write}
+  rollback:
+    name: Rollback Kubernetes deployment
+    runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: '3.12'}
-      - uses: actions/setup-node@v4
-        with: {node-version: '22', cache: 'npm', cache-dependency-path: frontend/package-lock.json}
-      - run: chmod +x deployment/phase-7-cicd/scripts/*.sh deployment/phase-3-docker/*.sh
-      - run: deployment/phase-7-cicd/scripts/run-tests.sh
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show rollout history
+        run: kubectl -n "${NAMESPACE}" rollout history deployment/${{ github.event.inputs.deployment }}
+
+      - name: Rollback deployment
+        run: kubectl -n "${NAMESPACE}" rollout undo deployment/${{ github.event.inputs.deployment }}
+
+      - name: Wait for rollback
+        run: kubectl -n "${NAMESPACE}" rollout status deployment/${{ github.event.inputs.deployment }} --timeout=180s
+
+      - name: Verify application
+        run: |
+          curl -fsS http://127.0.0.1/health
+          curl -fsS http://127.0.0.1/ready
+          curl -fsS http://127.0.0.1/api/summary

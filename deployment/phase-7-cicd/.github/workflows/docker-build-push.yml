@@ -1,14 +1,90 @@
-name: docker-build-push
-on: [workflow_dispatch]
+name: phase-7-docker-build-scan-push
+
+on:
+  workflow_dispatch:
+    inputs:
+      push_images:
+        description: Push images to GitHub Container Registry
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/devops-launchboard-backend
+  FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/devops-launchboard-frontend
+  IMAGE_TAG: sha-${{ github.sha }}
+
 jobs:
-  pipeline:
+  docker:
+    name: Build, scan, and optionally push images
     runs-on: ubuntu-latest
-    permissions: {contents: read, id-token: write}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: '3.12'}
-      - uses: actions/setup-node@v4
-        with: {node-version: '22', cache: 'npm', cache-dependency-path: frontend/package-lock.json}
-      - run: chmod +x deployment/phase-7-cicd/scripts/*.sh deployment/phase-3-docker/*.sh
-      - run: deployment/phase-7-cicd/scripts/run-tests.sh
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push' || github.event.inputs.push_images == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/phase-7-cicd/Dockerfile.backend
+          load: true
+          tags: |
+            launchboard-backend:phase-7
+            ${{ env.BACKEND_IMAGE }}:${{ env.IMAGE_TAG }}
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/phase-7-cicd/Dockerfile.frontend
+          build-args: |
+            VITE_API_URL=
+          load: true
+          tags: |
+            launchboard-frontend:phase-7
+            ${{ env.FRONTEND_IMAGE }}:${{ env.IMAGE_TAG }}
+
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: launchboard-backend:phase-7
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Scan frontend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: launchboard-frontend:phase-7
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Push backend image
+        if: github.event_name == 'push' || github.event.inputs.push_images == 'true'
+        run: docker push "${BACKEND_IMAGE}:${IMAGE_TAG}"
+
+      - name: Push frontend image
+        if: github.event_name == 'push' || github.event.inputs.push_images == 'true'
+        run: docker push "${FRONTEND_IMAGE}:${IMAGE_TAG}"

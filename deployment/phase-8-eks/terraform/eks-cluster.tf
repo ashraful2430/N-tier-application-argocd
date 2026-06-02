@@ -1,1 +1,0 @@
-resource "aws_eks_cluster" "this" { name = var.project_name role_arn = aws_iam_role.cluster.arn version = "1.30" vpc_config { subnet_ids = concat(var.private_subnet_ids, var.public_subnet_ids) security_group_ids = [aws_security_group.cluster.id] endpoint_private_access = true endpoint_public_access = true } depends_on = [aws_iam_role_policy_attachment.cluster] tags = var.tags }

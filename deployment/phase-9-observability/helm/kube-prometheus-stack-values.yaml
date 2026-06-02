@@ -1,0 +1,41 @@
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+
+grafana:
+  enabled: true
+  adminPassword: CHANGE_ME_GRAFANA_PASSWORD
+  defaultDashboardsEnabled: true
+  persistence:
+    enabled: true
+    size: 5Gi
+  service:
+    type: ClusterIP
+
+alertmanager:
+  alertmanagerSpec:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+kube-state-metrics:
+  enabled: true
+
+prometheus-node-exporter:
+  enabled: true

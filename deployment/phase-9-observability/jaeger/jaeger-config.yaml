@@ -1,4 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata: {name: jaeger-config, namespace: observability}
-data: {sampling: "1.0"}
