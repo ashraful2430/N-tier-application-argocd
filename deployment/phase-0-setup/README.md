@@ -1,82 +1,510 @@
-# Phase 0: Setup And Prerequisites
+# Phase 0: Project Setup And Discovery
 
-## Easy Explanation
+## Fresh Start Assumption
 
-This phase teaches students how to prepare their workstation and AWS account before touching production-style deployment. Good DevOps starts before the first deploy: tools must be installed, naming must be consistent, credentials must be safe, and cost alerts must be active.
+You do not need to complete any previous phase before using this guide.
+
+This phase starts from a fresh local machine or fresh cloud workstation.
+
+This phase does not deploy the application.
+
+This phase helps students understand the N-tier application before they run or deploy it.
+
+Students read this README from GitHub in the browser. Do not assume the deployment folder already exists on the student's machine. Every file that must be created is shown inline immediately after the `vim` command that creates it.
 
 ## What This Phase Teaches
 
-- How this deployment style works in real production teams.
-- Which files control infrastructure, application runtime, networking, and verification.
-- How to validate success with simple commands instead of guessing.
-- How to clean up resources so students do not create surprise bills.
+By completing this phase, students will learn:
 
-## Files In This Phase
+- What services exist in the project.
+- Which repository and branch should be used.
+- Which ports the frontend, backend, and database use.
+- Which environment variables are required.
+- Which health endpoints prove the backend is alive.
+- Which tools are required before local, Docker, EC2, Kubernetes, EKS, Terraform, GitOps, observability, security, recovery, and performance phases.
+- Why a deployment engineer should inspect a project before deploying it.
 
-`prerequisites.md` lists tools, AWS account expectations, environment variables, naming standards, and cost controls.
+## Project Architecture
 
-## Prerequisites
+The application is a 3-tier project:
 
-Complete `../phase-0-setup/prerequisites.md` first. Replace `[PROJECT_NAME]`, `[REGION]`, `[AWS_ACCOUNT_ID]`, `[DOMAIN_NAME]`, `[EMAIL]`, `[IMAGE_TAG]`, and `[DB_PASSWORD]` before running commands that use them.
-
-## Cost And Free-Tier Notes
-
-Usually free. The only cost risk begins when students authenticate to AWS and create cloud resources in later phases.
-
-Always use AWS Budgets for cloud labs: https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html
-
-## Step-By-Step Commands
-
-```bash
-cd deployment/phase-0-setup
-git --version
-docker --version
-docker compose version
-kubectl version --client
-aws --version
-terraform version
+```text
+Browser
+  |
+  v
+React/Vite frontend
+  |
+  v
+FastAPI backend
+  |
+  v
+PostgreSQL database
 ```
 
-## Expected Output
+Service map:
 
-Each command prints a version. If a command is missing, install that tool before continuing.
+| Service | Technology | Local Port | Purpose |
+| --- | --- | ---: | --- |
+| Frontend | React, TypeScript, Vite, Three.js | `5173` | Browser UI |
+| Backend | Python 3.12, FastAPI, SQLAlchemy, Alembic | `8000` | API and business logic |
+| Database | PostgreSQL | `5432` | Persistent data |
 
-## Verification Checklist
+Important backend endpoints:
 
-- Required files exist in this phase directory.
-- Secrets are not committed with real values.
-- Health checks pass before moving to the next phase.
-- Logs show normal startup with no repeated crash loops.
-- Cloud resources, if any, have project and owner tags.
+| Endpoint | Purpose |
+| --- | --- |
+| `/health` | Confirms the API process is running |
+| `/ready` | Confirms the API can reach PostgreSQL |
+| `/docs` | FastAPI Swagger documentation |
+| `/api/summary` | Application summary data |
+| `/api/services` | Service list |
+| `/api/deployments` | Deployment records |
+
+## Architecture Decision Guide
+
+Use Phase 0 when:
+
+- You are new to the project.
+- You do not know how the frontend and backend connect.
+- You want to identify required tools before deployment.
+- You want to avoid guessing ports, commands, and environment variables.
+- You want to create deployment notes before touching AWS.
+
+Do not skip Phase 0 when:
+
+- The project is unfamiliar.
+- The app has more than one service.
+- You are teaching beginners.
+- You plan to deploy to AWS, Docker, Kubernetes, or Terraform later.
+
+## Cost Warning
+
+This phase is usually free.
+
+It does not create AWS resources.
+
+Cost can begin only if you later create cloud resources such as EC2, EBS, NAT Gateway, ALB, EKS, S3, or ECR.
+
+Before cloud phases:
+
+- Create an AWS Budget alert.
+- Use one AWS region.
+- Clean up all resources after labs.
+- Never leave EKS, NAT Gateway, or Load Balancers running by accident.
+
+Reference:
+
+- AWS Budgets: https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html
+- AWS Pricing Calculator: https://calculator.aws/
+
+## Repository
+
+Project repository:
+
+```text
+git@github.com:ashraful2430/N-tier-application.git
+```
+
+Recommended branch:
+
+```text
+main
+```
+
+Why:
+
+Students should work from the normal application branch. Deployment files are created manually by following each phase README.
+
+## Step 1: Install Basic Discovery Tools
+
+Run this command from: your local Ubuntu machine
+
+```bash
+sudo apt update
+sudo apt install -y git curl vim jq tree ca-certificates
+```
+
+What each tool does:
+
+- `git` clones the project.
+- `curl` tests HTTP endpoints.
+- `vim` creates and edits files manually.
+- `jq` reads JSON responses.
+- `tree` displays folder structure clearly.
+- `ca-certificates` helps HTTPS connections work correctly.
+
+Verify:
+
+```bash
+git --version
+curl --version
+vim --version
+jq --version
+tree --version
+```
+
+Expected result:
+
+```text
+Each command prints a version.
+```
+
+Reference:
+
+- Git documentation: https://git-scm.com/doc
+- curl documentation: https://curl.se/docs/
+- jq manual: https://jqlang.github.io/jq/manual/
+
+## Step 2: Create GitHub SSH Key
+
+Run this command from: your local machine
+
+```bash
+cd ~
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+ssh-keygen -t ed25519 -C "ntier-launchboard-phase-0" -f ~/.ssh/ntier_launchboard_github_key
+cat ~/.ssh/ntier_launchboard_github_key.pub
+```
+
+Add the public key to GitHub:
+
+```text
+GitHub
+Settings
+SSH and GPG keys
+New SSH key
+```
+
+Use:
+
+| Field | Value |
+| --- | --- |
+| Title | `ntier-launchboard-phase-0` |
+| Key type | Authentication Key |
+| Key | Paste the public key |
+
+Why this step exists:
+
+The machine that clones the repository needs GitHub access. SSH keys avoid passwords and are the standard way to clone private or protected repositories.
+
+## Step 3: Configure SSH For GitHub
+
+Run:
+
+```bash
+vim ~/.ssh/config
+```
+
+Paste:
+
+```text
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/ntier_launchboard_github_key
+  IdentitiesOnly yes
+```
+
+Save with:
+
+```text
+:wq
+```
+
+Secure permissions:
+
+```bash
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/config
+chmod 600 ~/.ssh/ntier_launchboard_github_key
+chmod 644 ~/.ssh/ntier_launchboard_github_key.pub
+```
+
+Test:
+
+```bash
+ssh -T git@github.com
+```
+
+Expected result:
+
+```text
+GitHub says authentication succeeded, but shell access is not provided.
+```
+
+Reference:
+
+- GitHub SSH documentation: https://docs.github.com/en/authentication/connecting-to-github-with-ssh
+
+## Step 4: Clone The Project
+
+Run:
+
+```bash
+sudo mkdir -p /opt/ntier-launchboard
+sudo chown -R "$USER:$USER" /opt/ntier-launchboard
+cd /opt/ntier-launchboard
+git clone git@github.com:ashraful2430/N-tier-application.git app-source
+cd app-source
+git branch --show-current
+```
+
+Expected output:
+
+```text
+main
+```
+
+Why this step exists:
+
+Students need the real project code before discovering how it runs. `/opt/ntier-launchboard/app-source` gives the project a predictable folder location for later phases.
+
+## Step 5: Inspect The Top-Level Project
+
+Run:
+
+```bash
+cd /opt/ntier-launchboard/app-source
+pwd
+tree -L 2 -a
+```
+
+Expected folders:
+
+```text
+backend
+frontend
+deployment
+docs
+```
+
+Why this step exists:
+
+Deployment commands depend on folder names. Students should confirm the repository structure before copying commands.
+
+## Step 6: Inspect Backend Configuration
+
+Run:
+
+```bash
+cd /opt/ntier-launchboard/app-source
+cat backend/pyproject.toml
+cat backend/.env.example
+cat backend/app/core/config.py
+cat backend/app/api/health.py
+```
+
+What students should learn:
+
+- Backend requires Python `>=3.12`.
+- Backend uses FastAPI.
+- Backend reads environment variables from `backend/.env`.
+- Backend connects to PostgreSQL through `DATABASE_URL`.
+- Backend allows browser origins through `CORS_ORIGINS`.
+- `/health` checks API process health.
+- `/ready` checks database connectivity.
+
+Important backend variables:
+
+| Variable | Purpose | Local Example |
+| --- | --- | --- |
+| `APP_NAME` | API display name | `DevOps LaunchBoard API` |
+| `APP_ENV` | Environment label | `local` |
+| `DATABASE_URL` | PostgreSQL async connection string | `postgresql+asyncpg://launchboard_user:launchboard_pass@localhost:5432/launchboard` |
+| `CORS_ORIGINS` | Frontend origins allowed to call API | `http://localhost:5173` |
+| `SEED_DEMO_DATA` | Adds demo rows on startup | `true` |
+
+## Step 7: Inspect Frontend Configuration
+
+Run:
+
+```bash
+cd /opt/ntier-launchboard/app-source
+cat frontend/package.json
+cat frontend/.env.example
+cat frontend/src/lib/api.ts
+cat frontend/vite.config.ts
+```
+
+What students should learn:
+
+- Frontend uses Vite and React.
+- Frontend development server listens on port `5173`.
+- Frontend reads `VITE_API_URL`.
+- Browser API calls go to the backend URL configured in `frontend/.env`.
+
+Important frontend variable:
+
+| Variable | Purpose | Local Example |
+| --- | --- | --- |
+| `VITE_API_URL` | Backend API URL used by browser code | `http://localhost:8000` |
+
+Reference:
+
+- Vite environment variables: https://vite.dev/guide/env-and-mode
+- Vite server options: https://vite.dev/config/server-options
+
+## Step 8: Create Project Discovery Notes
+
+Create a local notes folder:
+
+```bash
+mkdir -p /opt/ntier-launchboard/discovery
+cd /opt/ntier-launchboard/discovery
+vim project-discovery.md
+```
+
+Paste:
+
+````markdown
+# N-tier LaunchBoard Project Discovery
+
+## Repository
+
+Repository:
+
+```text
+git@github.com:ashraful2430/N-tier-application.git
+```
+
+Branch:
+
+```text
+main
+```
+
+## Services
+
+| Service | Technology | Port | Health |
+| --- | --- | ---: | --- |
+| Frontend | React, TypeScript, Vite | 5173 | Browser page |
+| Backend | Python 3.12, FastAPI | 8000 | /health and /ready |
+| Database | PostgreSQL | 5432 | pg_isready |
+
+## Environment Variables
+
+Backend:
+
+```text
+APP_NAME
+APP_ENV
+DATABASE_URL
+CORS_ORIGINS
+SEED_DEMO_DATA
+```
+
+Frontend:
+
+```text
+VITE_API_URL
+```
+
+## Deployment Risks
+
+- PostgreSQL must be ready before backend readiness passes.
+- Frontend must use the correct backend URL.
+- CORS must include the frontend origin.
+- Python must be 3.12 or newer.
+- Secrets must not be committed.
+- Cloud resources must be deleted after labs.
+
+## Verification Commands
+
+```bash
+curl -s http://localhost:8000/health
+curl -s http://localhost:8000/ready
+curl -I http://localhost:5173
+```
+````
+
+Save with:
+
+```text
+:wq
+```
+
+Why this file exists:
+
+Deployment notes force students to write down what they discovered. This prevents random guessing in later phases.
+
+## Step 9: Tool Checklist For Later Phases
+
+Later phases will use these tools:
+
+| Tool | Used In |
+| --- | --- |
+| Python 3.12 | Backend local run and image builds |
+| Node.js 22 | Frontend local run and image builds |
+| PostgreSQL | Local database and production-style database |
+| Docker | Container phases |
+| Docker Compose | Single-server full stack |
+| kubectl | Kubernetes phases |
+| Helm | Kubernetes add-ons |
+| Terraform | Infrastructure as code |
+| AWS CLI | AWS resource creation |
+| eksctl | EKS cluster creation |
+| Trivy | Image scanning |
+| k6 | Performance validation |
 
 ## Troubleshooting
 
-Tool version errors mean the workstation is not ready. AWS errors usually mean credentials are not configured or the IAM user/role lacks permission.
+### Problem: GitHub SSH Fails
 
-Useful first commands:
+Check:
 
 ```bash
-curl -fsS http://localhost:8000/health
-curl -fsS http://localhost:8000/ready
-kubectl get pods -A
-docker ps
+ssh -T git@github.com
+cat ~/.ssh/config
+ls -la ~/.ssh
 ```
 
+Common causes:
 
-## Useful URLs
+```text
+Public key was not added to GitHub.
+SSH config points to the wrong key.
+Private key permissions are too open.
+```
 
-- FastAPI deployment guide: https://fastapi.tiangolo.com/deployment/
-- Docker documentation: https://docs.docker.com/
-- Docker Compose documentation: https://docs.docker.com/compose/
-- Kubernetes documentation: https://kubernetes.io/docs/
-- Terraform AWS provider: https://registry.terraform.io/providers/hashicorp/aws/latest/docs
-- AWS EKS user guide: https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html
+### Problem: Folder Structure Looks Different
 
+Check:
+
+```bash
+git remote -v
+git branch --show-current
+find . -maxdepth 2 -type d | sort
+```
+
+Common causes:
+
+```text
+Wrong repository cloned.
+Wrong branch checked out.
+Repository changed after this guide was written.
+```
 
 ## Cleanup
 
-Stop containers, delete Kubernetes resources, or destroy Terraform-managed cloud resources when the lab is done. Confirm the AWS Billing dashboard does not show unexpected running resources.
+Phase 0 does not create cloud resources.
 
-## Next Step
+To remove local discovery files:
 
-Move to Phase 2 for manual EC2 deployment or Phase 3 if you want to start directly with Docker images.
+```bash
+sudo rm -rf /opt/ntier-launchboard
+```
+
+Only run cleanup when you are done with local notes and cloned source.
+
+## What To Do Next
+
+Move to:
+
+```text
+Phase 1: Local Baseline
+```
+
+Why:
+
+Phase 0 identifies how the project works. Phase 1 proves the project actually runs locally.

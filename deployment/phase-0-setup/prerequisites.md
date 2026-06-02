@@ -1,15 +1,88 @@
-# Prerequisites
+# Phase 0 Prerequisites
 
-Install Docker Engine 25+, Docker Compose v2, Git, Bash, curl, jq, Node.js 22 LTS, Python 3.12, kubectl, Helm 3, Terraform 1.8+, AWS CLI v2, eksctl, and Trivy.
+This file is the quick checklist for the N-tier LaunchBoard deployment curriculum.
 
-Use a sandbox AWS account with AWS Budgets enabled. The lab IAM principal needs scoped permissions for EC2, ECR, EKS, IAM role creation, ELB, VPC, S3, CloudWatch, Secrets Manager, and KMS resources used by these phases.
+Use the main Phase 0 README for full step-by-step instructions.
+
+## Required Accounts
+
+- GitHub account
+- AWS account for later cloud phases
+
+## Required Local Tools For Phase 0
+
+```bash
+git --version
+curl --version
+vim --version
+jq --version
+tree --version
+```
+
+## Required Tools For Later Phases
+
+```bash
+python3 --version
+node --version
+npm --version
+docker --version
+docker compose version
+kubectl version --client
+helm version
+aws --version
+terraform version
+eksctl version
+trivy --version
+k6 version
+```
+
+## Recommended Versions
+
+| Tool | Recommended Version |
+| --- | --- |
+| Ubuntu | 24.04 LTS |
+| Python | 3.12 or newer |
+| Node.js | 22 LTS |
+| PostgreSQL | 16 or newer |
+| Docker | Current stable engine |
+| Docker Compose | v2 |
+| kubectl | Match cluster minor version |
+| Helm | v3 |
+| Terraform | 1.8 or newer |
+| AWS CLI | v2 |
+
+## Project Defaults
+
+| Item | Value |
+| --- | --- |
+| Project name | `devops-launchboard` |
+| Repository | `git@github.com:ashraful2430/N-tier-application.git` |
+| Frontend local port | `5173` |
+| Backend local port | `8000` |
+| PostgreSQL port | `5432` |
+| Backend health | `/health` |
+| Backend readiness | `/ready` |
+
+## Suggested Environment Variables For Labs
 
 ```bash
 export PROJECT_NAME=devops-launchboard
-export AWS_REGION=[REGION]
-export AWS_ACCOUNT_ID=[AWS_ACCOUNT_ID]
-export DOMAIN_NAME=[DOMAIN_NAME]
-export ADMIN_EMAIL=[EMAIL]
+export AWS_REGION=ap-southeast-1
+export DOMAIN_NAME=launchboard.example.com
+export ADMIN_EMAIL=student@example.com
 ```
 
-Use immutable image tags, preferably Git SHA values. Store passwords in a secret manager and never commit real secrets.
+## Cost Safety
+
+Before AWS phases:
+
+- Create an AWS Budget alert.
+- Use one AWS region.
+- Tag resources with project and owner.
+- Delete resources after practice.
+- Watch for NAT Gateway, EKS, Load Balancer, EBS, S3, and ECR charges.
+
+Reference:
+
+- AWS Budgets: https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html
+- AWS Pricing Calculator: https://calculator.aws/
