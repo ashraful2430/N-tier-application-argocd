@@ -12,13 +12,14 @@ The application has three main services:
 
 ## How To Use This Directory
 
-Start with `phase-0-setup`, then move phase by phase. Each phase has its own README, scripts, manifests, and configuration files. The goal is that a student can open one phase, read the README, replace the bracket variables, run the commands, and understand what happened.
+Start with `phase-0-setup`, then move phase by phase. Each phase has its own README, manifests, configuration files, and supporting folders. The goal is that a student can open one phase, read the README, create the required files manually, run the commands, and understand what happened.
 
 ## Phase Map
 
 | Phase | Topic | Main Learning Outcome |
 | --- | --- | --- |
 | `phase-0-setup` | Workstation and cloud prep | Install tools, set naming rules, understand cost risk |
+| `phase-1-local-baseline` | Local app baseline | Prove frontend, backend, and PostgreSQL work before cloud deployment |
 | `phase-2-bare-metal` | EC2 without containers | Run app directly with Linux services and Nginx |
 | `phase-3-docker` | Container images | Build secure, small, non-root images |
 | `phase-4-docker-compose` | Single-host stack | Run DB, migrations, API, and UI together |
@@ -30,6 +31,9 @@ Start with `phase-0-setup`, then move phase by phase. Each phase has its own REA
 | `phase-10-security` | Hardening | Apply RBAC, NetworkPolicy, Vault, SAST, image scanning |
 | `phase-11-advanced-deployments` | Safer releases | Practice blue-green, canary, and feature flags |
 | `phase-12-disaster-recovery` | Recovery | Back up, restore, test failover, and run incident playbooks |
+| `phase-13-performance-and-load-validation` | Performance validation | Run smoke, load, stress, and soak tests before calling the app production-ready |
+| `phase-14-disaster-recovery` | Full disaster recovery | Practice backup, restore, cluster rebuild, incident response, and recovery runbooks |
+| `phase-15-performance-and-load-validation` | Full performance validation | Validate production readiness with smoke, load, stress, soak, HPA, and report writing |
 
 ## Values Students Must Replace
 
@@ -81,7 +85,7 @@ Local Docker and local Kubernetes are usually free. AWS labs can create real cha
 
 ## Recommended Teaching Flow
 
-For beginners, spend more time on phases 0, 3, 4, and 6. For intermediate students, focus on phases 7, 8, 9, and 10. For production-readiness discussions, use phases 11 and 12.
+For beginners, spend more time on phases 0, 1, 2, 3, 4, and 6. For intermediate students, focus on phases 7, 8, 9, and 10. For production-readiness discussions, use phases 11, 12, 13, 14, and 15.
 
 ## Core Documentation URLs
 
