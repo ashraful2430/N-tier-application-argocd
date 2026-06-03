@@ -8,10 +8,11 @@ A simple 3-tier learning project that shows how a React frontend, FastAPI backen
 - Backend: Python, FastAPI, SQLAlchemy, Alembic
 - Database: PostgreSQL
 
-## Branches
+## Deployment Learning Path
 
-- `main`: app code only, for students to run and learn from
-- `deployment-labs`: Docker, Kubernetes, and deployment files
+This repository includes a full `deployment/` folder with standalone phases for local setup, bare metal EC2, Docker, Docker Compose, Docker Swarm, Kubernetes, CI/CD, EKS, observability, security, advanced releases, disaster recovery, and performance validation.
+
+Students can start from any phase because each phase explains the setup from scratch.
 
 ## AWS EC2 Setup
 
@@ -193,16 +194,10 @@ sudo -u postgres psql
 
 ## Deployment Files
 
-Docker, Kubernetes, and deployment guide files are not kept on `main`.
+Open the deployment guide index here:
 
-To view them:
-
-```bash
-git checkout deployment-labs
+```text
+deployment/README.md
 ```
 
-To return to the student app branch:
-
-```bash
-git checkout main
-```
+Each phase has its own README and production-style files. The README explains the commands, the file contents, and why each step exists.

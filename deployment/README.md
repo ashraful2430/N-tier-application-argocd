@@ -26,7 +26,7 @@ Start with `phase-0-setup`, then move phase by phase. Each phase has its own REA
 | `phase-5-docker-swarm` | Swarm orchestration | Deploy replicated services with secrets and rollback |
 | `phase-6-kubernetes-local` | Local Kubernetes | Learn Deployments, Services, Ingress, PVC, HPA |
 | `phase-7-cicd` | Automation | Test, scan, build, push, deploy, and rollback |
-| `phase-8-eks` | AWS Kubernetes | Provision EKS with Terraform and deploy app |
+| `phase-8-eks` | AWS Kubernetes | Provision EKS with eksctl and deploy app |
 | `phase-9-observability` | Monitoring and logs | Add metrics, alerts, dashboards, logs, and traces |
 | `phase-10-security` | Hardening | Apply RBAC, NetworkPolicy, Vault, SAST, image scanning |
 | `phase-11-advanced-deployments` | Safer releases | Practice blue-green, canary, and feature flags |
@@ -39,13 +39,11 @@ Start with `phase-0-setup`, then move phase by phase. Each phase has its own REA
 
 | Placeholder | Example | Meaning |
 | --- | --- | --- |
-| `[PROJECT_NAME]` | `devops-launchboard` | Project name used in tags and resources |
-| `[REGION]` | `us-east-1` | AWS Region |
-| `[AWS_ACCOUNT_ID]` | `123456789012` | AWS account number |
-| `[DOMAIN_NAME]` | `launchboard.example.com` | Public domain for the app |
-| `[EMAIL]` | `admin@example.com` | Email for SSL and alerts |
-| `[IMAGE_TAG]` | `git-sha` | Immutable Docker image version |
-| `[DB_PASSWORD]` | strong password | PostgreSQL password stored as a secret |
+| `YOUR_AWS_REGION` | `ap-southeast-1` | AWS Region |
+| `YOUR_ACCOUNT_ID` | `123456789012` | AWS account number |
+| `YOUR_ALB_DNS_NAME` | `launchboard-alb.example.aws` | Public load balancer URL |
+| `YOUR_EC2_PUBLIC_IP` | `13.229.100.25` | EC2 public IP address |
+| `CHANGE_ME_STRONG_PASSWORD` | strong password | PostgreSQL password stored as a secret |
 
 ## Deployment Order
 
@@ -59,24 +57,25 @@ Most production systems start in dependency order:
 6. Security controls
 7. Release strategy and recovery automation
 
-The files in this directory follow that order using Compose health checks, Kubernetes probes, rollout waits, Swarm update settings, and CI/CD scripts.
+The files in this directory follow that order using Compose health checks, Kubernetes probes, rollout waits, Swarm update settings, and CI/CD workflow files.
 
 ## Quick Start For A Local Demo
 
 ```bash
 cd deployment/phase-4-docker-compose
 cp .env.example .env
-./scripts/init-db.sh
-docker compose up -d --build
-./scripts/health-check.sh
+vim .env
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+curl -fsS http://localhost/health
 ```
 
 Expected result:
 
 ```text
 All services become healthy
-Backend: http://localhost:8000/health
-Frontend: http://localhost:8080
+Backend through frontend proxy: http://localhost/health
+Frontend: http://localhost
 ```
 
 ## Cost Warning
@@ -94,7 +93,6 @@ For beginners, spend more time on phases 0, 1, 2, 3, 4, and 6. For intermediate 
 - Docker Compose: https://docs.docker.com/compose/
 - Docker Swarm: https://docs.docker.com/engine/swarm/
 - Kubernetes: https://kubernetes.io/docs/
-- Terraform AWS provider: https://registry.terraform.io/providers/hashicorp/aws/latest/docs
 - AWS EKS: https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html
 - Prometheus: https://prometheus.io/docs/introduction/overview/
 - Grafana: https://grafana.com/docs/
