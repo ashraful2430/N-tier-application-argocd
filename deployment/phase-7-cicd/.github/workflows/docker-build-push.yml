@@ -32,11 +32,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Log in to GitHub Container Registry
-        if: github.event_name == 'push' || github.event.inputs.push_images == 'true'
+        if: ${{ github.event_name == 'push' || inputs.push_images == 'true' }}
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -44,47 +41,46 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build backend image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deployment/phase-7-cicd/Dockerfile.backend
-          load: true
-          tags: |
-            launchboard-backend:phase-7
-            ${{ env.BACKEND_IMAGE }}:${{ env.IMAGE_TAG }}
+        run: |
+          docker build \
+            -f deployment/phase-7-cicd/Dockerfile.backend \
+            -t launchboard-backend:phase-7 \
+            -t "${BACKEND_IMAGE}:${IMAGE_TAG}" \
+            .
 
       - name: Build frontend image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deployment/phase-7-cicd/Dockerfile.frontend
-          build-args: |
-            VITE_API_URL=
-          load: true
-          tags: |
-            launchboard-frontend:phase-7
-            ${{ env.FRONTEND_IMAGE }}:${{ env.IMAGE_TAG }}
+        run: |
+          docker build \
+            -f deployment/phase-7-cicd/Dockerfile.frontend \
+            --build-arg VITE_API_URL= \
+            -t launchboard-frontend:phase-7 \
+            -t "${FRONTEND_IMAGE}:${IMAGE_TAG}" \
+            .
 
       - name: Scan backend image
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: launchboard-backend:phase-7
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            launchboard-backend:phase-7
 
       - name: Scan frontend image
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: launchboard-frontend:phase-7
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            launchboard-frontend:phase-7
 
       - name: Push backend image
-        if: github.event_name == 'push' || github.event.inputs.push_images == 'true'
+        if: ${{ github.event_name == 'push' || inputs.push_images == 'true' }}
         run: docker push "${BACKEND_IMAGE}:${IMAGE_TAG}"
 
       - name: Push frontend image
-        if: github.event_name == 'push' || github.event.inputs.push_images == 'true'
+        if: ${{ github.event_name == 'push' || inputs.push_images == 'true' }}
         run: docker push "${FRONTEND_IMAGE}:${IMAGE_TAG}"

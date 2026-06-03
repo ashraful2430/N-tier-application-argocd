@@ -1,0 +1,17 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-old-velero-backups",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": ""
+      },
+      "Expiration": {
+        "Days": 30
+      },
+      "NoncurrentVersionExpiration": {
+        "NoncurrentDays": 14
+      }
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: devops-launchboard-phase-15
+  region: YOUR_AWS_REGION
+  version: "1.34"
+
+availabilityZones:
+  - YOUR_AWS_REGIONa
+  - YOUR_AWS_REGIONb
+
+iam:
+  withOIDC: true
+
+vpc:
+  clusterEndpoints:
+    publicAccess: true
+    privateAccess: true
+  nat:
+    gateway: Single
+
+managedNodeGroups:
+  - name: launchboard-workers
+    instanceType: t3.medium
+    desiredCapacity: 2
+    minSize: 2
+    maxSize: 4
+    privateNetworking: true
+    volumeSize: 30
+    volumeType: gp3
+    amiFamily: AmazonLinux2023
+    labels:
+      workload: launchboard
+    tags:
+      Project: devops-launchboard
+      Environment: phase-15
+      Owner: student
+
+cloudWatch:
+  clusterLogging:
+    enableTypes:
+      - api
+      - audit
+      - authenticator
+      - controllerManager
+      - scheduler
+
+addons:
+  - name: aws-ebs-csi-driver
+    wellKnownPolicies:
+      ebsCSIController: true

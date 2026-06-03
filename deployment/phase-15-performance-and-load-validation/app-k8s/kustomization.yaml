@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - storageclass.yaml
+  - configmap.yaml
+  - pvc.yaml
+  - launchboard-postgres-deployment.yaml
+  - launchboard-postgres-service.yaml
+  - launchboard-migration-job.yaml
+  - launchboard-backend-deployment.yaml
+  - launchboard-backend-service.yaml
+  - launchboard-frontend-deployment.yaml
+  - launchboard-frontend-service.yaml
+  - ingress.yaml
+  - hpa.yaml

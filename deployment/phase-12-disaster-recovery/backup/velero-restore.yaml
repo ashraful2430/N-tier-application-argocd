@@ -1,0 +1,10 @@
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: launchboard-restore
+  namespace: velero
+spec:
+  backupName: launchboard-manual
+  includedNamespaces:
+    - devops-launchboard
+  existingResourcePolicy: update

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: launchboard-backend
+  namespace: devops-launchboard
+spec:
+  type: ClusterIP
+  selector:
+    app: launchboard-backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000

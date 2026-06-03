@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: launchboard-quota
+  namespace: devops-launchboard
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "6"
+    limits.memory: 10Gi
+    pods: "20"
+    persistentvolumeclaims: "4"
+    services: "10"
+    secrets: "20"
+    configmaps: "20"

@@ -1,11 +1,133 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: launchboard-default-deny, namespace: devops-launchboard}
-spec: {podSelector: {}, policyTypes: [Ingress, Egress]}
+metadata:
+  name: default-deny-all
+  namespace: devops-launchboard
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: allow-launchboard-flow, namespace: devops-launchboard}
+metadata:
+  name: allow-dns-egress
+  namespace: devops-launchboard
 spec:
-  podSelector: {matchLabels: {app: launchboard-backend}}
-  ingress: [{from: [{podSelector: {matchLabels: {app: launchboard-frontend}}}], ports: [{protocol: TCP, port: 8000}]}]
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-public-to-frontend
+  namespace: devops-launchboard
+spec:
+  podSelector:
+    matchLabels:
+      app: launchboard-frontend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: launchboard-backend
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-backend
+  namespace: devops-launchboard
+spec:
+  podSelector:
+    matchLabels:
+      app: launchboard-backend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: launchboard-frontend
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: launchboard-db
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-to-postgres
+  namespace: devops-launchboard
+spec:
+  podSelector:
+    matchLabels:
+      app: launchboard-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: launchboard-backend
+        - podSelector:
+            matchLabels:
+              app: launchboard-migrate
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-migration-to-postgres
+  namespace: devops-launchboard
+spec:
+  podSelector:
+    matchLabels:
+      app: launchboard-migrate
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: launchboard-db
+      ports:
+        - protocol: TCP
+          port: 5432
