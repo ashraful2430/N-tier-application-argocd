@@ -393,6 +393,7 @@ sudo useradd --system --create-home --home-dir /opt/devops-launchboard --shell /
 sudo mkdir -p /opt/devops-launchboard/app-source
 sudo mkdir -p /etc/devops-launchboard
 sudo mkdir -p /var/www/devops-launchboard
+sudo chmod 755 /opt/devops-launchboard
 sudo chown -R ubuntu:ubuntu /opt/devops-launchboard/app-source
 sudo chown -R launchboard:launchboard /etc/devops-launchboard
 sudo chown -R www-data:www-data /var/www/devops-launchboard
@@ -414,6 +415,8 @@ Command explanation:
 - `sudo mkdir -p /etc/devops-launchboard` creates the folder where the backend environment file will be stored. Using `/etc` for configuration files follows standard Linux conventions. Config files in `/etc` are separate from app code, which makes them easier to manage and audit.
 
 - `sudo mkdir -p /var/www/devops-launchboard` creates the folder where the built frontend static files will be served from. Nginx serves files from `/var/www` by convention.
+
+- `sudo chmod 755 /opt/devops-launchboard` allows the `ubuntu` SSH user to enter the parent application folder. This is required because Linux checks parent directory permissions before it checks the child folder. Without this, `ubuntu` may own `/opt/devops-launchboard/app-source` but still get `Permission denied` when running `cd /opt/devops-launchboard`.
 
 - `sudo chown -R ubuntu:ubuntu /opt/devops-launchboard/app-source` gives the `ubuntu` SSH user ownership of the app source folder. This lets you clone the repository and install dependencies without needing `sudo` for every command. The `-R` flag applies the change to all files and subfolders recursively.
 
@@ -530,6 +533,14 @@ Test:
 ssh -T git@github.com
 ```
 
+Expected result:
+
+```text
+Hi USERNAME! You've successfully authenticated, but GitHub does not provide shell access.
+```
+
+This message is successful. GitHub does not open a shell session, but SSH authentication worked.
+
 Why this step exists:
 
 The EC2 server needs GitHub access to clone the app source code. SSH keys are more secure than passwords for automated server access.
@@ -562,19 +573,21 @@ Expected branch:
 main
 ```
 
-Set ownership:
+Keep source ownership with `ubuntu` for now:
 
 ```bash
-sudo chown -R launchboard:launchboard /opt/devops-launchboard
+sudo chown -R ubuntu:ubuntu /opt/devops-launchboard/app-source
+sudo chmod -R u+rwX,go+rX /opt/devops-launchboard/app-source
 ```
 
 Command explanation:
 
-- `sudo chown -R launchboard:launchboard /opt/devops-launchboard` gives the `launchboard` service user ownership of the entire app directory, including the source code you just cloned. The backend systemd service runs as `launchboard`, so it needs to own these files to read and execute them.
+- `sudo chown -R ubuntu:ubuntu /opt/devops-launchboard/app-source` keeps the source code owned by the `ubuntu` SSH user. This is important because the next steps create `.env.production`, install dependencies, build the frontend, and create deployment config files from the `ubuntu` user.
+- `sudo chmod -R u+rwX,go+rX /opt/devops-launchboard/app-source` gives the owner read and write access, and gives other users read and enter access where needed. This lets the `launchboard` systemd user read and execute the backend files later, without taking ownership away from `ubuntu`.
 
 Why this step exists:
 
-The app source must be on the server before dependencies can be installed or services started.
+The app source must stay editable by `ubuntu` while students finish setup. If the whole `/opt/devops-launchboard` folder is changed to `launchboard:launchboard` too early, later commands such as `vim .env.production`, `python3 -m venv .venv`, `npm install`, and `npm run build` can fail with permission errors.
 
 ## Step 8: Create PostgreSQL User And Database
 
@@ -629,7 +642,7 @@ sudo vim /etc/devops-launchboard/backend.env
 Paste:
 
 ```env
-APP_NAME=DevOps LaunchBoard API
+APP_NAME="DevOps LaunchBoard API"
 APP_ENV=production
 DATABASE_URL=postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@127.0.0.1:5432/launchboard
 CORS_ORIGINS=http://YOUR_EC2_PUBLIC_IP
@@ -642,6 +655,10 @@ Replace:
 CHANGE_ME_STRONG_PASSWORD
 YOUR_EC2_PUBLIC_IP
 ```
+
+Password note:
+
+For student practice, use a strong password with letters, numbers, and safe symbols only. Avoid `@`, `/`, `:`, `#`, `?`, and `&` unless you know how to URL encode them. These characters can break `DATABASE_URL` because the password is placed inside a database connection URL.
 
 Set permissions:
 
@@ -661,7 +678,7 @@ systemd loads this file before starting the backend. The `ubuntu` SSH user also 
 
 Line explanation:
 
-- `APP_NAME` names the FastAPI app.
+- `APP_NAME` names the FastAPI app. It is wrapped in quotes because the value contains spaces. This prevents `source /etc/devops-launchboard/backend.env` from failing during migration and manual testing steps.
 - `APP_ENV=production` labels this as a production-style runtime.
 - `DATABASE_URL` tells SQLAlchemy where PostgreSQL is. The `postgresql+asyncpg://` prefix tells SQLAlchemy to use the async PostgreSQL driver.
 - `CORS_ORIGINS` allows the browser origin served by Nginx. The browser blocks API requests from origins not listed here.
@@ -977,6 +994,20 @@ Frontend service explanation:
 - `Type=oneshot` means this service runs a single command and then exits. It is not a continuously running process.
 - `ExecStart=/usr/bin/test -f /var/www/devops-launchboard/index.html` checks whether the built frontend file exists. If the file is missing, the service fails and you get a clear error signal.
 - `RemainAfterExit=yes` keeps the service in an active state after the check completes. This lets you see it as "active" in `systemctl status` even though the process already exited.
+
+Verify runtime permissions before installing services:
+
+```bash
+sudo chmod 755 /opt/devops-launchboard
+sudo chmod -R u+rwX,go+rX /opt/devops-launchboard/app-source
+namei -l /opt/devops-launchboard/app-source/backend/.venv/bin/uvicorn
+```
+
+Command explanation:
+
+- `sudo chmod 755 /opt/devops-launchboard` confirms that the `launchboard` service user can enter the parent folder.
+- `sudo chmod -R u+rwX,go+rX /opt/devops-launchboard/app-source` confirms that the backend files and virtual environment are readable and executable by the `launchboard` service user.
+- `namei -l .../uvicorn` shows permissions for every directory in the path to the Uvicorn executable. If any parent folder blocks access, systemd will fail with a permission error.
 
 Install services:
 
