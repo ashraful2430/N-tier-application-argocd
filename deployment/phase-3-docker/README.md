@@ -751,15 +751,9 @@ RUN npm run build
 
 FROM nginx:1.27-alpine AS runtime
 
-RUN addgroup -S app \
-    && adduser -S app -G app \
-    && mkdir -p /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp /var/cache/nginx/fastcgi_temp /var/cache/nginx/uwsgi_temp /var/cache/nginx/scgi_temp /var/run /tmp/nginx \
-    && chown -R app:app /usr/share/nginx/html /var/cache/nginx /var/run /tmp/nginx
 
 COPY deployment/phase-3-docker/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
-
-USER app
 
 EXPOSE 8080
 
@@ -779,19 +773,15 @@ Dockerfile explanation:
 - `COPY frontend/ ./` copies the frontend source code.
 - `RUN npm run build` creates the production build in `dist`.
 - `FROM nginx:1.27-alpine AS runtime` starts a small Nginx runtime image.
-- `addgroup` and `adduser` create a non-root user named `app`.
-- `mkdir -p ...` creates runtime folders Nginx needs when running without root.
-- `chown -R app:app ...` gives the non-root user access to Nginx runtime folders and frontend files.
 - `COPY deployment/phase-3-docker/nginx-frontend.conf ...` replaces Nginx's default site config.
 - `COPY --from=builder /app/dist /usr/share/nginx/html` copies built frontend files into Nginx's web root.
-- `USER app` runs Nginx as a non-root user.
-- `EXPOSE 8080` documents the internal container port.
+- `EXPOSE 8080` documents the internal container port. It does not publish the port by itself. The `docker run -p 80:8080` command publishes it later.
 - `HEALTHCHECK` checks the frontend Nginx health endpoint.
 - `CMD ["nginx", "-g", "daemon off;"]` starts Nginx in the foreground, which is required for Docker containers.
 
 Why Nginx listens on `8080` inside the container:
 
-Linux ports below `1024`, such as `80`, usually require root privileges. Since this container runs as a non-root user, Nginx listens on `8080` inside the container. Docker maps public EC2 port `80` to container port `8080` later.
+The container listens on `8080`, and Docker maps EC2 public port `80` to container port `8080` later. This keeps the app URL clean while making the internal container port explicit.
 
 Reference:
 
@@ -1005,12 +995,6 @@ Run from the repository root:
 cd /opt/devops-launchboard/app-source
 docker build -f deployment/phase-3-docker/Dockerfile.backend -t launchboard-backend:phase-3 .
 docker build -f deployment/phase-3-docker/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-3 .
-
-export DOCKERHUB_USERNAME=<dockerhub-username>
-docker tag launchboard-backend:phase-3 "$DOCKERHUB_USERNAME/launchboard-backend:phase-3"
-docker tag launchboard-frontend:phase-3 "$DOCKERHUB_USERNAME/launchboard-frontend:phase-3"
-docker push "$DOCKERHUB_USERNAME/launchboard-backend:phase-3"
-docker push "$DOCKERHUB_USERNAME/launchboard-frontend:phase-3"
 ```
 
 Command explanation:
