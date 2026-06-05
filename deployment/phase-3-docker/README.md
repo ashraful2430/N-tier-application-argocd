@@ -2,21 +2,21 @@
 
 ## Fresh Start Assumption
 
-This phase starts from a clean Ubuntu EC2 server.
+You do not need to complete Phase 1 or Phase 2 before using this guide.
 
-You do not need to complete Phase 1 or Phase 2 before using this phase.
+This phase starts from a clean AWS account or clean AWS lab environment and a fresh Ubuntu EC2 server.
 
-This guide assumes:
+This phase deploys the N-tier application manually with Docker commands on one EC2 instance:
 
-- You have a fresh AWS EC2 server.
-- You have not installed Docker yet.
-- You have not cloned this project on the server yet.
-- You will type each command manually.
-- You will create files with `vim`.
-- You will not use shell scripts.
-- You will run each service as its own Docker container by hand.
+- PostgreSQL runs in one Docker container.
+- FastAPI backend runs in one Docker container.
+- React/Vite frontend is built into a Docker image and served by an Nginx container.
+- A Docker network lets the containers talk to each other by container name.
+- A Docker volume stores PostgreSQL data outside the PostgreSQL container.
 
-The goal of this phase is to learn Docker images and Docker containers before Docker Compose.
+Students read this README from GitHub in the browser. Do not assume the deployment folder already exists on the EC2 server. Every file that must be created is shown inline immediately after the `vim` command that creates it.
+
+No shell scripts are required in this phase.
 
 Project repository:
 
@@ -24,57 +24,112 @@ Project repository:
 git@github.com:ashraful2430/N-tier-application.git
 ```
 
-## What You Will Deploy
+## What This Phase Teaches
 
-This phase deploys:
+By completing this phase, students will learn:
 
-- PostgreSQL in a Docker container.
-- FastAPI backend in a Docker container.
-- React/Vite frontend built into an Nginx Docker container.
-- A Docker network so containers can talk to each other by container name.
-- A Docker volume so PostgreSQL data survives container restarts.
+- How to create an EC2 server for Docker deployment.
+- How to SSH into Ubuntu EC2.
+- How to install Docker Engine from Docker's official apt repository.
+- How Docker images and containers are different.
+- How to create Dockerfiles for backend and frontend.
+- How to create a Docker network.
+- How containers resolve each other by container name.
+- How to create a Docker volume for PostgreSQL data.
+- How to run PostgreSQL as a container.
+- How to run Alembic migrations from a temporary backend container.
+- How to run a FastAPI backend as a long-running Docker container.
+- How to run a React/Vite frontend inside an Nginx Docker container.
+- How to expose only the frontend container publicly.
+- How to keep backend and database ports private.
+- How to inspect Docker logs, health checks, networks, volumes, and containers.
+- How to stop, remove, rebuild, and rerun containers manually.
 
-Architecture:
+## Architecture
 
 ```text
-Browser
+User Browser
   |
-  | HTTP port 80
+  | HTTP on EC2 port 80
   v
 Frontend Nginx container
   |
-  | /api, /health, /ready
-  v
-Backend FastAPI container
+  +-- serves frontend static files from /usr/share/nginx/html
   |
-  | PostgreSQL connection
-  v
-PostgreSQL container
+  +-- proxies /api, /health, and /ready to backend container
+        |
+        v
+      FastAPI backend container on port 8000
+        |
+        v
+      PostgreSQL container on port 5432
 ```
 
-## When To Use This Architecture
+Container map:
 
-Use this architecture when:
+| Container | Image | Internal Port | Public Access | Purpose |
+| --- | --- | ---: | --- | --- |
+| `launchboard-frontend` | `launchboard-frontend:phase-3` | `8080` | Yes, mapped to EC2 port `80` | Serves frontend and proxies API traffic |
+| `launchboard-backend` | `launchboard-backend:phase-3` | `8000` | No | Runs FastAPI API |
+| `launchboard-postgres` | `postgres:16-alpine` | `5432` | No | Stores application data |
 
-- You want to learn how Docker images are built.
-- You want to understand `docker build`, `docker run`, networks, volumes, logs, and ports.
-- You want a small production-style deployment without Docker Compose yet.
-- You want to package backend and frontend separately.
-- You want to prepare for Docker Compose, Swarm, Kubernetes, and EKS.
+Important idea:
 
-Do not use this architecture when:
+Users should reach only the frontend Nginx container through EC2 port `80`. The backend and database should stay private inside the Docker network.
 
-- You need many containers managed together every day.
-- You need automatic restarts, rollbacks, and service discovery at scale.
+## Architecture Decision Guide
+
+Use Phase 3 when:
+
+- You want students to understand raw Docker commands before Docker Compose.
+- You want to teach images, containers, networks, volumes, logs, ports, and health checks.
+- You want a manual bridge between bare-metal deployment and Docker Compose.
+- You want students to see how each container is started by hand.
+
+Do not use Phase 3 when:
+
+- You want one command to run the full stack.
+- You need easier environment management.
 - You need multi-server orchestration.
-- You want easier environment management.
+- You need automatic rolling updates.
+- You need Kubernetes-style scheduling or service discovery.
 
-For real teams, Docker Compose is usually easier than manually running many `docker run` commands. That is why Phase 4 comes next.
+Production note:
+
+This is production-style for learning Docker on one server, but not a complete production platform. Real production should also consider Docker Compose or an orchestrator, managed database backups, image registry scanning, CI/CD, monitoring, centralized logs, secrets management, TLS, and automated rollback.
+
+## Cost Warning
+
+This phase can create AWS charges:
+
+| Resource | Cost Risk | Why |
+| --- | --- | --- |
+| EC2 instance | Medium | Billed while running |
+| EBS volume | Medium | Storage attached to EC2 |
+| Elastic IP | Medium | Charged if unused or in some public IPv4 cases |
+| Data transfer | Low to medium | Depends on traffic |
+| Snapshot | Medium | Charged if created |
+
+Cost-safe practice:
+
+- Use one small EC2 instance.
+- Do not create a NAT Gateway.
+- Do not create a Load Balancer.
+- Do not create RDS for this phase.
+- Stop or terminate the server after practice.
+- Delete unused EBS volumes and snapshots.
+- Create an AWS Budget alert.
+
+Reference:
+
+- AWS Budgets: https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html
+- AWS EC2 documentation: https://docs.aws.amazon.com/ec2/
 
 ## Recommended AWS Setup
 
 | Item | Recommended Value |
 | --- | --- |
+| AWS Region | `ap-southeast-1` or closest region |
 | EC2 Name | `devops-launchboard-phase-3` |
 | AMI | Ubuntu Server 24.04 LTS |
 | Instance Type | `t3.micro` or `t3.small` |
@@ -83,47 +138,97 @@ For real teams, Docker Compose is usually easier than manually running many `doc
 | Security Group | `devops-launchboard-phase-3-sg` |
 | SSH | Port `22`, your IP only |
 | HTTP | Port `80`, anywhere |
-| HTTPS | Port `443`, anywhere if you later add SSL |
+| HTTPS | Port `443`, anywhere if using SSL later |
+| Backend | Port `8000`, do not expose publicly |
+| PostgreSQL | Port `5432`, do not expose publicly |
 
-Do not open these ports publicly:
+Security group inbound rules:
+
+| Type | Port | Source | Purpose |
+| --- | ---: | --- | --- |
+| SSH | `22` | Your IP only | Server access |
+| HTTP | `80` | `0.0.0.0/0` | Public frontend container |
+| HTTPS | `443` | `0.0.0.0/0` | Public app with SSL later |
+
+Do not open:
 
 ```text
 8000
 5432
+5173
 ```
 
 Why:
 
-- Port `8000` is the backend container. The frontend Nginx container should proxy to it.
-- Port `5432` is PostgreSQL. Databases should not be public.
+- `8000` is private backend container traffic.
+- `5432` is private PostgreSQL container traffic.
+- `5173` is a Vite development server port and should not be used in production.
 
-## Files Included In This Phase
+## Files Created In This Phase
 
 ```text
 deployment/phase-3-docker/
 +-- env/
 |   +-- backend.docker.env.example
 |   +-- frontend.build.env.example
-+-- .dockerignore
 +-- Dockerfile.backend
 +-- Dockerfile.frontend
 +-- nginx-frontend.conf
 +-- README.md
+
+Repository root:
++-- .dockerignore
 ```
 
-These files are provided in the repository so students can inspect them. The README also shows the full file contents because students may be reading this guide from GitHub in a browser.
+Important Docker rule:
+
+The `.dockerignore` file must be in the Docker build context root. In this phase, the build context is the repository root because the build command ends with `.`.
+
+That means this file must exist here:
+
+```text
+/opt/devops-launchboard/app-source/.dockerignore
+```
+
+If `.dockerignore` is created only inside `deployment/phase-3-docker/`, Docker will not use it for the build context.
+
+## Deployment Plan
+
+You will follow this flow:
+
+1. Create EC2 server.
+2. SSH into EC2.
+3. Install base tools.
+4. Install Docker Engine.
+5. Log out and SSH back in so Docker group access works.
+6. Create GitHub SSH key on EC2.
+7. Clone the project from `main`.
+8. Create Docker phase files.
+9. Create real backend environment file.
+10. Build backend and frontend Docker images.
+11. Create Docker network and volume.
+12. Run PostgreSQL container.
+13. Wait for PostgreSQL to be ready.
+14. Run Alembic migrations from a temporary backend container.
+15. Run backend container.
+16. Run frontend container.
+17. Verify the app from the EC2 public IP.
+18. Debug logs and health checks if needed.
+19. Rollback or cleanup.
 
 ## Step 1: Create EC2 Server
 
-Run this step from the AWS Console.
+Run this step from: AWS Console
 
-Create one EC2 instance:
+Create an EC2 instance with:
 
 | Field | Value |
 | --- | --- |
 | Name | `devops-launchboard-phase-3` |
 | AMI | Ubuntu Server 24.04 LTS |
+| Architecture | 64-bit x86 |
 | Instance Type | `t3.micro` or `t3.small` |
+| Key Pair | `devops-launchboard-key` |
 | Storage | 20 GB gp3 |
 | Public IP | Enabled |
 
@@ -131,22 +236,44 @@ Security group inbound rules:
 
 | Type | Port | Source |
 | --- | ---: | --- |
-| SSH | 22 | Your IP |
-| HTTP | 80 | Anywhere |
-| HTTPS | 443 | Anywhere |
+| SSH | `22` | Your IP |
+| HTTP | `80` | Anywhere |
+| HTTPS | `443` | Anywhere |
+
+Expected result:
+
+```text
+EC2 instance state: Running
+Status checks: 2/2 checks passed
+```
 
 Why this step exists:
 
-EC2 is the Linux server that runs Docker. Docker containers still need a machine underneath them.
+Docker containers still need a Linux host. EC2 is the server where Docker Engine runs containers.
+
+Reference:
+
+- Connect to EC2 Linux instance: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/connect-to-linux-instance.html
+- EC2 security groups: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-security-groups.html
 
 ## Step 2: SSH Into EC2
 
-Run from your local terminal:
+Run this command from: your local machine where the `.pem` key exists
+
+Replace:
+
+- `<key-file>` with your key file
+- `<public-ip>` with your EC2 public IP
 
 ```bash
-chmod 400 devops-launchboard-key.pem
-ssh -i devops-launchboard-key.pem ubuntu@YOUR_EC2_PUBLIC_IP
+chmod 400 <key-file>.pem
+ssh -i <key-file>.pem ubuntu@<public-ip>
 ```
+
+Command explanation:
+
+- `chmod 400 <key-file>.pem` sets the key file to read-only for your user. SSH refuses to connect if the key file has loose permissions.
+- `ssh -i <key-file>.pem ubuntu@<public-ip>` connects to the EC2 server. `-i` tells SSH which key to use. `ubuntu` is the default user on Ubuntu EC2 instances created by AWS.
 
 Verify:
 
@@ -166,40 +293,53 @@ ip-...
 
 Why this step exists:
 
-SSH gives you terminal access to the server where Docker will be installed and containers will run.
-
-Reference:
-
-- AWS SSH guide: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/connect-linux-inst-ssh.html
+SSH gives you terminal access to install Docker, clone code, build images, run containers, and inspect logs.
 
 ## Step 3: Update Server And Install Base Tools
 
-Run:
+Run this command from: EC2 server
 
 ```bash
 cd ~
 sudo apt update
 sudo apt upgrade -y
-sudo apt install -y git curl wget vim unzip jq ca-certificates gnupg lsb-release
+sudo apt install -y git curl wget vim jq tree unzip ca-certificates gnupg lsb-release software-properties-common
 ```
 
-Why each command exists:
+Command explanation:
 
-- `sudo apt update` refreshes Ubuntu package information.
-- `sudo apt upgrade -y` installs available security and package updates.
-- `git` clones the project.
-- `curl` tests URLs and downloads setup files.
-- `vim` creates and edits files manually.
-- `jq` formats JSON output.
-- `ca-certificates` and `gnupg` help verify secure package repositories.
+- `cd ~` moves you to your home directory, `/home/ubuntu`, so you start from a known location.
+- `sudo apt update` refreshes the list of available packages from Ubuntu's servers.
+- `sudo apt upgrade -y` upgrades installed packages and applies security patches.
+- `git` clones the project from GitHub.
+- `curl` and `wget` download setup files and test endpoints.
+- `vim` edits config files directly on the server.
+- `jq` formats JSON output from API and Docker inspection commands.
+- `tree` shows folder structures visually.
+- `unzip` extracts zip archives.
+- `ca-certificates` and `gnupg` allow apt to verify signed package repositories.
+- `lsb-release` and `software-properties-common` help with repository setup and OS information.
+
+Verify:
+
+```bash
+git --version
+curl --version
+jq --version
+tree --version
+```
+
+Why this step exists:
+
+Fresh servers have old package metadata and may be missing tools needed for Docker installation and deployment verification.
 
 Reference:
 
-- Ubuntu package management: https://ubuntu.com/server/docs/package-management
+- Ubuntu package management: https://ubuntu.com/server/docs/how-to/software/package-management/index.html
 
 ## Step 4: Install Docker Engine
 
-Run:
+Run this command from: EC2 server
 
 ```bash
 cd ~
@@ -214,27 +354,60 @@ sudo systemctl start docker
 sudo usermod -aG docker ubuntu
 ```
 
-Log out and SSH back in so the Docker group permission applies:
+Command explanation:
+
+- `sudo install -m 0755 -d /etc/apt/keyrings` creates the directory where apt stores trusted GPG keys.
+- `curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg` downloads Docker's GPG key and saves it in apt's keyring format.
+- `sudo chmod a+r /etc/apt/keyrings/docker.gpg` allows apt to read the key.
+- `echo "deb ..." | sudo tee /etc/apt/sources.list.d/docker.list` adds Docker's official Ubuntu repository.
+- `sudo apt update` refreshes package metadata, including the Docker repository.
+- `sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin` installs Docker Engine, Docker CLI, container runtime, and Buildx build support.
+- `sudo systemctl enable docker` starts Docker automatically after server reboot.
+- `sudo systemctl start docker` starts Docker immediately.
+- `sudo usermod -aG docker ubuntu` adds the `ubuntu` user to the `docker` group so students do not need `sudo` before every Docker command.
+
+Important:
+
+Group membership does not update inside your current SSH session. You must log out and SSH back in.
+
+Run:
 
 ```bash
 exit
-ssh -i devops-launchboard-key.pem ubuntu@YOUR_EC2_PUBLIC_IP
+ssh -i <key-file>.pem ubuntu@<public-ip>
 ```
 
-Verify:
+Verify after logging back in:
 
 ```bash
+whoami
+groups
 docker --version
-docker info
+docker info --format '{{.ServerVersion}}'
+docker run --rm hello-world
 ```
+
+Expected:
+
+```text
+ubuntu
+ubuntu adm dialout cdrom floppy sudo audio dip video plugdev netdev lxd docker
+```
+
+You should see `docker` in the group list.
 
 Why this step exists:
 
-Docker Engine builds images and runs containers. Adding `ubuntu` to the `docker` group lets students run `docker` commands without typing `sudo` every time.
+Docker Engine builds images and runs containers. The Docker daemon runs as a system service. The `docker` group allows the `ubuntu` user to talk to the Docker daemon.
+
+Security note:
+
+Membership in the `docker` group is powerful. A user in this group has near-root control through Docker. This is acceptable for this lab server, but production teams should restrict Docker access carefully.
 
 Reference:
 
 - Docker Engine Ubuntu install: https://docs.docker.com/engine/install/ubuntu/
+- Docker post-install steps: https://docs.docker.com/engine/install/linux-postinstall/
 
 ## Step 5: Create GitHub SSH Key On EC2
 
@@ -247,6 +420,16 @@ chmod 700 ~/.ssh
 ssh-keygen -t ed25519 -C "devops-launchboard-phase-3-ec2" -f ~/.ssh/devops_launchboard_github_key
 cat ~/.ssh/devops_launchboard_github_key.pub
 ```
+
+Command explanation:
+
+- `cd ~` moves you to your home directory before creating SSH files.
+- `mkdir -p ~/.ssh` creates the `.ssh` folder if it does not exist.
+- `chmod 700 ~/.ssh` allows only your user to read, write, or enter the `.ssh` folder.
+- `ssh-keygen -t ed25519 ...` creates a new SSH key pair for GitHub access.
+- `-C "devops-launchboard-phase-3-ec2"` adds a label so you can identify this key in GitHub.
+- `-f ~/.ssh/devops_launchboard_github_key` saves the key with a custom name and avoids overwriting default keys.
+- `cat ~/.ssh/devops_launchboard_github_key.pub` prints the public key so you can copy it into GitHub.
 
 Add the public key to GitHub:
 
@@ -265,6 +448,10 @@ Use:
 | Key | Paste the public key |
 | Allow write access | Unchecked |
 
+Why "Allow write access" stays unchecked:
+
+This EC2 server only needs to clone and pull code. It does not need to push changes back to GitHub. Keeping write access off limits damage if the server is compromised.
+
 Create SSH config:
 
 ```bash
@@ -281,6 +468,14 @@ Host github.com
   IdentitiesOnly yes
 ```
 
+Config explanation:
+
+- `Host github.com` tells SSH this block applies when connecting to GitHub.
+- `HostName github.com` is the real host.
+- `User git` is the required SSH user for GitHub.
+- `IdentityFile ~/.ssh/devops_launchboard_github_key` tells SSH which private key to use.
+- `IdentitiesOnly yes` forces SSH to use only this key for GitHub.
+
 Secure permissions:
 
 ```bash
@@ -290,15 +485,29 @@ chmod 600 ~/.ssh/devops_launchboard_github_key
 chmod 644 ~/.ssh/devops_launchboard_github_key.pub
 ```
 
+Command explanation:
+
+- `chmod 600 ~/.ssh/config` makes the SSH config readable only by your user.
+- `chmod 600 ~/.ssh/devops_launchboard_github_key` locks down the private key.
+- `chmod 644 ~/.ssh/devops_launchboard_github_key.pub` keeps the public key readable. Public keys are not secret.
+
 Test:
 
 ```bash
 ssh -T git@github.com
 ```
 
+Expected result:
+
+```text
+Hi <username>/<repo>! You've successfully authenticated, but GitHub does not provide shell access.
+```
+
+If you see this message, SSH works. GitHub does not open a remote shell. That is normal.
+
 Why this step exists:
 
-The EC2 server needs permission to clone the private or protected GitHub repository using SSH.
+The EC2 server needs GitHub access to clone the app source code. SSH deploy keys are safer than using personal passwords.
 
 Reference:
 
@@ -310,14 +519,26 @@ Run:
 
 ```bash
 sudo mkdir -p /opt/devops-launchboard
+sudo chmod 755 /opt/devops-launchboard
 sudo chown -R ubuntu:ubuntu /opt/devops-launchboard
 cd /opt/devops-launchboard
 git clone git@github.com:ashraful2430/N-tier-application.git app-source
 cd app-source
 git branch --show-current
+tree -L 2 -a
 ```
 
-Expected:
+Command explanation:
+
+- `sudo mkdir -p /opt/devops-launchboard` creates the parent deployment folder.
+- `sudo chmod 755 /opt/devops-launchboard` allows your `ubuntu` user to enter the folder and prevents the parent-folder permission issue from Phase 2.
+- `sudo chown -R ubuntu:ubuntu /opt/devops-launchboard` gives the `ubuntu` user ownership of this lab deployment folder.
+- `cd /opt/devops-launchboard` moves into the deployment folder.
+- `git clone ... app-source` clones the project into `/opt/devops-launchboard/app-source`.
+- `git branch --show-current` prints the current Git branch.
+- `tree -L 2 -a` shows the project structure two levels deep.
+
+Expected branch:
 
 ```text
 main
@@ -325,7 +546,7 @@ main
 
 Why this step exists:
 
-The Dockerfiles use the repository root as the build context. That means Docker can copy files from `backend`, `frontend`, and `deployment/phase-3-docker`.
+The Dockerfiles use the repository root as the build context. Docker needs access to `backend`, `frontend`, and `deployment/phase-3-docker` during image builds.
 
 Reference:
 
@@ -340,16 +561,22 @@ cd /opt/devops-launchboard/app-source
 mkdir -p deployment/phase-3-docker/env
 ```
 
+Command explanation:
+
+- `cd /opt/devops-launchboard/app-source` moves to the repository root. This is important because Docker build commands later use this folder as the build context.
+- `mkdir -p deployment/phase-3-docker/env` creates the folder for Docker phase files and env examples.
+
 Why this folder exists:
 
-This folder keeps all Docker-specific files for Phase 3 in one place. Students can copy the files later, compare them with the README, or reuse them in the next phases.
+This folder keeps Docker-specific files for Phase 3 in one place. Students can inspect them, compare them with the README, and reuse the idea in Docker Compose later.
 
-### Create `.dockerignore`
+### Create Root `.dockerignore`
 
-Run:
+Run this from the repository root:
 
 ```bash
-vim deployment/phase-3-docker/.dockerignore
+cd /opt/devops-launchboard/app-source
+vim .dockerignore
 ```
 
 Paste:
@@ -369,16 +596,37 @@ __pycache__
 .ruff_cache
 .env
 .env.*
+deployment/phase-3-docker/env/*.env
 deployment/phase-4-docker-compose/volumes
 ```
 
-Explanation:
+Command explanation:
+
+- `.dockerignore` tells Docker which files to exclude from the build context.
+- This file must be in the repository root because the build command uses `.` as the build context.
+- If this file is placed only in `deployment/phase-3-docker/`, Docker will ignore it.
+
+Pattern explanation:
 
 - `.git` and `.github` are not needed inside Docker images.
-- Virtual environments and `node_modules` are rebuilt inside Docker.
-- `frontend/dist` is generated during the Docker build.
-- `.env` files are excluded so secrets do not get baked into images.
-- Cache folders are excluded to keep images smaller and cleaner.
+- `.venv` and `backend/.venv` are local Python virtual environments and should not be copied into Docker images.
+- `frontend/node_modules` is rebuilt inside the frontend image.
+- `frontend/dist` is generated during the frontend Docker build.
+- `node_modules` excludes any accidental root-level Node dependency folder.
+- `__pycache__`, `*.pyc`, `.pytest_cache`, and `.ruff_cache` are Python cache and tool cache folders.
+- `.env` and `.env.*` prevent common env files from entering the build context.
+- `deployment/phase-3-docker/env/*.env` prevents the real Docker env file from entering the build context.
+- `deployment/phase-4-docker-compose/volumes` excludes later local volume data if it exists.
+
+Verify:
+
+```bash
+ls -la .dockerignore
+```
+
+Why this step exists:
+
+Docker sends the build context to the Docker daemon. Excluding secrets, cache folders, and heavy dependency folders keeps builds safer and faster.
 
 Reference:
 
@@ -411,7 +659,7 @@ COPY backend/app ./app
 COPY backend/alembic ./alembic
 
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir .
+    && pip install --no-cache-dir ".[dev]"
 
 FROM python:3.12-slim AS runtime
 
@@ -441,18 +689,32 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD pytho
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 ```
 
-Explanation:
+Dockerfile explanation:
 
-- `builder` installs Python dependencies in a virtual environment.
-- `runtime` keeps the final image focused on running the app.
-- `PYTHONDONTWRITEBYTECODE=1` avoids writing `.pyc` files.
+- `FROM python:3.12-slim AS builder` starts a build stage using a small Python base image.
+- `PYTHONDONTWRITEBYTECODE=1` stops Python from writing `.pyc` files.
 - `PYTHONUNBUFFERED=1` makes logs appear immediately in `docker logs`.
-- `COPY backend/...` copies only backend code needed by FastAPI and Alembic.
-- `pip install --no-cache-dir` avoids keeping pip cache inside the image.
+- `VIRTUAL_ENV=/opt/venv` and `PATH=...` make the virtual environment the default Python environment.
+- `WORKDIR /app` sets the working directory inside the image.
+- `RUN python -m venv /opt/venv` creates a virtual environment inside the image.
+- `COPY backend/pyproject.toml backend/alembic.ini ./` copies backend package metadata and Alembic config.
+- `COPY backend/app ./app` copies FastAPI app code.
+- `COPY backend/alembic ./alembic` copies Alembic migration files.
+- `pip install --no-cache-dir --upgrade pip` upgrades pip without keeping cache files.
+- `pip install --no-cache-dir ".[dev]"` installs the backend package and dev extras. This is needed here because this phase runs `alembic upgrade head` from the backend image, and Alembic is often stored in dev dependencies.
+- `FROM python:3.12-slim AS runtime` starts a cleaner runtime image.
+- `groupadd` and `useradd` create a non-root user named `app`.
+- `COPY --from=builder /opt/venv /opt/venv` copies installed Python dependencies from the builder stage.
+- `COPY --from=builder /app /app` copies app code from the builder stage.
+- `RUN chown -R app:app /app /opt/venv` gives the app user ownership of runtime files.
 - `USER app` runs the backend as a non-root user.
-- `EXPOSE 8000` documents the backend port.
-- `HEALTHCHECK` lets Docker report whether the backend is healthy.
-- `CMD` starts Uvicorn.
+- `EXPOSE 8000` documents the backend port inside the container.
+- `HEALTHCHECK` lets Docker check if the backend responds on `/health`.
+- `CMD ...` starts Uvicorn and binds it to `0.0.0.0`, which means the process listens on the container network interface.
+
+Why `0.0.0.0` is used inside the backend container:
+
+Inside a container, `127.0.0.1` means only that container itself. Other containers cannot reach it. `0.0.0.0` lets the frontend container reach the backend container through the Docker network.
 
 Reference:
 
@@ -479,7 +741,7 @@ ARG VITE_API_URL=""
 ENV VITE_API_URL=${VITE_API_URL}
 
 COPY frontend/package*.json ./
-RUN npm ci
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 COPY frontend/ ./
 RUN npm run build
@@ -503,14 +765,30 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD wget 
 CMD ["nginx", "-g", "daemon off;"]
 ```
 
-Explanation:
+Dockerfile explanation:
 
-- The Node stage builds the Vite frontend.
-- `ARG VITE_API_URL=""` makes frontend API calls use same-origin paths like `/api/summary`.
-- `npm ci` installs exact dependencies from `package-lock.json`.
-- The Nginx stage serves static production files.
-- Nginx listens on container port `8080` so it can run as a non-root user.
-- Public traffic will still use EC2 port `80`.
+- `FROM node:22-alpine AS builder` starts a lightweight Node.js build stage.
+- `WORKDIR /app` sets the frontend working directory inside the image.
+- `ARG VITE_API_URL=""` defines a build-time variable. Empty means the frontend uses same-origin API paths such as `/api/summary`.
+- `ENV VITE_API_URL=${VITE_API_URL}` makes the build argument available during `npm run build`.
+- `COPY frontend/package*.json ./` copies dependency files first to improve build caching.
+- `RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi` uses `npm ci` when a lock file exists and falls back to `npm install` if the project has no lock file.
+- `COPY frontend/ ./` copies the frontend source code.
+- `RUN npm run build` creates the production build in `dist`.
+- `FROM nginx:1.27-alpine AS runtime` starts a small Nginx runtime image.
+- `addgroup` and `adduser` create a non-root user named `app`.
+- `mkdir -p ...` creates runtime folders Nginx needs when running without root.
+- `chown -R app:app ...` gives the non-root user access to Nginx runtime folders and frontend files.
+- `COPY deployment/phase-3-docker/nginx-frontend.conf ...` replaces Nginx's default site config.
+- `COPY --from=builder /app/dist /usr/share/nginx/html` copies built frontend files into Nginx's web root.
+- `USER app` runs Nginx as a non-root user.
+- `EXPOSE 8080` documents the internal container port.
+- `HEALTHCHECK` checks the frontend Nginx health endpoint.
+- `CMD ["nginx", "-g", "daemon off;"]` starts Nginx in the foreground, which is required for Docker containers.
+
+Why Nginx listens on `8080` inside the container:
+
+Linux ports below `1024`, such as `80`, usually require root privileges. Since this container runs as a non-root user, Nginx listens on `8080` inside the container. Docker maps public EC2 port `80` to container port `8080` later.
 
 Reference:
 
@@ -576,14 +854,35 @@ server {
 }
 ```
 
-Explanation:
+Nginx config explanation:
 
-- `listen 8080` lets Nginx run inside the container without root.
-- `root` points to the built frontend files.
-- `/healthz` is a simple container health endpoint.
-- `/api/`, `/health`, and `/ready` proxy to the backend container.
-- `launchboard-backend` works because both containers are on the same Docker network.
-- `try_files` supports frontend routes after browser refresh.
+- `listen 8080` accepts HTTP traffic inside the container on port `8080`.
+- `server_name _` is a catch-all value for this container.
+- `root /usr/share/nginx/html` points to the built frontend files copied by the Dockerfile.
+- `index index.html` tells Nginx which file to serve for directory requests.
+- `client_max_body_size 10M` allows request bodies up to 10 MB.
+- `location = /healthz` returns `ok` directly from frontend Nginx. It checks whether Nginx is alive.
+- `location /api/` forwards API traffic to the backend container.
+- `proxy_pass http://launchboard-backend:8000/api/` uses the backend container name as a DNS name. Docker provides this DNS resolution because both containers are attached to `launchboard-net`.
+- `location = /health` forwards backend health checks to the backend container.
+- `location = /ready` forwards backend readiness checks to the backend container.
+- `proxy_set_header Host $host` forwards the original host.
+- `proxy_set_header X-Real-IP $remote_addr` forwards the client IP seen by Nginx.
+- `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` forwards the request IP chain.
+- `proxy_set_header X-Forwarded-Proto $scheme` forwards `http` or `https` information.
+- `location / { try_files $uri $uri/ /index.html; }` supports React/Vite browser routes. If a route does not exist as a real file, Nginx returns `index.html` and the frontend router handles it.
+
+Simple traffic flow:
+
+```text
+Browser opens http://YOUR_EC2_PUBLIC_IP
+Frontend container serves index.html
+
+Browser calls http://YOUR_EC2_PUBLIC_IP/api/summary
+Frontend Nginx container proxies to http://launchboard-backend:8000/api/summary
+Backend container returns JSON
+Frontend Nginx container returns the response to the browser
+```
 
 Reference:
 
@@ -608,11 +907,21 @@ CORS_ORIGINS=http://YOUR_EC2_PUBLIC_IP
 SEED_DEMO_DATA=true
 ```
 
-Explanation:
+Env explanation:
 
-- `DATABASE_URL` uses `launchboard-postgres` because that is the PostgreSQL container name.
-- `CORS_ORIGINS` must match the browser URL.
-- `SEED_DEMO_DATA=true` is useful for student labs because it loads sample dashboard data.
+- `APP_NAME` names the FastAPI app.
+- `APP_ENV=production` labels this as a production-style Docker runtime.
+- `DATABASE_URL` points to the PostgreSQL container. `launchboard-postgres` is the container name and works as a hostname inside the Docker network.
+- `CORS_ORIGINS` should match the public browser origin.
+- `SEED_DEMO_DATA=true` loads sample dashboard data if the app supports demo seeding.
+
+Important:
+
+Docker env files are not shell scripts. Do not wrap values in quotes unless you want quotes to become part of the value.
+
+Password safety:
+
+For student labs, use a simple strong password with letters and numbers first. Special characters such as `@`, `/`, `:`, `#`, `?`, and `&` can break a database URL unless they are URL encoded.
 
 ### Create Frontend Build Env Example
 
@@ -630,7 +939,17 @@ VITE_API_URL=
 
 Explanation:
 
-An empty `VITE_API_URL` makes the frontend call relative URLs. For example, the browser calls `/api/summary`, and the frontend Nginx container proxies that request to the backend.
+An empty `VITE_API_URL` makes the frontend call relative URLs. For example, the browser calls `/api/summary`, and the frontend Nginx container proxies that request to the backend container.
+
+Why this is useful:
+
+The browser only needs one public origin:
+
+```text
+http://YOUR_EC2_PUBLIC_IP
+```
+
+The frontend and backend appear under the same origin, so students avoid CORS issues in this phase.
 
 ## Step 8: Create Real Backend Env File
 
@@ -649,9 +968,31 @@ CHANGE_ME_STRONG_PASSWORD
 YOUR_EC2_PUBLIC_IP
 ```
 
+Example:
+
+```env
+APP_NAME=DevOps LaunchBoard API
+APP_ENV=production
+DATABASE_URL=postgresql+asyncpg://launchboard_user:ashik12345@launchboard-postgres:5432/launchboard
+CORS_ORIGINS=http://13.229.10.25
+SEED_DEMO_DATA=true
+```
+
+Command explanation:
+
+- `cp ...example ...env` copies the safe example file into a real env file.
+- `vim ...backend.docker.env` lets you put real lab values into the file.
+- The real env file is ignored by `.dockerignore`, so Docker does not send it into the image build context.
+
+Verify:
+
+```bash
+cat deployment/phase-3-docker/env/backend.docker.env
+```
+
 Why this step exists:
 
-The example file is safe to commit. The real env file contains real lab values and should stay on the server.
+The backend container reads runtime settings from this file when it starts. The PostgreSQL migration command also reads this file.
 
 ## Step 9: Build Docker Images
 
@@ -663,15 +1004,41 @@ docker build -f deployment/phase-3-docker/Dockerfile.backend -t launchboard-back
 docker build -f deployment/phase-3-docker/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-3 .
 ```
 
+Command explanation:
+
+- `cd /opt/devops-launchboard/app-source` moves to the repository root.
+- `docker build` builds a Docker image.
+- `-f deployment/phase-3-docker/Dockerfile.backend` tells Docker which Dockerfile to use.
+- `-t launchboard-backend:phase-3` names and tags the backend image.
+- The final `.` means the current folder is the Docker build context.
+- `--build-arg VITE_API_URL=` passes an empty frontend API base URL, so the frontend uses relative API paths.
+
 Verify:
 
 ```bash
 docker images | grep launchboard
 ```
 
+Expected:
+
+```text
+launchboard-backend    phase-3
+launchboard-frontend   phase-3
+```
+
 Why this step exists:
 
-Images are the packaged application. A container is a running instance of an image.
+Images are packaged application artifacts. A container is a running instance of an image.
+
+Common issue:
+
+If the backend build fails with an Alembic or dependency error, check this line in `Dockerfile.backend`:
+
+```dockerfile
+pip install --no-cache-dir ".[dev]"
+```
+
+This phase needs Alembic available inside the backend image because migrations run from the backend image.
 
 Reference:
 
@@ -682,20 +1049,27 @@ Reference:
 Run:
 
 ```bash
-docker network create launchboard-net
-docker volume create launchboard-postgres-data
+docker network inspect launchboard-net >/dev/null 2>&1 || docker network create launchboard-net
+docker volume inspect launchboard-postgres-data >/dev/null 2>&1 || docker volume create launchboard-postgres-data
 ```
+
+Command explanation:
+
+- `docker network inspect launchboard-net >/dev/null 2>&1 || docker network create launchboard-net` checks if the network exists. If not, it creates it.
+- `docker volume inspect launchboard-postgres-data >/dev/null 2>&1 || docker volume create launchboard-postgres-data` checks if the volume exists. If not, it creates it.
 
 Verify:
 
 ```bash
-docker network ls
-docker volume ls
+docker network ls | grep launchboard-net
+docker volume ls | grep launchboard-postgres-data
 ```
 
 Why this step exists:
 
-The network lets containers find each other by name. The volume stores PostgreSQL data outside the container filesystem, so deleting and recreating the PostgreSQL container does not immediately delete the database data.
+The Docker network lets containers reach each other by name, such as `launchboard-backend` and `launchboard-postgres`.
+
+The Docker volume stores PostgreSQL data outside the container filesystem. If the PostgreSQL container is deleted and recreated, the data remains in the volume unless the volume is deleted.
 
 Reference:
 
@@ -704,7 +1078,27 @@ Reference:
 
 ## Step 11: Run PostgreSQL Container
 
-Run:
+Set one password variable first:
+
+```bash
+DB_PASSWORD='CHANGE_ME_STRONG_PASSWORD'
+```
+
+Replace `CHANGE_ME_STRONG_PASSWORD` with the same password used in `deployment/phase-3-docker/env/backend.docker.env`.
+
+Example:
+
+```bash
+DB_PASSWORD='ashik12345'
+```
+
+Remove an old PostgreSQL container if you are rerunning the lab:
+
+```bash
+docker rm -f launchboard-postgres >/dev/null 2>&1 || true
+```
+
+Run PostgreSQL:
 
 ```bash
 docker run -d \
@@ -712,23 +1106,50 @@ docker run -d \
   --network launchboard-net \
   -e POSTGRES_DB=launchboard \
   -e POSTGRES_USER=launchboard_user \
-  -e POSTGRES_PASSWORD=CHANGE_ME_STRONG_PASSWORD \
+  -e POSTGRES_PASSWORD="$DB_PASSWORD" \
   -v launchboard-postgres-data:/var/lib/postgresql/data \
+  --restart unless-stopped \
   postgres:16-alpine
 ```
 
-Use the same password you placed in `backend.docker.env`.
+Command explanation:
+
+- `docker rm -f launchboard-postgres >/dev/null 2>&1 || true` removes an old container with the same name if it exists.
+- `docker run -d` starts a container in detached mode.
+- `--name launchboard-postgres` gives the container a stable name. Other containers use this name as a hostname.
+- `--network launchboard-net` connects the container to the app network.
+- `POSTGRES_DB=launchboard` creates the app database during first startup.
+- `POSTGRES_USER=launchboard_user` creates the app database user.
+- `POSTGRES_PASSWORD="$DB_PASSWORD"` sets the password for the app database user.
+- `-v launchboard-postgres-data:/var/lib/postgresql/data` stores database data in a Docker volume.
+- `--restart unless-stopped` restarts the container after Docker or server restart unless you manually stopped it.
+- `postgres:16-alpine` is the PostgreSQL image.
 
 Verify:
 
 ```bash
-docker ps
-docker logs launchboard-postgres
+docker ps --filter name=launchboard-postgres
+docker logs launchboard-postgres --tail 50
+```
+
+Wait until PostgreSQL is ready:
+
+```bash
+until docker exec launchboard-postgres pg_isready -U launchboard_user -d launchboard; do
+  echo "Waiting for PostgreSQL..."
+  sleep 2
+done
+```
+
+Expected:
+
+```text
+/var/run/postgresql:5432 - accepting connections
 ```
 
 Why this step exists:
 
-The backend needs a database. PostgreSQL runs as a container in this phase instead of being installed directly on Ubuntu.
+The backend needs PostgreSQL before migrations and API startup. The wait command prevents students from running migrations before the database is ready.
 
 Reference:
 
@@ -747,11 +1168,47 @@ docker run --rm \
   alembic upgrade head
 ```
 
+Command explanation:
+
+- `docker run --rm` starts a temporary container and removes it after the command finishes.
+- `--network launchboard-net` lets the migration container reach `launchboard-postgres` by name.
+- `--env-file ...backend.docker.env` loads `DATABASE_URL` and other backend settings.
+- `launchboard-backend:phase-3` uses the backend image you built earlier.
+- `alembic upgrade head` overrides the default backend startup command and runs migrations instead.
+
+Expected output:
+
+```text
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade  -> 20260515_0001, create launchboard tables
+```
+
+Verify tables:
+
+```bash
+docker exec -it launchboard-postgres psql -U launchboard_user -d launchboard -c "\dt"
+```
+
+Expected:
+
+```text
+alembic_version
+deployments
+services
+```
+
 Why this step exists:
 
-The backend image includes Alembic. This one-time container starts, creates the database tables, and exits.
+Alembic creates or updates database tables. Without migrations, backend API routes that use the database may fail.
 
 ## Step 13: Run Backend Container
+
+Remove an old backend container if you are rerunning the lab:
+
+```bash
+docker rm -f launchboard-backend >/dev/null 2>&1 || true
+```
 
 Run:
 
@@ -765,19 +1222,63 @@ docker run -d \
   launchboard-backend:phase-3
 ```
 
+Command explanation:
+
+- `docker rm -f launchboard-backend ...` removes an old backend container with the same name if one exists.
+- `docker run -d` starts the backend container in the background.
+- `--name launchboard-backend` gives the container a DNS name on the Docker network.
+- `--network launchboard-net` connects the backend to the same network as PostgreSQL.
+- `--env-file ...backend.docker.env` injects backend runtime configuration.
+- `--restart unless-stopped` starts the backend again after Docker or EC2 restart.
+- `launchboard-backend:phase-3` is the image to run.
+
 Verify:
 
 ```bash
-docker ps
-docker logs launchboard-backend
+docker ps --filter name=launchboard-backend
+docker logs launchboard-backend --tail 100
 docker inspect --format='{{json .State.Health}}' launchboard-backend | jq
+```
+
+Wait for backend health:
+
+```bash
+until [ "$(docker inspect --format='{{.State.Health.Status}}' launchboard-backend)" = "healthy" ]; do
+  echo "Waiting for backend health..."
+  docker logs launchboard-backend --tail 10
+  sleep 5
+done
+```
+
+Expected:
+
+```text
+healthy
 ```
 
 Why this step exists:
 
-This starts the FastAPI backend as a long-running container. It is not exposed publicly because only the frontend Nginx container needs to reach it.
+The backend is the API service. It stays private because it is not published with `-p`. Only containers on `launchboard-net` can reach it.
+
+Important:
+
+Do not publish backend port `8000` to the internet in this phase. The frontend Nginx container proxies requests to it internally.
 
 ## Step 14: Run Frontend Container
+
+Check if EC2 port `80` is free:
+
+```bash
+sudo ss -tulpn | grep ':80 ' || echo "Port 80 is free"
+```
+
+If another service is already using port `80`, stop that service first. On a clean Phase 3 server this should usually be free.
+
+Remove an old frontend container if you are rerunning the lab:
+
+```bash
+docker rm -f launchboard-frontend >/dev/null 2>&1 || true
+```
 
 Run:
 
@@ -790,24 +1291,50 @@ docker run -d \
   launchboard-frontend:phase-3
 ```
 
+Command explanation:
+
+- `docker rm -f launchboard-frontend ...` removes an old frontend container with the same name if one exists.
+- `docker run -d` starts the frontend container in the background.
+- `--name launchboard-frontend` gives the container a stable name.
+- `--network launchboard-net` connects the frontend container to the backend container.
+- `-p 80:8080` maps EC2 public port `80` to container port `8080`.
+- `--restart unless-stopped` starts the frontend again after Docker or EC2 restart.
+- `launchboard-frontend:phase-3` is the image to run.
+
+Port explanation:
+
+```text
+Browser -> EC2 public IP port 80 -> Docker port mapping -> frontend container port 8080
+```
+
 Verify:
 
 ```bash
-docker ps
-docker logs launchboard-frontend
+docker ps --filter name=launchboard-frontend
+docker logs launchboard-frontend --tail 100
+docker inspect --format='{{json .State.Health}}' launchboard-frontend | jq
 curl -I http://127.0.0.1
+curl -s http://127.0.0.1/healthz
 curl -s http://127.0.0.1/health | jq
 curl -s http://127.0.0.1/ready | jq
 curl -s http://127.0.0.1/api/summary | jq
 ```
 
+Expected:
+
+- `curl -I http://127.0.0.1` returns `HTTP/1.1 200 OK`.
+- `/healthz` returns `ok` from frontend Nginx.
+- `/health` returns backend health JSON.
+- `/ready` returns backend readiness JSON.
+- `/api/summary` returns application data JSON.
+
 Why this step exists:
 
-The frontend container is the public entry point. It serves the browser app and proxies API requests to the backend container.
+The frontend container is the public entry point. It serves static frontend files and forwards API requests to the backend container.
 
 ## Step 15: Verify From Browser
 
-Open:
+From your local machine, open:
 
 ```text
 http://YOUR_EC2_PUBLIC_IP
@@ -822,21 +1349,324 @@ API requests go through /api.
 No browser CORS errors.
 ```
 
+If the browser does not load, test from the EC2 server first:
+
+```bash
+curl -I http://127.0.0.1
+curl -s http://127.0.0.1/healthz
+curl -s http://127.0.0.1/api/summary | jq
+```
+
+Then check AWS security group:
+
+```text
+Port 80 must allow inbound traffic from 0.0.0.0/0.
+```
+
+Why this step exists:
+
+Local EC2 tests prove the containers work on the server. Browser tests prove AWS networking and public access work.
+
+## Docker Concepts Used In This Phase
+
+### Image
+
+An image is the packaged app template.
+
+Example:
+
+```text
+launchboard-backend:phase-3
+launchboard-frontend:phase-3
+postgres:16-alpine
+```
+
+### Container
+
+A container is a running instance of an image.
+
+Example:
+
+```text
+launchboard-backend
+launchboard-frontend
+launchboard-postgres
+```
+
+### Network
+
+A Docker network lets containers communicate by container name.
+
+Example:
+
+```text
+launchboard-frontend -> launchboard-backend:8000
+launchboard-backend -> launchboard-postgres:5432
+```
+
+### Volume
+
+A Docker volume stores persistent data outside the container filesystem.
+
+Example:
+
+```text
+launchboard-postgres-data -> /var/lib/postgresql/data
+```
+
+### Port mapping
+
+Port mapping exposes a container port on the EC2 server.
+
+Example:
+
+```text
+-p 80:8080
+```
+
+Meaning:
+
+```text
+EC2 port 80 -> frontend container port 8080
+```
+
 ## Logs And Debugging
 
-Useful commands:
+Show running containers:
 
 ```bash
 docker ps
-docker logs launchboard-postgres
-docker logs launchboard-backend
-docker logs launchboard-frontend
-docker inspect launchboard-backend | jq
+```
+
+Show all containers, including stopped ones:
+
+```bash
+docker ps -a
+```
+
+Show logs:
+
+```bash
+docker logs launchboard-postgres --tail 100
+docker logs launchboard-backend --tail 100
+docker logs launchboard-frontend --tail 100
+```
+
+Follow logs live:
+
+```bash
+docker logs -f launchboard-backend
+```
+
+Inspect health:
+
+```bash
+docker inspect --format='{{json .State.Health}}' launchboard-backend | jq
+docker inspect --format='{{json .State.Health}}' launchboard-frontend | jq
+```
+
+Inspect network:
+
+```bash
 docker network inspect launchboard-net | jq
+```
+
+Check PostgreSQL:
+
+```bash
 docker exec -it launchboard-postgres psql -U launchboard_user -d launchboard
 ```
 
-Common restart commands:
+Inside `psql`:
+
+```sql
+\dt
+select current_database(), current_user;
+\q
+```
+
+Check ports on EC2:
+
+```bash
+sudo ss -tulpn | grep ':80\|:8000\|:5432'
+```
+
+Expected:
+
+- Port `80` should be published by Docker on the EC2 host.
+- Port `8000` should not be published on the EC2 host.
+- Port `5432` should not be published on the EC2 host.
+
+Why this section exists:
+
+Docker issues are usually visible in container status, logs, health checks, network settings, or port mappings.
+
+## Common Problems And Fixes
+
+### Problem 1: Docker command says permission denied
+
+Check:
+
+```bash
+groups
+```
+
+If you do not see `docker`, log out and SSH back in:
+
+```bash
+exit
+ssh -i <key-file>.pem ubuntu@<public-ip>
+```
+
+Why this happens:
+
+`sudo usermod -aG docker ubuntu` updates group membership, but your current SSH session does not receive the new group list.
+
+### Problem 2: Docker build sends too many files or includes secrets
+
+Check:
+
+```bash
+ls -la /opt/devops-launchboard/app-source/.dockerignore
+```
+
+The `.dockerignore` file must be in the repository root.
+
+Why this happens:
+
+Docker only uses `.dockerignore` from the build context root. This phase uses `.` as the build context.
+
+### Problem 3: Backend image builds but migration command fails with `alembic: not found`
+
+Check `Dockerfile.backend`:
+
+```dockerfile
+pip install --no-cache-dir ".[dev]"
+```
+
+Why this happens:
+
+Alembic may be listed under dev dependencies in the Python project. This phase runs migrations from the backend image, so Alembic must exist inside that image.
+
+### Problem 4: Migration fails because database is not ready
+
+Run:
+
+```bash
+docker logs launchboard-postgres --tail 100
+docker exec launchboard-postgres pg_isready -U launchboard_user -d launchboard
+```
+
+Then wait:
+
+```bash
+until docker exec launchboard-postgres pg_isready -U launchboard_user -d launchboard; do
+  echo "Waiting for PostgreSQL..."
+  sleep 2
+done
+```
+
+### Problem 5: Backend cannot connect to database
+
+Check env file:
+
+```bash
+cat deployment/phase-3-docker/env/backend.docker.env
+```
+
+Expected host inside `DATABASE_URL`:
+
+```text
+launchboard-postgres
+```
+
+Bad for this phase:
+
+```text
+127.0.0.1
+localhost
+```
+
+Why:
+
+Inside the backend container, `127.0.0.1` means the backend container itself, not the PostgreSQL container.
+
+### Problem 6: Frontend shows but API fails
+
+Check:
+
+```bash
+docker logs launchboard-frontend --tail 100
+docker logs launchboard-backend --tail 100
+curl -s http://127.0.0.1/api/summary | jq
+```
+
+Common causes:
+
+```text
+Backend container is not running.
+Backend is unhealthy.
+Frontend Nginx config points to the wrong backend name.
+Containers are not on the same Docker network.
+```
+
+### Problem 7: Browser does not open the app
+
+Check from EC2:
+
+```bash
+curl -I http://127.0.0.1
+```
+
+If this works on EC2 but not in your browser, check AWS security group:
+
+```text
+Port 80 must be open to 0.0.0.0/0.
+```
+
+If this fails on EC2, check whether frontend container is running:
+
+```bash
+docker ps --filter name=launchboard-frontend
+docker logs launchboard-frontend --tail 100
+```
+
+### Problem 8: Port 80 is already allocated
+
+Check:
+
+```bash
+sudo ss -tulpn | grep ':80 '
+```
+
+If another container uses port 80:
+
+```bash
+docker ps
+```
+
+Stop the old container or use a different port for practice:
+
+```bash
+docker run -d \
+  --name launchboard-frontend \
+  --network launchboard-net \
+  -p 8080:8080 \
+  --restart unless-stopped \
+  launchboard-frontend:phase-3
+```
+
+Then open:
+
+```text
+http://YOUR_EC2_PUBLIC_IP:8080
+```
+
+For production, prefer domain-based routing through one Nginx or load balancer on ports `80` and `443`.
+
+## Restart Commands
+
+Restart containers:
 
 ```bash
 docker restart launchboard-postgres
@@ -844,37 +1674,48 @@ docker restart launchboard-backend
 docker restart launchboard-frontend
 ```
 
-Why this section exists:
-
-Docker problems are usually visible in container logs, container health, or network inspection. Checking those first saves time.
-
-## Rollback Plan
-
-Stop the current containers:
+Stop containers:
 
 ```bash
-docker stop launchboard-frontend launchboard-backend
-docker rm launchboard-frontend launchboard-backend
+docker stop launchboard-frontend launchboard-backend launchboard-postgres
 ```
 
-Rebuild from a previous Git commit:
+Start stopped containers:
+
+```bash
+docker start launchboard-postgres launchboard-backend launchboard-frontend
+```
+
+View restart policy:
+
+```bash
+docker inspect --format='{{.HostConfig.RestartPolicy.Name}}' launchboard-backend
+```
+
+Why this section exists:
+
+Students need to understand that containers are separate processes. Restarting one container does not automatically rebuild the image.
+
+## Rebuild After Code Changes
+
+If code changes are pulled from GitHub, rebuild images and recreate containers.
+
+Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-git log --oneline -5
-git checkout PREVIOUS_COMMIT
+git pull origin main
+
 docker build -f deployment/phase-3-docker/Dockerfile.backend -t launchboard-backend:phase-3 .
 docker build -f deployment/phase-3-docker/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-3 .
-```
 
-Run migrations and containers again:
-
-```bash
 docker run --rm \
   --network launchboard-net \
   --env-file deployment/phase-3-docker/env/backend.docker.env \
   launchboard-backend:phase-3 \
   alembic upgrade head
+
+docker rm -f launchboard-backend launchboard-frontend
 
 docker run -d \
   --name launchboard-backend \
@@ -891,56 +1732,208 @@ docker run -d \
   launchboard-frontend:phase-3
 ```
 
-Rollback is important because every production deployment needs a recovery path.
+Why this step exists:
+
+Docker containers do not automatically update when source code changes. You must rebuild the image and recreate the container.
+
+## Rollback Plan
+
+Use this when the app is broken and you need to restore an older Git version.
+
+Stop and remove current app containers:
+
+```bash
+docker rm -f launchboard-frontend launchboard-backend || true
+```
+
+Restore a previous Git commit:
+
+```bash
+cd /opt/devops-launchboard/app-source
+git log --oneline -5
+git checkout PREVIOUS_COMMIT
+```
+
+Rebuild images:
+
+```bash
+docker build -f deployment/phase-3-docker/Dockerfile.backend -t launchboard-backend:phase-3 .
+docker build -f deployment/phase-3-docker/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-3 .
+```
+
+Run migrations:
+
+```bash
+docker run --rm \
+  --network launchboard-net \
+  --env-file deployment/phase-3-docker/env/backend.docker.env \
+  launchboard-backend:phase-3 \
+  alembic upgrade head
+```
+
+Run containers again:
+
+```bash
+docker run -d \
+  --name launchboard-backend \
+  --network launchboard-net \
+  --env-file deployment/phase-3-docker/env/backend.docker.env \
+  --restart unless-stopped \
+  launchboard-backend:phase-3
+
+docker run -d \
+  --name launchboard-frontend \
+  --network launchboard-net \
+  -p 80:8080 \
+  --restart unless-stopped \
+  launchboard-frontend:phase-3
+```
+
+Verify:
+
+```bash
+curl -I http://127.0.0.1
+curl -s http://127.0.0.1/api/summary | jq
+```
+
+Why rollback exists:
+
+Every production deployment needs a recovery path. Rollback prevents a broken deployment from staying public.
 
 ## Cleanup
 
-Use cleanup when the lab is finished:
+Use cleanup when the lab is finished.
+
+Stop and remove containers:
 
 ```bash
-docker stop launchboard-frontend launchboard-backend launchboard-postgres || true
-docker rm launchboard-frontend launchboard-backend launchboard-postgres || true
+docker rm -f launchboard-frontend launchboard-backend launchboard-postgres || true
+```
+
+Remove network:
+
+```bash
 docker network rm launchboard-net || true
+```
+
+Remove volume:
+
+```bash
 docker volume rm launchboard-postgres-data || true
+```
+
+Important:
+
+Removing the volume deletes PostgreSQL data for this lab.
+
+Remove images:
+
+```bash
 docker rmi launchboard-backend:phase-3 launchboard-frontend:phase-3 || true
 ```
 
-Then terminate the EC2 instance from the AWS Console if you no longer need it.
+Optional Docker cleanup:
 
-Cost reminder:
+```bash
+docker system prune -f
+```
 
-- Running EC2 instances can cost money.
-- EBS volumes can cost money.
-- Unused Elastic IPs can cost money.
+Remove app source files:
 
-Reference:
+```bash
+sudo rm -rf /opt/devops-launchboard
+```
 
-- AWS Billing: https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/billing-what-is.html
-- AWS Budgets: https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html
+Delete AWS resources:
+
+```text
+Terminate EC2 instance.
+Delete unused EBS volumes.
+Release unused Elastic IPs.
+Delete snapshots.
+Remove unused security groups.
+Check AWS Billing dashboard.
+Remove GitHub deploy key.
+```
 
 ## Production Checklist
 
+Before calling Phase 3 complete:
+
 ```text
-[ ] EC2 security group exposes only 22, 80, and optionally 443
-[ ] Docker Engine installed
-[ ] GitHub SSH key created and tested
-[ ] Repository cloned with SSH
-[ ] Dockerfiles created with vim
-[ ] .dockerignore excludes secrets and heavy folders
+[ ] EC2 security group exposes only 22, 80, and optional 443
+[ ] SSH is restricted to your IP
+[ ] Backend port 8000 is not public
+[ ] PostgreSQL port 5432 is not public
+[ ] Docker Engine installed from Docker's official repository
+[ ] ubuntu user is in docker group
+[ ] docker run hello-world works
+[ ] GitHub SSH clone works
+[ ] Project cloned from main branch
+[ ] .dockerignore exists in repository root
+[ ] Real backend env file created
+[ ] Real backend env file is not included in Docker image build context
+[ ] Backend Dockerfile created
+[ ] Frontend Dockerfile created
+[ ] Frontend Nginx config created
 [ ] Backend image builds successfully
 [ ] Frontend image builds successfully
 [ ] Docker network created
 [ ] Docker volume created
 [ ] PostgreSQL container running
-[ ] Migrations completed
+[ ] PostgreSQL readiness check passes
+[ ] Alembic migrations completed
+[ ] Backend container running
 [ ] Backend container healthy
+[ ] Frontend container running
 [ ] Frontend container healthy
-[ ] Public browser URL works
-[ ] API works through frontend Nginx
+[ ] Local curl to http://127.0.0.1 works
+[ ] /healthz works from frontend Nginx container
+[ ] /health works through frontend Nginx container
+[ ] /ready works through frontend Nginx container
+[ ] /api/summary works through frontend Nginx container
+[ ] Public frontend opens in browser
 [ ] Logs checked
-[ ] Rollback understood
-[ ] Cleanup plan understood
+[ ] Rollback plan reviewed
+[ ] Cleanup plan reviewed
 ```
+
+## Required Files Created In This Phase
+
+```text
+/opt/devops-launchboard/app-source/.dockerignore
+
+/opt/devops-launchboard/app-source/deployment/phase-3-docker/
++-- env/
+|   +-- backend.docker.env.example
+|   +-- backend.docker.env
+|   +-- frontend.build.env.example
++-- Dockerfile.backend
++-- Dockerfile.frontend
++-- nginx-frontend.conf
+```
+
+## Reference Documentation
+
+| Topic | Official Link |
+| --- | --- |
+| AWS EC2 | https://docs.aws.amazon.com/ec2/ |
+| Connect to Linux EC2 | https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/connect-to-linux-instance.html |
+| Ubuntu package management | https://ubuntu.com/server/docs/how-to/software/package-management/index.html |
+| Docker Engine Ubuntu install | https://docs.docker.com/engine/install/ubuntu/ |
+| Docker post-install steps | https://docs.docker.com/engine/install/linux-postinstall/ |
+| Dockerfile reference | https://docs.docker.com/reference/dockerfile/ |
+| Docker build context | https://docs.docker.com/build/concepts/context/ |
+| Docker build CLI | https://docs.docker.com/reference/cli/docker/buildx/build/ |
+| Docker networking | https://docs.docker.com/engine/network/ |
+| Docker volumes | https://docs.docker.com/engine/storage/volumes/ |
+| PostgreSQL Docker image | https://hub.docker.com/_/postgres |
+| FastAPI deployment | https://fastapi.tiangolo.com/deployment/ |
+| Uvicorn deployment | https://www.uvicorn.org/deployment/ |
+| Vite build docs | https://vite.dev/guide/build |
+| Nginx docs | https://nginx.org/en/docs/ |
+| Nginx proxy module | https://nginx.org/en/docs/http/ngx_http_proxy_module.html |
+| AWS Budgets | https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html |
 
 ## What To Do Next
 
@@ -952,4 +1945,4 @@ Phase 4: Docker Compose
 
 Why:
 
-Phase 3 teaches Docker manually. Phase 4 teaches how to define the same multi-container app in one Compose file so students do not need to type many long `docker run` commands every time.
+Phase 3 teaches Docker manually. Phase 4 defines the same multi-container app in one Compose file so students do not need to type long `docker run` commands every time.
