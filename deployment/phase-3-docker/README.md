@@ -43,6 +43,8 @@ By completing this phase, students will learn:
 - How to expose only the frontend container publicly.
 - How to keep backend and database ports private.
 - How to inspect Docker logs, health checks, networks, volumes, and containers.
+- How to tag Docker images for Docker Hub.
+- How to push backend and frontend images to your own Docker Hub repositories.
 - How to stop, remove, rebuild, and rerun containers manually.
 
 ## Architecture
@@ -69,8 +71,8 @@ Container map:
 
 | Container | Image | Internal Port | Public Access | Purpose |
 | --- | --- | ---: | --- | --- |
-| `launchboard-frontend` | `launchboard-frontend:phase-3` | `8080` | Yes, mapped to EC2 port `80` | Serves frontend and proxies API traffic |
-| `launchboard-backend` | `launchboard-backend:phase-3` | `8000` | No | Runs FastAPI API |
+| `launchboard-frontend` | `launchboard-frontend:phase-3` or `<dockerhub-username>/launchboard-frontend:phase-3` | `8080` | Yes, mapped to EC2 port `80` | Serves frontend and proxies API traffic |
+| `launchboard-backend` | `launchboard-backend:phase-3` or `<dockerhub-username>/launchboard-backend:phase-3` | `8000` | No | Runs FastAPI API |
 | `launchboard-postgres` | `postgres:16-alpine` | `5432` | No | Stores application data |
 
 Important idea:
@@ -96,7 +98,7 @@ Do not use Phase 3 when:
 
 Production note:
 
-This is production-style for learning Docker on one server, but not a complete production platform. Real production should also consider Docker Compose or an orchestrator, managed database backups, image registry scanning, CI/CD, monitoring, centralized logs, secrets management, TLS, and automated rollback.
+This is production-style for learning Docker on one server, but not a complete production platform. Real production should also consider Docker Compose or an orchestrator, managed database backups, image registry scanning, CI/CD, monitoring, centralized logs, secrets management, TLS, and automated rollback. This phase now includes Docker Hub push steps so students learn how image registries fit into the deployment flow.
 
 ## Cost Warning
 
@@ -206,15 +208,16 @@ You will follow this flow:
 8. Create Docker phase files.
 9. Create real backend environment file.
 10. Build backend and frontend Docker images.
-11. Create Docker network and volume.
-12. Run PostgreSQL container.
-13. Wait for PostgreSQL to be ready.
-14. Run Alembic migrations from a temporary backend container.
-15. Run backend container.
-16. Run frontend container.
-17. Verify the app from the EC2 public IP.
-18. Debug logs and health checks if needed.
-19. Rollback or cleanup.
+11. Create Docker Hub repositories, log in, tag images, and push images.
+12. Create Docker network and volume.
+13. Run PostgreSQL container.
+14. Wait for PostgreSQL to be ready.
+15. Run Alembic migrations from a temporary backend container.
+16. Run backend container.
+17. Run frontend container.
+18. Verify the app from the EC2 public IP.
+19. Debug logs and health checks if needed.
+20. Rollback or cleanup.
 
 ## Step 1: Create EC2 Server
 
@@ -1002,6 +1005,12 @@ Run from the repository root:
 cd /opt/devops-launchboard/app-source
 docker build -f deployment/phase-3-docker/Dockerfile.backend -t launchboard-backend:phase-3 .
 docker build -f deployment/phase-3-docker/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-3 .
+
+export DOCKERHUB_USERNAME=<dockerhub-username>
+docker tag launchboard-backend:phase-3 "$DOCKERHUB_USERNAME/launchboard-backend:phase-3"
+docker tag launchboard-frontend:phase-3 "$DOCKERHUB_USERNAME/launchboard-frontend:phase-3"
+docker push "$DOCKERHUB_USERNAME/launchboard-backend:phase-3"
+docker push "$DOCKERHUB_USERNAME/launchboard-frontend:phase-3"
 ```
 
 Command explanation:
@@ -1044,7 +1053,120 @@ Reference:
 
 - Docker build docs: https://docs.docker.com/reference/cli/docker/buildx/build/
 
-## Step 10: Create Docker Network And Volume
+## Step 10: Push Docker Images To Docker Hub
+
+Run this step from: EC2 server
+
+Before you push, create two repositories in your own Docker Hub account.
+
+Create these repositories from the Docker Hub website:
+
+| Repository Name | Purpose | Visibility For Lab |
+| --- | --- | --- |
+| `launchboard-backend` | Stores the FastAPI backend image | Public or private |
+| `launchboard-frontend` | Stores the Nginx frontend image | Public or private |
+
+Use public repositories for student labs unless you have already taught private image pulls. Private repositories need authentication before pulling from another server.
+
+Set your Docker Hub username as a variable. Replace `<dockerhub-username>` with your real Docker Hub username.
+
+```bash
+export DOCKERHUB_USERNAME=<dockerhub-username>
+echo $DOCKERHUB_USERNAME
+```
+
+Example:
+
+```bash
+export DOCKERHUB_USERNAME=ashikdevops
+echo $DOCKERHUB_USERNAME
+```
+
+Log in to Docker Hub:
+
+```bash
+docker login -u "$DOCKERHUB_USERNAME"
+```
+
+Command explanation:
+
+- `export DOCKERHUB_USERNAME=<dockerhub-username>` stores your Docker Hub username in the current shell session.
+- `docker login -u "$DOCKERHUB_USERNAME"` authenticates your Docker CLI with Docker Hub. Docker asks for your password or access token.
+- Use a Docker Hub access token instead of your account password when possible.
+
+Tag the local images for Docker Hub:
+
+```bash
+docker tag launchboard-backend:phase-3 "$DOCKERHUB_USERNAME/launchboard-backend:phase-3"
+docker tag launchboard-frontend:phase-3 "$DOCKERHUB_USERNAME/launchboard-frontend:phase-3"
+```
+
+Command explanation:
+
+- `docker tag` does not rebuild the image. It creates another name for the same local image.
+- `launchboard-backend:phase-3` is the local image name.
+- `$DOCKERHUB_USERNAME/launchboard-backend:phase-3` is the Docker Hub image name.
+- The part before `/` is your Docker Hub namespace.
+- `phase-3` is the image tag. It marks this image as the Phase 3 version.
+
+Push the images:
+
+```bash
+docker push "$DOCKERHUB_USERNAME/launchboard-backend:phase-3"
+docker push "$DOCKERHUB_USERNAME/launchboard-frontend:phase-3"
+```
+
+Command explanation:
+
+- `docker push` uploads the tagged image layers to Docker Hub.
+- Docker uploads only missing layers. If backend and frontend share some base layers, Docker reuses existing layers where possible.
+- After this step, the images are available from Docker Hub using your username and repository names.
+
+Verify pushed images locally:
+
+```bash
+docker images | grep "$DOCKERHUB_USERNAME/launchboard"
+```
+
+Expected:
+
+```text
+<dockerhub-username>/launchboard-backend    phase-3
+<dockerhub-username>/launchboard-frontend   phase-3
+```
+
+Verify from Docker Hub:
+
+```text
+Docker Hub
+Repositories
+launchboard-backend
+launchboard-frontend
+Tags
+phase-3
+```
+
+Important:
+
+Do not put secrets inside Docker images. In this phase, the backend password stays in `deployment/phase-3-docker/env/backend.docker.env` and gets passed at container runtime using `--env-file`. That is the correct pattern for this lab.
+
+If you open a new SSH terminal later, run this again before commands that use `$DOCKERHUB_USERNAME`:
+
+```bash
+export DOCKERHUB_USERNAME=<dockerhub-username>
+```
+
+Why this step exists:
+
+Docker Hub is an image registry. A registry stores Docker images so another server, teammate, CI/CD pipeline, Docker Compose setup, or Kubernetes cluster can pull the same image without rebuilding it from source.
+
+Reference:
+
+- Docker Hub overview: https://docs.docker.com/docker-hub/
+- Docker image tag: https://docs.docker.com/reference/cli/docker/image/tag/
+- Docker image push: https://docs.docker.com/reference/cli/docker/image/push/
+
+## Step 11: Create Docker Network And Volume
 
 Run:
 
@@ -1076,7 +1198,7 @@ Reference:
 - Docker networking: https://docs.docker.com/engine/network/
 - Docker volumes: https://docs.docker.com/engine/storage/volumes/
 
-## Step 11: Run PostgreSQL Container
+## Step 12: Run PostgreSQL Container
 
 Set one password variable first:
 
@@ -1155,7 +1277,7 @@ Reference:
 
 - PostgreSQL Docker image: https://hub.docker.com/_/postgres
 
-## Step 12: Run Database Migrations
+## Step 13: Run Database Migrations
 
 Run:
 
@@ -1164,7 +1286,7 @@ cd /opt/devops-launchboard/app-source
 docker run --rm \
   --network launchboard-net \
   --env-file deployment/phase-3-docker/env/backend.docker.env \
-  launchboard-backend:phase-3 \
+  "$DOCKERHUB_USERNAME/launchboard-backend:phase-3" \
   alembic upgrade head
 ```
 
@@ -1173,7 +1295,7 @@ Command explanation:
 - `docker run --rm` starts a temporary container and removes it after the command finishes.
 - `--network launchboard-net` lets the migration container reach `launchboard-postgres` by name.
 - `--env-file ...backend.docker.env` loads `DATABASE_URL` and other backend settings.
-- `launchboard-backend:phase-3` uses the backend image you built earlier.
+- `$DOCKERHUB_USERNAME/launchboard-backend:phase-3` uses the backend image you pushed to Docker Hub. The image also exists locally after tagging, so Docker does not need to download it again on this same server.
 - `alembic upgrade head` overrides the default backend startup command and runs migrations instead.
 
 Expected output:
@@ -1202,7 +1324,7 @@ Why this step exists:
 
 Alembic creates or updates database tables. Without migrations, backend API routes that use the database may fail.
 
-## Step 13: Run Backend Container
+## Step 14: Run Backend Container
 
 Remove an old backend container if you are rerunning the lab:
 
@@ -1219,7 +1341,7 @@ docker run -d \
   --network launchboard-net \
   --env-file deployment/phase-3-docker/env/backend.docker.env \
   --restart unless-stopped \
-  launchboard-backend:phase-3
+  "$DOCKERHUB_USERNAME/launchboard-backend:phase-3"
 ```
 
 Command explanation:
@@ -1230,7 +1352,7 @@ Command explanation:
 - `--network launchboard-net` connects the backend to the same network as PostgreSQL.
 - `--env-file ...backend.docker.env` injects backend runtime configuration.
 - `--restart unless-stopped` starts the backend again after Docker or EC2 restart.
-- `launchboard-backend:phase-3` is the image to run.
+- `$DOCKERHUB_USERNAME/launchboard-backend:phase-3` is the backend image to run. This proves the deployment uses a registry-ready image name.
 
 Verify:
 
@@ -1264,7 +1386,7 @@ Important:
 
 Do not publish backend port `8000` to the internet in this phase. The frontend Nginx container proxies requests to it internally.
 
-## Step 14: Run Frontend Container
+## Step 15: Run Frontend Container
 
 Check if EC2 port `80` is free:
 
@@ -1288,7 +1410,7 @@ docker run -d \
   --network launchboard-net \
   -p 80:8080 \
   --restart unless-stopped \
-  launchboard-frontend:phase-3
+  "$DOCKERHUB_USERNAME/launchboard-frontend:phase-3"
 ```
 
 Command explanation:
@@ -1299,7 +1421,7 @@ Command explanation:
 - `--network launchboard-net` connects the frontend container to the backend container.
 - `-p 80:8080` maps EC2 public port `80` to container port `8080`.
 - `--restart unless-stopped` starts the frontend again after Docker or EC2 restart.
-- `launchboard-frontend:phase-3` is the image to run.
+- `$DOCKERHUB_USERNAME/launchboard-frontend:phase-3` is the frontend image to run. This proves the deployment uses a registry-ready image name.
 
 Port explanation:
 
@@ -1332,7 +1454,7 @@ Why this step exists:
 
 The frontend container is the public entry point. It serves static frontend files and forwards API requests to the backend container.
 
-## Step 15: Verify From Browser
+## Step 16: Verify From Browser
 
 From your local machine, open:
 
@@ -1378,7 +1500,30 @@ Example:
 ```text
 launchboard-backend:phase-3
 launchboard-frontend:phase-3
+your-dockerhub-username/launchboard-backend:phase-3
+your-dockerhub-username/launchboard-frontend:phase-3
 postgres:16-alpine
+```
+
+### Image Registry
+
+An image registry stores Docker images outside your server.
+
+In this phase, Docker Hub is the registry.
+
+Example:
+
+```text
+your-dockerhub-username/launchboard-backend:phase-3
+your-dockerhub-username/launchboard-frontend:phase-3
+```
+
+Why it matters:
+
+```text
+Build image once
+Push image to Docker Hub
+Pull the same image from another server, CI/CD pipeline, or Kubernetes cluster
 ```
 
 ### Container
@@ -1503,7 +1648,7 @@ Docker issues are usually visible in container status, logs, health checks, netw
 
 ## Common Problems And Fixes
 
-### Problem 1: Docker command says permission denied
+### Problem 2: Docker command says permission denied
 
 Check:
 
@@ -1522,7 +1667,7 @@ Why this happens:
 
 `sudo usermod -aG docker ubuntu` updates group membership, but your current SSH session does not receive the new group list.
 
-### Problem 2: Docker build sends too many files or includes secrets
+### Problem 3: Docker build sends too many files or includes secrets
 
 Check:
 
@@ -1536,7 +1681,7 @@ Why this happens:
 
 Docker only uses `.dockerignore` from the build context root. This phase uses `.` as the build context.
 
-### Problem 3: Backend image builds but migration command fails with `alembic: not found`
+### Problem 4: Backend image builds but migration command fails with `alembic: not found`
 
 Check `Dockerfile.backend`:
 
@@ -1548,7 +1693,7 @@ Why this happens:
 
 Alembic may be listed under dev dependencies in the Python project. This phase runs migrations from the backend image, so Alembic must exist inside that image.
 
-### Problem 4: Migration fails because database is not ready
+### Problem 5: Migration fails because database is not ready
 
 Run:
 
@@ -1566,7 +1711,7 @@ until docker exec launchboard-postgres pg_isready -U launchboard_user -d launchb
 done
 ```
 
-### Problem 5: Backend cannot connect to database
+### Problem 6: Backend cannot connect to database
 
 Check env file:
 
@@ -1591,7 +1736,7 @@ Why:
 
 Inside the backend container, `127.0.0.1` means the backend container itself, not the PostgreSQL container.
 
-### Problem 6: Frontend shows but API fails
+### Problem 7: Frontend shows but API fails
 
 Check:
 
@@ -1610,7 +1755,7 @@ Frontend Nginx config points to the wrong backend name.
 Containers are not on the same Docker network.
 ```
 
-### Problem 7: Browser does not open the app
+### Problem 8: Browser does not open the app
 
 Check from EC2:
 
@@ -1631,7 +1776,7 @@ docker ps --filter name=launchboard-frontend
 docker logs launchboard-frontend --tail 100
 ```
 
-### Problem 8: Port 80 is already allocated
+### Problem 9: Port 80 is already allocated
 
 Check:
 
@@ -1709,10 +1854,16 @@ git pull origin main
 docker build -f deployment/phase-3-docker/Dockerfile.backend -t launchboard-backend:phase-3 .
 docker build -f deployment/phase-3-docker/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-3 .
 
+export DOCKERHUB_USERNAME=<dockerhub-username>
+docker tag launchboard-backend:phase-3 "$DOCKERHUB_USERNAME/launchboard-backend:phase-3"
+docker tag launchboard-frontend:phase-3 "$DOCKERHUB_USERNAME/launchboard-frontend:phase-3"
+docker push "$DOCKERHUB_USERNAME/launchboard-backend:phase-3"
+docker push "$DOCKERHUB_USERNAME/launchboard-frontend:phase-3"
+
 docker run --rm \
   --network launchboard-net \
   --env-file deployment/phase-3-docker/env/backend.docker.env \
-  launchboard-backend:phase-3 \
+  "$DOCKERHUB_USERNAME/launchboard-backend:phase-3" \
   alembic upgrade head
 
 docker rm -f launchboard-backend launchboard-frontend
@@ -1722,14 +1873,14 @@ docker run -d \
   --network launchboard-net \
   --env-file deployment/phase-3-docker/env/backend.docker.env \
   --restart unless-stopped \
-  launchboard-backend:phase-3
+  "$DOCKERHUB_USERNAME/launchboard-backend:phase-3"
 
 docker run -d \
   --name launchboard-frontend \
   --network launchboard-net \
   -p 80:8080 \
   --restart unless-stopped \
-  launchboard-frontend:phase-3
+  "$DOCKERHUB_USERNAME/launchboard-frontend:phase-3"
 ```
 
 Why this step exists:
@@ -1767,7 +1918,7 @@ Run migrations:
 docker run --rm \
   --network launchboard-net \
   --env-file deployment/phase-3-docker/env/backend.docker.env \
-  launchboard-backend:phase-3 \
+  "$DOCKERHUB_USERNAME/launchboard-backend:phase-3" \
   alembic upgrade head
 ```
 
@@ -1779,14 +1930,14 @@ docker run -d \
   --network launchboard-net \
   --env-file deployment/phase-3-docker/env/backend.docker.env \
   --restart unless-stopped \
-  launchboard-backend:phase-3
+  "$DOCKERHUB_USERNAME/launchboard-backend:phase-3"
 
 docker run -d \
   --name launchboard-frontend \
   --network launchboard-net \
   -p 80:8080 \
   --restart unless-stopped \
-  launchboard-frontend:phase-3
+  "$DOCKERHUB_USERNAME/launchboard-frontend:phase-3"
 ```
 
 Verify:
@@ -1830,6 +1981,7 @@ Remove images:
 
 ```bash
 docker rmi launchboard-backend:phase-3 launchboard-frontend:phase-3 || true
+docker rmi "$DOCKERHUB_USERNAME/launchboard-backend:phase-3" "$DOCKERHUB_USERNAME/launchboard-frontend:phase-3" || true
 ```
 
 Optional Docker cleanup:
@@ -1878,6 +2030,12 @@ Before calling Phase 3 complete:
 [ ] Frontend Nginx config created
 [ ] Backend image builds successfully
 [ ] Frontend image builds successfully
+[ ] Docker Hub repositories created
+[ ] Docker Hub login works
+[ ] Backend image tagged with Docker Hub username
+[ ] Frontend image tagged with Docker Hub username
+[ ] Backend image pushed to Docker Hub
+[ ] Frontend image pushed to Docker Hub
 [ ] Docker network created
 [ ] Docker volume created
 [ ] PostgreSQL container running
