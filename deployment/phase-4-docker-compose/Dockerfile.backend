@@ -13,8 +13,7 @@ COPY backend/pyproject.toml backend/alembic.ini ./
 COPY backend/app ./app
 COPY backend/alembic ./alembic
 
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir .
+RUN pip install --no-cache-dir --upgrade pip     && pip install --no-cache-dir ".[dev]"
 
 FROM python:3.12-slim AS runtime
 
@@ -24,8 +23,7 @@ ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV APP_ENV=production
 
-RUN groupadd --system app \
-    && useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app
+RUN groupadd --system app     && useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app
 
 WORKDIR /app
 
