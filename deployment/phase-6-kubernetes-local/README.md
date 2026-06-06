@@ -1,4 +1,4 @@
-# Phase 6: Kubernetes Local
+# Phase 6: Kubernetes Local With Kind
 
 ## Fresh Start Assumption
 
@@ -11,6 +11,7 @@ This guide assumes:
 - You have a fresh AWS EC2 server.
 - Docker is not installed yet.
 - Kubernetes tools are not installed yet.
+- Kind is not installed yet.
 - The repository is not cloned yet.
 - You will create files with `vim`.
 - You will type commands manually.
@@ -24,12 +25,14 @@ git@github.com:ashraful2430/N-tier-application.git
 
 ## What You Will Deploy
 
-This phase deploys the N-tier application into a local Kubernetes cluster created with Kind:
+This phase deploys the N-tier application into a local Kubernetes cluster created with Kind.
 
-- PostgreSQL Deployment.
-- PostgreSQL PersistentVolumeClaim.
-- Kubernetes Secret for database password and backend database URL.
-- ConfigMap for non-secret app settings.
+You will deploy:
+
+- PostgreSQL database as a Kubernetes Deployment.
+- PostgreSQL PersistentVolumeClaim for database storage.
+- Kubernetes Secret for sensitive database values.
+- Kubernetes ConfigMap for non-secret application values.
 - Alembic migration Job.
 - FastAPI backend Deployment with 2 replicas.
 - Backend ClusterIP Service.
@@ -37,7 +40,7 @@ This phase deploys the N-tier application into a local Kubernetes cluster create
 - Frontend ClusterIP Service.
 - Nginx Ingress Controller.
 - Ingress route for public browser traffic.
-- HPA example for backend scaling.
+- Optional HPA example for backend autoscaling.
 
 Architecture:
 
@@ -75,21 +78,21 @@ PostgreSQL Pod + PVC
 
 Use local Kubernetes when:
 
-- You want to learn Kubernetes objects before using EKS.
-- You want a low-cost lab on one server.
-- You want to understand Pods, Deployments, Jobs, Services, ConfigMaps, Secrets, Ingress, PVCs, probes, and HPA.
-- You want to test Kubernetes manifests before cloud Kubernetes.
+- You want to learn Kubernetes before using EKS.
+- You want a low-cost Kubernetes lab on one EC2 server.
+- You want to understand Pods, Deployments, Services, ConfigMaps, Secrets, Jobs, Ingress, PVCs, probes, rollouts, and rollback.
+- You want to test Kubernetes manifests before moving to cloud Kubernetes.
 
 Do not use local Kubernetes when:
 
 - You need real production high availability.
-- You need managed node groups, load balancers, and cloud storage.
+- You need managed node groups, cloud load balancers, and cloud storage.
 - You need multiple worker nodes.
 - You need production-grade database backups.
 
 Important note:
 
-Kind is excellent for learning and local validation. It is not a replacement for production Kubernetes platforms like EKS, GKE, AKS, or a properly operated self-managed cluster.
+Kind is excellent for learning and manifest validation. It is not a replacement for production Kubernetes platforms like EKS, GKE, AKS, or a properly operated self-managed Kubernetes cluster.
 
 ## Recommended AWS Setup
 
@@ -145,7 +148,24 @@ deployment/phase-6-kubernetes-local/
 +-- README.md
 ```
 
-The README shows all file contents inline so students can create the files while reading from GitHub.
+The README shows all file contents inline so students can create the files manually while reading the guide.
+
+## Tool Explanation
+
+| Tool | Purpose |
+| --- | --- |
+| Docker | Builds container images and runs Kind nodes as containers. |
+| Kind | Creates a local Kubernetes cluster using Docker containers as nodes. |
+| kubectl | Controls Kubernetes resources from the terminal. |
+| Kustomize | Applies multiple Kubernetes YAML files with one command through `kubectl apply -k`. |
+| Nginx Ingress Controller | Receives public HTTP traffic and routes it to Kubernetes Services. |
+| ConfigMap | Stores non-secret application configuration. |
+| Secret | Stores sensitive configuration such as database password and database URL. |
+| Deployment | Keeps application Pods running and supports rolling updates. |
+| Service | Gives Pods a stable internal DNS name and virtual IP. |
+| Job | Runs one-time tasks such as database migrations. |
+| PVC | Requests persistent storage for PostgreSQL data. |
+| Ingress | Defines public HTTP routing rules. |
 
 ## Step 1: Create EC2 Server
 
@@ -171,7 +191,7 @@ Security group inbound rules:
 
 Why this step exists:
 
-Kind runs a Kubernetes cluster inside Docker containers. EC2 gives you the Linux server that runs Docker, Kind, and the Kubernetes workload.
+Kind runs Kubernetes nodes as Docker containers. EC2 gives us the Linux server that runs Docker, Kind, kubectl, and the application workload.
 
 Reference:
 
@@ -186,6 +206,12 @@ Run from your local machine:
 chmod 400 devops-launchboard-key.pem
 ssh -i devops-launchboard-key.pem ubuntu@YOUR_EC2_PUBLIC_IP
 ```
+
+Command explanation:
+
+- `chmod 400` makes the private key readable only by your user.
+- `ssh -i` uses that private key to connect to the EC2 server.
+- `ubuntu@YOUR_EC2_PUBLIC_IP` means you are logging in as the default Ubuntu user.
 
 Verify:
 
@@ -218,9 +244,23 @@ sudo apt upgrade -y
 sudo apt install -y git curl wget vim unzip jq ca-certificates gnupg lsb-release
 ```
 
-Why this step exists:
+Command explanation:
 
-The server needs tools for cloning, installing Docker, installing Kubernetes tools, editing files, and testing HTTP endpoints.
+- `cd ~` moves to the Ubuntu user's home directory.
+- `sudo apt update` refreshes Ubuntu package metadata.
+- `sudo apt upgrade -y` installs available package updates.
+- `git` is used to clone the repository.
+- `curl` and `wget` download tools and test HTTP endpoints.
+- `vim` is used to create and edit files.
+- `unzip` extracts zip files if needed.
+- `jq` formats JSON output from API responses.
+- `ca-certificates` allows secure HTTPS package downloads.
+- `gnupg` verifies signed package repositories.
+- `lsb-release` helps identify Ubuntu release information.
+
+Reference:
+
+- Ubuntu package management: https://ubuntu.com/server/docs/package-management
 
 ## Step 4: Install Docker Engine
 
@@ -239,6 +279,22 @@ sudo systemctl start docker
 sudo usermod -aG docker ubuntu
 ```
 
+Command explanation:
+
+- `sudo install -m 0755 -d /etc/apt/keyrings` creates the secure apt keyring folder.
+- `curl -fsSL ...` downloads Docker's official GPG key.
+- `gpg --dearmor` converts the key into a format apt can use.
+- `sudo chmod a+r` allows apt to read the Docker GPG key.
+- `echo "deb ..." | sudo tee ...` adds Docker's official Ubuntu repository.
+- `sudo apt update` refreshes packages again after adding Docker's repository.
+- `docker-ce` installs Docker Engine.
+- `docker-ce-cli` installs the Docker CLI.
+- `containerd.io` installs the container runtime used by Docker.
+- `docker-buildx-plugin` installs modern Docker build functionality.
+- `systemctl enable docker` starts Docker automatically after reboot.
+- `systemctl start docker` starts Docker now.
+- `usermod -aG docker ubuntu` lets the `ubuntu` user run Docker without `sudo` after logging back in.
+
 Log out and SSH back in:
 
 ```bash
@@ -255,13 +311,13 @@ docker info
 
 Why this step exists:
 
-Kind creates Kubernetes nodes as Docker containers. Without Docker, Kind cannot create the local cluster.
+Kind creates Kubernetes nodes as Docker containers. Without Docker, Kind cannot create the local Kubernetes cluster.
 
 Reference:
 
 - Docker Engine Ubuntu install: https://docs.docker.com/engine/install/ubuntu/
 
-## Step 5: Install Kubectl
+## Step 5: Install kubectl
 
 Run:
 
@@ -274,6 +330,15 @@ chmod +x kubectl
 sudo mv kubectl /usr/local/bin/kubectl
 rm stable.txt
 ```
+
+Command explanation:
+
+- `curl -LO stable.txt` downloads the latest stable Kubernetes version number.
+- `KUBECTL_VERSION=$(cat stable.txt)` stores that version in a shell variable.
+- `curl -LO .../kubectl` downloads the kubectl binary for Linux AMD64.
+- `chmod +x kubectl` makes the binary executable.
+- `sudo mv kubectl /usr/local/bin/kubectl` places kubectl in the system PATH.
+- `rm stable.txt` removes the temporary version file.
 
 Verify:
 
@@ -300,6 +365,12 @@ chmod +x kind
 sudo mv kind /usr/local/bin/kind
 ```
 
+Command explanation:
+
+- `curl -Lo kind ...` downloads the Kind binary.
+- `chmod +x kind` makes the binary executable.
+- `sudo mv kind /usr/local/bin/kind` places Kind in the system PATH.
+
 Verify:
 
 ```bash
@@ -308,7 +379,7 @@ kind version
 
 Why this step exists:
 
-Kind creates a local Kubernetes cluster using Docker containers as nodes.
+Kind creates a local Kubernetes cluster using Docker containers as Kubernetes nodes.
 
 Reference:
 
@@ -326,6 +397,15 @@ ssh-keygen -t ed25519 -C "devops-launchboard-phase-6-ec2" -f ~/.ssh/devops_launc
 cat ~/.ssh/devops_launchboard_github_key.pub
 ```
 
+Command explanation:
+
+- `mkdir -p ~/.ssh` creates the SSH folder if it does not exist.
+- `chmod 700 ~/.ssh` restricts SSH folder permissions.
+- `ssh-keygen -t ed25519` creates a modern SSH key pair.
+- `-C` adds a label so the key is easy to identify in GitHub.
+- `-f` sets the key file path.
+- `cat ...pub` prints the public key so you can copy it to GitHub.
+
 Add the public key to GitHub:
 
 ```text
@@ -334,6 +414,14 @@ Settings
 Deploy keys
 Add deploy key
 ```
+
+Use:
+
+| Field | Value |
+| --- | --- |
+| Title | `devops-launchboard-phase-6-ec2` |
+| Key | Paste the public key |
+| Allow write access | Unchecked |
 
 Create SSH config:
 
@@ -366,6 +454,10 @@ Test:
 ssh -T git@github.com
 ```
 
+Why this step exists:
+
+The EC2 server needs GitHub access to clone the repository by SSH.
+
 Reference:
 
 - GitHub SSH docs: https://docs.github.com/en/authentication/connecting-to-github-with-ssh
@@ -383,11 +475,22 @@ cd app-source
 git branch --show-current
 ```
 
+Command explanation:
+
+- `sudo mkdir -p /opt/devops-launchboard` creates a clean deployment folder under `/opt`.
+- `sudo chown -R ubuntu:ubuntu /opt/devops-launchboard` lets the `ubuntu` user manage this folder.
+- `git clone ... app-source` clones the repository into a folder named `app-source`.
+- `git branch --show-current` confirms which branch is checked out.
+
 Expected:
 
 ```text
 main
 ```
+
+Reference:
+
+- Git clone documentation: https://git-scm.com/docs/git-clone
 
 ## Step 9: Create Phase 6 Working Folders
 
@@ -398,6 +501,11 @@ cd /opt/devops-launchboard/app-source
 mkdir -p deployment/phase-6-kubernetes-local/k8s
 ```
 
+Command explanation:
+
+- `cd /opt/devops-launchboard/app-source` moves into the cloned repository.
+- `mkdir -p .../k8s` creates the Phase 6 folder and the Kubernetes manifest folder.
+
 Why this folder exists:
 
 The phase folder keeps Dockerfiles, Kind config, Nginx config, and Kubernetes manifests together.
@@ -407,6 +515,7 @@ The phase folder keeps Dockerfiles, Kind config, Nginx config, and Kubernetes ma
 Run:
 
 ```bash
+cd /opt/devops-launchboard/app-source
 vim .dockerignore
 ```
 
@@ -428,11 +537,17 @@ __pycache__
 .env
 .env.*
 deployment/phase-4-docker-compose/.env
+deployment/phase-5-docker-swarm/secrets/*
+deployment/phase-6-kubernetes-local/k8s/secret.yaml
 ```
 
 Why this file exists:
 
-Docker builds use the repository root as context. This file keeps local dependencies, caches, build output, and secrets out of images.
+Docker builds use the repository root as the build context. `.dockerignore` keeps local dependencies, caches, build output, and secrets out of Docker images.
+
+Reference:
+
+- Docker build context: https://docs.docker.com/build/concepts/context/
 
 ## Step 11: Create Kind Config
 
@@ -464,13 +579,17 @@ nodes:
         protocol: TCP
 ```
 
-Explanation:
+Line explanation:
 
 - `kind: Cluster` tells Kind this file describes a cluster.
-- `control-plane` creates one Kubernetes control-plane node.
-- `node-labels: ingress-ready=true` lets the Kind Ingress Nginx manifest schedule the controller on this node.
-- `extraPortMappings` maps EC2 port `80` and `443` into the Kind node.
-- This allows the browser to reach the Ingress Controller through the EC2 public IP.
+- `apiVersion: kind.x-k8s.io/v1alpha4` defines the Kind config API version.
+- `nodes` defines the Kubernetes nodes Kind should create.
+- `role: control-plane` creates one control-plane node.
+- `kubeadmConfigPatches` customizes Kubernetes node initialization.
+- `node-labels: ingress-ready=true` allows the Kind Ingress Nginx manifest to schedule the controller on this node.
+- `extraPortMappings` maps EC2 host ports into the Kind node container.
+- `hostPort: 80` lets public HTTP traffic reach the Kind cluster.
+- `hostPort: 443` is reserved for HTTPS testing later.
 
 ## Step 12: Create Backend Dockerfile
 
@@ -499,7 +618,7 @@ COPY backend/app ./app
 COPY backend/alembic ./alembic
 
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir .
+    && pip install --no-cache-dir ".[dev]"
 
 FROM python:3.12-slim AS runtime
 
@@ -528,9 +647,28 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD pytho
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 ```
 
-Explanation:
+Line explanation:
 
-This Dockerfile builds the FastAPI backend image. It uses a multi-stage build, installs dependencies into a virtual environment, and runs as a non-root user.
+- `FROM python:3.12-slim AS builder` starts a lightweight Python build stage.
+- `PYTHONDONTWRITEBYTECODE=1` prevents Python from writing `.pyc` files.
+- `PYTHONUNBUFFERED=1` makes logs appear immediately.
+- `VIRTUAL_ENV=/opt/venv` defines where the Python virtual environment lives inside the image.
+- `PATH="/opt/venv/bin:${PATH}"` makes `python`, `pip`, `uvicorn`, and `alembic` use the virtual environment first.
+- `WORKDIR /app` sets `/app` as the working directory inside the image.
+- `RUN python -m venv /opt/venv` creates the virtual environment during image build.
+- `COPY backend/pyproject.toml backend/alembic.ini ./` copies dependency and Alembic config files.
+- `COPY backend/app ./app` copies backend application code.
+- `COPY backend/alembic ./alembic` copies migration files.
+- `pip install --no-cache-dir --upgrade pip` upgrades pip without storing cache.
+- `pip install --no-cache-dir ".[dev]"` installs the app with dependencies needed to run Alembic migrations.
+- `FROM python:3.12-slim AS runtime` starts a clean final runtime stage.
+- `groupadd` and `useradd` create a non-root Linux user named `app`.
+- `COPY --from=builder` copies only the prepared virtual environment and app files into the runtime image.
+- `chown -R app:app` gives the non-root user ownership of app files.
+- `USER app` runs the backend as non-root.
+- `EXPOSE 8000` documents the backend container port.
+- `HEALTHCHECK` checks the backend `/health` endpoint.
+- `CMD` starts the FastAPI app with Uvicorn when the container starts.
 
 ## Step 13: Create Frontend Dockerfile
 
@@ -556,17 +694,10 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM nginx:1.27-alpine AS runtime
-
-RUN addgroup -S app \
-    && adduser -S app -G app \
-    && mkdir -p /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp /var/cache/nginx/fastcgi_temp /var/cache/nginx/uwsgi_temp /var/cache/nginx/scgi_temp /var/run /tmp/nginx \
-    && chown -R app:app /usr/share/nginx/html /var/cache/nginx /var/run /tmp/nginx
+FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
 COPY deployment/phase-6-kubernetes-local/nginx-frontend.conf /etc/nginx/conf.d/default.conf
-COPY --from=builder /app/dist /usr/share/nginx/html
-
-USER app
+COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
 
@@ -575,9 +706,34 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD wget 
 CMD ["nginx", "-g", "daemon off;"]
 ```
 
-Explanation:
+Line explanation:
 
-This Dockerfile builds the frontend and serves it with Nginx. `VITE_API_URL` stays empty so the frontend uses same-origin requests like `/api/summary`.
+- `FROM node:22-alpine AS builder` uses a lightweight Node image only to build the frontend.
+- `WORKDIR /app` sets the frontend build directory.
+- `ARG VITE_API_URL=""` allows a build-time API URL value.
+- `ENV VITE_API_URL=${VITE_API_URL}` passes the build argument to Vite.
+- `COPY frontend/package*.json ./` copies package files first for better Docker layer caching.
+- `RUN npm ci` installs exact dependencies from `package-lock.json`.
+- `COPY frontend/ ./` copies the frontend source code.
+- `RUN npm run build` creates the production frontend build.
+- `FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime` uses a lightweight Nginx runtime designed to run without root privileges.
+- `COPY ... default.conf` copies the frontend Nginx config.
+- `COPY --from=builder --chown=101:101 /app/dist ...` copies the built frontend files and gives ownership to the unprivileged Nginx user.
+- `EXPOSE 8080` documents the frontend container port.
+- `HEALTHCHECK` checks the internal frontend health endpoint.
+- `CMD` starts Nginx when the container starts.
+
+Image review:
+
+- The final frontend image does not include Node.js.
+- Node is used only during the build stage.
+- The runtime is Nginx Alpine, so it is lightweight.
+- The runtime is unprivileged, so it fits Kubernetes `runAsNonRoot` settings.
+
+Reference:
+
+- Vite build docs: https://vite.dev/guide/build
+- Nginx unprivileged image: https://hub.docker.com/r/nginxinc/nginx-unprivileged
 
 ## Step 14: Create Frontend Nginx Config
 
@@ -638,19 +794,43 @@ server {
 }
 ```
 
-Explanation:
+Line explanation:
 
-Nginx serves the frontend and proxies backend requests to the Kubernetes Service named `launchboard-backend`.
+- `server` defines one Nginx virtual server.
+- `listen 8080` makes Nginx listen on container port `8080`.
+- `server_name _` catches any hostname.
+- `root /usr/share/nginx/html` points Nginx to the built frontend files.
+- `index index.html` sets the default frontend file.
+- `client_max_body_size 10M` allows request bodies up to 10 MB.
+- `location = /healthz` creates a simple frontend health endpoint.
+- `location /api/` proxies API requests to the backend Kubernetes Service.
+- `proxy_pass http://launchboard-backend:8000/api/` uses the backend Service DNS name.
+- `proxy_set_header` lines preserve useful request metadata.
+- `location = /health` proxies health checks to the backend.
+- `location = /ready` proxies readiness checks to the backend.
+- `location /` serves frontend routes and falls back to `index.html`.
+
+Reference:
+
+- Nginx proxy module: https://nginx.org/en/docs/http/ngx_http_proxy_module.html
 
 ## Step 15: Create Kubernetes Manifests
 
-Create each file from the repository root.
+Create each file from the repository root:
 
-### `namespace.yaml`
+```bash
+cd /opt/devops-launchboard/app-source
+```
+
+### 15.1 Create `namespace.yaml`
+
+Run:
 
 ```bash
 vim deployment/phase-6-kubernetes-local/k8s/namespace.yaml
 ```
+
+Paste:
 
 ```yaml
 apiVersion: v1
@@ -662,15 +842,22 @@ metadata:
     app.kubernetes.io/part-of: devops-launchboard
 ```
 
-Why this file exists:
+Explanation:
 
-A Namespace groups all app resources and makes cleanup easier.
+- `apiVersion: v1` uses the core Kubernetes API.
+- `kind: Namespace` creates a namespace.
+- `metadata.name` sets the namespace name.
+- Labels help identify resources that belong to this app.
 
-### `configmap.yaml`
+### 15.2 Create `configmap.yaml`
+
+Run:
 
 ```bash
 vim deployment/phase-6-kubernetes-local/k8s/configmap.yaml
 ```
+
+Paste:
 
 ```yaml
 apiVersion: v1
@@ -693,15 +880,23 @@ Replace:
 YOUR_EC2_PUBLIC_IP
 ```
 
-Why this file exists:
+Explanation:
 
-A ConfigMap stores non-secret configuration. The backend and database read these values as environment variables.
+- `kind: ConfigMap` stores non-secret values.
+- `namespace` places it inside `devops-launchboard`.
+- `data` contains environment variable values used by Pods.
+- `CORS_ORIGINS` must match the browser URL.
+- `POSTGRES_DB` and `POSTGRES_USER` are shared database settings.
 
-### `secret.example.yaml`
+### 15.3 Create `secret.example.yaml`
+
+Run:
 
 ```bash
 vim deployment/phase-6-kubernetes-local/k8s/secret.example.yaml
 ```
+
+Paste:
 
 ```yaml
 apiVersion: v1
@@ -715,15 +910,22 @@ stringData:
   DATABASE_URL: postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard
 ```
 
-Why this file exists:
+Explanation:
 
-This is an example only. The guide creates the real Secret with `kubectl create secret` so real passwords do not need to be saved in Git.
+- This is an example file only.
+- Do not commit real secret values to Git.
+- The real Secret will be created using `kubectl create secret` later.
+- `stringData` allows writing plain text values, and Kubernetes stores them as encoded Secret data.
 
-### `pvc.yaml`
+### 15.4 Create `pvc.yaml`
+
+Run:
 
 ```bash
 vim deployment/phase-6-kubernetes-local/k8s/pvc.yaml
 ```
+
+Paste:
 
 ```yaml
 apiVersion: v1
@@ -739,15 +941,21 @@ spec:
       storage: 5Gi
 ```
 
-Why this file exists:
+Explanation:
 
-PostgreSQL needs persistent storage. A PVC asks Kubernetes for storage that survives Pod restarts.
+- `PersistentVolumeClaim` requests persistent storage.
+- `ReadWriteOnce` means one node can mount the volume for read and write.
+- `storage: 5Gi` requests 5 GB of storage for PostgreSQL data.
 
-### `launchboard-postgres-deployment.yaml`
+### 15.5 Create `launchboard-postgres-deployment.yaml`
+
+Run:
 
 ```bash
 vim deployment/phase-6-kubernetes-local/k8s/launchboard-postgres-deployment.yaml
 ```
+
+Paste:
 
 ```yaml
 apiVersion: apps/v1
@@ -828,15 +1036,30 @@ spec:
             claimName: launchboard-postgres-pvc
 ```
 
-Why this file exists:
+Explanation:
 
-This runs PostgreSQL inside Kubernetes. `Recreate` is used because one local PostgreSQL PVC should not be mounted by multiple Pods at the same time.
+- `kind: Deployment` keeps the PostgreSQL Pod running.
+- `replicas: 1` runs one PostgreSQL Pod.
+- `strategy: Recreate` prevents multiple PostgreSQL Pods from using the same local PVC at the same time.
+- `selector.matchLabels` connects the Deployment to its Pods.
+- `image: postgres:16-alpine` uses the lightweight PostgreSQL image.
+- `env` loads database name, user, and password from ConfigMap and Secret.
+- `volumeMounts` mounts persistent storage inside the PostgreSQL container.
+- `readinessProbe` checks when PostgreSQL is ready to accept traffic.
+- `livenessProbe` checks whether PostgreSQL is still alive.
+- `resources.requests` reserves minimum CPU and memory.
+- `resources.limits` prevents the Pod from using too many resources.
+- `persistentVolumeClaim` connects the Pod to the PVC.
 
-### `launchboard-postgres-service.yaml`
+### 15.6 Create `launchboard-postgres-service.yaml`
+
+Run:
 
 ```bash
 vim deployment/phase-6-kubernetes-local/k8s/launchboard-postgres-service.yaml
 ```
+
+Paste:
 
 ```yaml
 apiVersion: v1
@@ -854,15 +1077,24 @@ spec:
       targetPort: 5432
 ```
 
-Why this file exists:
+Explanation:
 
-The Service gives PostgreSQL a stable DNS name: `launchboard-db`.
+- `kind: Service` creates a stable internal endpoint.
+- `type: ClusterIP` makes the database reachable only inside the cluster.
+- `selector.app: launchboard-db` sends traffic to PostgreSQL Pods.
+- `port: 5432` is the Service port.
+- `targetPort: 5432` is the PostgreSQL container port.
+- Other Pods can reach the database using `launchboard-db:5432`.
 
-### `launchboard-migration-job.yaml`
+### 15.7 Create `launchboard-migration-job.yaml`
+
+Run:
 
 ```bash
 vim deployment/phase-6-kubernetes-local/k8s/launchboard-migration-job.yaml
 ```
+
+Paste:
 
 ```yaml
 apiVersion: batch/v1
@@ -905,17 +1137,27 @@ spec:
               memory: 256Mi
 ```
 
-Why this file exists:
+Explanation:
 
-The Job runs database migrations once. Jobs are better than using a long-running backend Pod for one-time setup work.
+- `kind: Job` runs a one-time task.
+- `backoffLimit: 3` allows Kubernetes to retry failed migration Pods up to 3 times.
+- `restartPolicy: OnFailure` restarts the migration Pod only if it fails.
+- `image: launchboard-backend:phase-6` uses the backend image because Alembic is inside that image.
+- `imagePullPolicy: IfNotPresent` tells Kubernetes to use the image loaded into Kind if it exists.
+- `command` overrides the Dockerfile CMD for this Job.
+- The `until` loop waits until PostgreSQL is reachable.
+- `alembic upgrade head` applies database migrations.
+- `envFrom` loads all values from the ConfigMap and Secret.
 
-The wait loop gives PostgreSQL time to become reachable before Alembic starts.
+### 15.8 Create `launchboard-backend-deployment.yaml`
 
-### `launchboard-backend-deployment.yaml`
+Run:
 
 ```bash
 vim deployment/phase-6-kubernetes-local/k8s/launchboard-backend-deployment.yaml
 ```
+
+Paste:
 
 ```yaml
 apiVersion: apps/v1
@@ -986,17 +1228,28 @@ spec:
               memory: 512Mi
 ```
 
-Why this file exists:
+Explanation:
 
-This runs the FastAPI backend with two replicas, rolling updates, health checks, and resource limits.
+- `replicas: 2` runs two backend Pods.
+- `RollingUpdate` updates Pods gradually.
+- `maxSurge: 1` allows one extra Pod during rollout.
+- `maxUnavailable: 0` keeps all old Pods available until new Pods are ready.
+- `runAsNonRoot: true` prevents the backend from running as root.
+- `seccompProfile: RuntimeDefault` uses the container runtime's default syscall restrictions.
+- `imagePullPolicy: IfNotPresent` works with images loaded into Kind.
+- The startup command waits for PostgreSQL, then starts Uvicorn.
+- `readinessProbe` controls when the Pod receives traffic.
+- `livenessProbe` restarts the Pod if the backend becomes unhealthy.
 
-The command waits for PostgreSQL before starting Uvicorn. This makes the first startup easier for students to troubleshoot.
+### 15.9 Create `launchboard-backend-service.yaml`
 
-### `launchboard-backend-service.yaml`
+Run:
 
 ```bash
 vim deployment/phase-6-kubernetes-local/k8s/launchboard-backend-service.yaml
 ```
+
+Paste:
 
 ```yaml
 apiVersion: v1
@@ -1014,15 +1267,21 @@ spec:
       targetPort: 8000
 ```
 
-Why this file exists:
+Explanation:
 
-The Service gives backend Pods a stable DNS name: `launchboard-backend`.
+- This Service gives backend Pods a stable DNS name.
+- The frontend Nginx container can reach the backend using `launchboard-backend:8000`.
+- `ClusterIP` keeps the backend private inside Kubernetes.
 
-### `launchboard-frontend-deployment.yaml`
+### 15.10 Create `launchboard-frontend-deployment.yaml`
+
+Run:
 
 ```bash
 vim deployment/phase-6-kubernetes-local/k8s/launchboard-frontend-deployment.yaml
 ```
+
+Paste:
 
 ```yaml
 apiVersion: apps/v1
@@ -1049,6 +1308,9 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -1079,15 +1341,25 @@ spec:
               memory: 256Mi
 ```
 
-Why this file exists:
+Explanation:
 
-This runs the frontend Nginx container with two replicas.
+- `replicas: 2` runs two frontend Pods.
+- `runAsNonRoot: true` makes the frontend run as a non-root user.
+- `runAsUser: 101` matches the unprivileged Nginx image user.
+- `fsGroup: 101` helps the container access files as the same group.
+- `containerPort: 8080` is where Nginx listens inside the Pod.
+- Probes call `/healthz` to check if Nginx is working.
+- Resource requests and limits keep the frontend lightweight.
 
-### `launchboard-frontend-service.yaml`
+### 15.11 Create `launchboard-frontend-service.yaml`
+
+Run:
 
 ```bash
 vim deployment/phase-6-kubernetes-local/k8s/launchboard-frontend-service.yaml
 ```
+
+Paste:
 
 ```yaml
 apiVersion: v1
@@ -1105,15 +1377,22 @@ spec:
       targetPort: 8080
 ```
 
-Why this file exists:
+Explanation:
 
-The Ingress sends traffic to this Service.
+- This Service gives frontend Pods a stable internal endpoint.
+- Ingress sends browser traffic to this Service.
+- `port: 80` is the Service port.
+- `targetPort: 8080` is the frontend container port.
 
-### `ingress.yaml`
+### 15.12 Create `ingress.yaml`
+
+Run:
 
 ```bash
 vim deployment/phase-6-kubernetes-local/k8s/ingress.yaml
 ```
+
+Paste:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -1138,15 +1417,22 @@ spec:
                   number: 80
 ```
 
-Why this file exists:
+Explanation:
 
-Ingress is the public HTTP entry point. It sends browser traffic to the frontend Service.
+- `kind: Ingress` defines public HTTP routing.
+- `ingressClassName: nginx` tells Kubernetes to use the Nginx Ingress Controller.
+- `path: /` sends all browser traffic to the frontend Service.
+- The frontend Nginx container handles `/api`, `/health`, and `/ready` proxying to the backend.
 
-### `hpa.yaml`
+### 15.13 Create `hpa.yaml`
+
+Run:
 
 ```bash
 vim deployment/phase-6-kubernetes-local/k8s/hpa.yaml
 ```
+
+Paste:
 
 ```yaml
 apiVersion: autoscaling/v2
@@ -1170,15 +1456,27 @@ spec:
           averageUtilization: 70
 ```
 
-Why this file exists:
+Explanation:
 
-The HPA shows how Kubernetes can scale backend replicas based on CPU usage. In Kind, full HPA behavior may need metrics-server.
+- HPA means Horizontal Pod Autoscaler.
+- It can scale backend Pods based on CPU usage.
+- `minReplicas: 2` keeps at least two backend Pods.
+- `maxReplicas: 5` allows scaling up to five backend Pods.
+- `averageUtilization: 70` means Kubernetes tries to keep average CPU around 70%.
 
-### `kustomization.yaml`
+Note:
+
+HPA needs metrics-server. In this guide, `hpa.yaml` is created as an example, but it is not included in the default `kustomization.yaml`. This keeps the main deployment clean for students.
+
+### 15.14 Create `kustomization.yaml`
+
+Run:
 
 ```bash
 vim deployment/phase-6-kubernetes-local/k8s/kustomization.yaml
 ```
+
+Paste:
 
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -1195,12 +1493,14 @@ resources:
   - launchboard-frontend-deployment.yaml
   - launchboard-frontend-service.yaml
   - ingress.yaml
-  - hpa.yaml
 ```
 
-Why this file exists:
+Explanation:
 
-Kustomize lets students apply many Kubernetes manifests with one command.
+- `kind: Kustomization` tells kubectl this file groups multiple YAML manifests.
+- `resources` lists all manifests to apply together.
+- `secret.example.yaml` is not included because real secrets should be created manually.
+- `hpa.yaml` is not included by default because metrics-server is not installed yet.
 
 ## Step 16: Create Kind Cluster
 
@@ -1210,6 +1510,12 @@ Run:
 cd /opt/devops-launchboard/app-source/deployment/phase-6-kubernetes-local
 kind create cluster --name launchboard-local --config kind-config.yaml
 ```
+
+Command explanation:
+
+- `kind create cluster` creates a Kubernetes cluster.
+- `--name launchboard-local` gives the cluster a clear name.
+- `--config kind-config.yaml` applies the port mapping and node label configuration.
 
 Verify:
 
@@ -1236,6 +1542,14 @@ Wait:
 kubectl wait --namespace ingress-nginx --for=condition=ready pod --selector=app.kubernetes.io/component=controller --timeout=180s
 ```
 
+Command explanation:
+
+- `kubectl apply -f URL` applies the official Kind Ingress Nginx manifest.
+- `kubectl wait` waits until the Ingress Controller Pod is ready.
+- `--namespace ingress-nginx` checks the namespace where the controller runs.
+- `--selector=app.kubernetes.io/component=controller` selects the controller Pod.
+- `--timeout=180s` waits up to 3 minutes.
+
 Why this step exists:
 
 Ingress resources need an Ingress Controller. This installs Nginx Ingress for Kind.
@@ -1245,7 +1559,13 @@ Reference:
 - Kind ingress guide: https://kind.sigs.k8s.io/docs/user/ingress/
 - Ingress Nginx docs: https://kubernetes.github.io/ingress-nginx/
 
-## Step 18: Build Images And Load Them Into Kind
+## Step 18: Choose Image Deployment Method
+
+You have two valid options.
+
+### Option A: Build Images Locally And Load Them Into Kind
+
+Use this option when students are building the app from source code on the EC2 server.
 
 Run:
 
@@ -1257,19 +1577,99 @@ kind load docker-image launchboard-backend:phase-6 --name launchboard-local
 kind load docker-image launchboard-frontend:phase-6 --name launchboard-local
 ```
 
+Command explanation:
+
+- `docker build -f ...Dockerfile.backend` builds the backend image.
+- `-t launchboard-backend:phase-6` tags the backend image.
+- `.` sends the repository root as the Docker build context.
+- `docker build -f ...Dockerfile.frontend` builds the frontend image.
+- `--build-arg VITE_API_URL=` keeps the frontend API URL empty so the browser uses same-origin paths like `/api/summary`.
+- `kind load docker-image` copies local Docker images into the Kind cluster.
+- Kind nodes do not automatically see images from the EC2 host, so loading is required for local images.
+
 Verify:
 
 ```bash
 docker images | grep launchboard
 ```
 
-Why this step exists:
+### Option B: Use Published Images From Docker Hub Or Another Registry
 
-Kind nodes cannot automatically see images built on the host. `kind load docker-image` copies the local Docker images into the Kind cluster.
+Use this option when images are already pushed to a registry.
+
+Example image names:
+
+```text
+ashik6251/launchboard-backend-k8s:v1
+ashik6251/launchboard-frontend-k8s:v1
+```
+
+Update the Kubernetes manifests:
+
+```bash
+cd /opt/devops-launchboard/app-source
+vim deployment/phase-6-kubernetes-local/k8s/launchboard-migration-job.yaml
+vim deployment/phase-6-kubernetes-local/k8s/launchboard-backend-deployment.yaml
+vim deployment/phase-6-kubernetes-local/k8s/launchboard-frontend-deployment.yaml
+```
+
+Set these image values:
+
+```yaml
+image: ashik6251/launchboard-backend-k8s:v1
+```
+
+Use the backend image in:
+
+```text
+launchboard-migration-job.yaml
+launchboard-backend-deployment.yaml
+```
+
+Set the frontend image in:
+
+```yaml
+image: ashik6251/launchboard-frontend-k8s:v1
+```
+
+Use it in:
+
+```text
+launchboard-frontend-deployment.yaml
+```
+
+For public Docker Hub images, you do not need `kind load docker-image`.
+
+Kubernetes will pull the images from the registry.
+
+Recommended image pull policy for published version tags:
+
+```yaml
+imagePullPolicy: IfNotPresent
+```
+
+For a changing tag like `latest`, use:
+
+```yaml
+imagePullPolicy: Always
+```
+
+Production recommendation:
+
+Use immutable version tags such as:
+
+```text
+v1
+v2
+2026-06-06
+commit-sha
+```
+
+Avoid using `latest` for real deployments.
 
 ## Step 19: Create Namespace And Secret
 
-Apply namespace first:
+Apply the namespace first:
 
 ```bash
 cd /opt/devops-launchboard/app-source
@@ -1284,6 +1684,22 @@ kubectl create secret generic launchboard-secret \
   --from-literal=POSTGRES_PASSWORD='CHANGE_ME_STRONG_PASSWORD' \
   --from-literal=DATABASE_URL='postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard'
 ```
+
+Command explanation:
+
+- `kubectl apply -f namespace.yaml` creates the namespace before namespaced resources are created.
+- `kubectl create secret generic` creates a Kubernetes Secret.
+- `--namespace devops-launchboard` stores the Secret in the app namespace.
+- `--from-literal=POSTGRES_PASSWORD=...` stores the PostgreSQL password.
+- `--from-literal=DATABASE_URL=...` stores the backend database connection string.
+
+Replace:
+
+```text
+CHANGE_ME_STRONG_PASSWORD
+```
+
+The password must match in both values.
 
 Verify:
 
@@ -1304,9 +1720,14 @@ cd /opt/devops-launchboard/app-source
 kubectl apply -k deployment/phase-6-kubernetes-local/k8s
 ```
 
+Command explanation:
+
+- `kubectl apply -k` applies all manifests listed inside `kustomization.yaml`.
+- This creates the ConfigMap, PVC, Deployments, Services, Job, and Ingress.
+
 Why this step exists:
 
-This applies the ConfigMap, PVC, Deployments, Services, Job, Ingress, and HPA.
+This is the main deployment command for the application.
 
 ## Step 21: Verify Kubernetes Resources
 
@@ -1341,8 +1762,16 @@ Migration Job Completed
 Backend Pods Running
 Frontend Pods Running
 Ingress exists
-PVC bound
+PVC Bound
 ```
+
+Command explanation:
+
+- `kubectl get all` shows Pods, Services, Deployments, ReplicaSets, and Jobs.
+- `kubectl get ingress` shows public routing rules.
+- `kubectl get pvc` checks persistent storage status.
+- `rollout status` waits until a Deployment finishes rollout.
+- `logs job/launchboard-migrate` shows migration output.
 
 ## Step 22: Verify The App
 
@@ -1370,6 +1799,30 @@ API works through /api.
 No browser CORS error appears.
 ```
 
+Why this step exists:
+
+These commands verify the public traffic path:
+
+```text
+EC2 port 80
+↓
+Kind port mapping
+↓
+Ingress Nginx Controller
+↓
+Frontend Service
+↓
+Frontend Pod
+↓
+Backend Service
+↓
+Backend Pod
+↓
+PostgreSQL Service
+↓
+PostgreSQL Pod
+```
+
 ## Step 23: Test Rollout And Rollback
 
 Build and load a new backend image:
@@ -1387,6 +1840,12 @@ kubectl -n devops-launchboard set image deployment/launchboard-backend backend=l
 kubectl -n devops-launchboard rollout status deployment/launchboard-backend
 ```
 
+Check rollout history:
+
+```bash
+kubectl -n devops-launchboard rollout history deployment/launchboard-backend
+```
+
 Rollback:
 
 ```bash
@@ -1394,13 +1853,42 @@ kubectl -n devops-launchboard rollout undo deployment/launchboard-backend
 kubectl -n devops-launchboard rollout status deployment/launchboard-backend
 ```
 
+Command explanation:
+
+- `docker build ... phase-6-v2` creates a new backend image version.
+- `kind load docker-image ...` loads the new image into Kind.
+- `kubectl set image` changes the image used by the backend Deployment.
+- `rollout status` waits for the update to complete.
+- `rollout history` shows previous rollout revisions.
+- `rollout undo` returns to the previous revision.
+
 Why this step exists:
 
-Kubernetes Deployments keep rollout history and can roll back when a new version breaks.
+Kubernetes Deployments support rolling updates and rollback. This is a core production deployment concept.
 
 Reference:
 
 - Kubernetes deployments: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
+
+## Optional Step: Apply HPA Example
+
+HPA requires metrics-server.
+
+Check if metrics are available:
+
+```bash
+kubectl top nodes
+kubectl top pods -n devops-launchboard
+```
+
+If metrics are available, apply the HPA:
+
+```bash
+kubectl apply -f deployment/phase-6-kubernetes-local/k8s/hpa.yaml
+kubectl -n devops-launchboard get hpa
+```
+
+If `kubectl top` does not work, skip HPA for now. The main application deployment does not depend on HPA.
 
 ## Logs And Debugging
 
@@ -1408,12 +1896,23 @@ Useful commands:
 
 ```bash
 kubectl -n devops-launchboard get pods
+kubectl -n devops-launchboard get pods -o wide
 kubectl -n devops-launchboard describe pod POD_NAME
 kubectl -n devops-launchboard logs deployment/launchboard-backend
 kubectl -n devops-launchboard logs deployment/launchboard-frontend
 kubectl -n devops-launchboard logs deployment/launchboard-db
+kubectl -n devops-launchboard logs job/launchboard-migrate
 kubectl -n devops-launchboard get events --sort-by=.metadata.creationTimestamp
 ```
+
+Command explanation:
+
+- `get pods` shows Pod status.
+- `get pods -o wide` shows extra details like node and Pod IP.
+- `describe pod` shows events, image errors, probe failures, and scheduling details.
+- `logs deployment/...` shows logs from Pods managed by a Deployment.
+- `logs job/...` shows migration logs.
+- `get events` shows recent Kubernetes events in order.
 
 Port-forward fallback:
 
@@ -1433,19 +1932,31 @@ Kubernetes troubleshooting usually starts with Pods, events, rollout status, and
 
 ## Troubleshooting
 
-### Problem 1: Pod Shows ImagePullBackOff
+### Problem 1: Pod Shows `ImagePullBackOff`
 
 Check:
 
 ```bash
+kubectl -n devops-launchboard get pods
 kubectl -n devops-launchboard describe pod POD_NAME
 ```
 
-Fix:
+Common causes:
+
+```text
+Local image was not loaded into Kind.
+Image name in manifest does not match the built image tag.
+Published image name is wrong.
+Private registry credentials are missing.
+```
+
+Fix for local images:
 
 ```bash
 kind load docker-image launchboard-backend:phase-6 --name launchboard-local
 kind load docker-image launchboard-frontend:phase-6 --name launchboard-local
+kubectl -n devops-launchboard rollout restart deployment/launchboard-backend
+kubectl -n devops-launchboard rollout restart deployment/launchboard-frontend
 ```
 
 ### Problem 2: Backend Cannot Connect To Database
@@ -1456,6 +1967,7 @@ Check:
 kubectl -n devops-launchboard logs deployment/launchboard-backend
 kubectl -n devops-launchboard get secret launchboard-secret
 kubectl -n devops-launchboard get service launchboard-db
+kubectl -n devops-launchboard get pods -l app=launchboard-db
 ```
 
 Common causes:
@@ -1464,6 +1976,7 @@ Common causes:
 Secret was not created.
 DATABASE_URL password does not match POSTGRES_PASSWORD.
 PostgreSQL Pod is not ready.
+PostgreSQL Service name is wrong.
 ```
 
 ### Problem 3: Ingress Does Not Work
@@ -1482,6 +1995,7 @@ Common causes:
 Ingress Controller is not ready.
 Kind cluster was created without port mappings.
 AWS security group does not allow port 80.
+Ingress resource points to the wrong Service.
 ```
 
 ### Problem 4: Migration Job Failed
@@ -1493,12 +2007,59 @@ kubectl -n devops-launchboard describe job launchboard-migrate
 kubectl -n devops-launchboard logs job/launchboard-migrate
 ```
 
+Common causes:
+
+```text
+Alembic is not installed in the backend image.
+DATABASE_URL is wrong.
+PostgreSQL is not ready.
+Old database volume has old credentials or old schema state.
+```
+
 Lab fix after correcting the issue:
 
 ```bash
 kubectl -n devops-launchboard delete job launchboard-migrate
 kubectl apply -f deployment/phase-6-kubernetes-local/k8s/launchboard-migration-job.yaml
 ```
+
+### Problem 5: ConfigMap Or Deployment Changes Do Not Show Up
+
+Apply again:
+
+```bash
+kubectl apply -k deployment/phase-6-kubernetes-local/k8s
+```
+
+Restart Deployments if environment values changed:
+
+```bash
+kubectl -n devops-launchboard rollout restart deployment/launchboard-backend
+kubectl -n devops-launchboard rollout restart deployment/launchboard-frontend
+```
+
+### Problem 6: Secret Needs To Be Recreated
+
+Delete and recreate the Secret:
+
+```bash
+kubectl -n devops-launchboard delete secret launchboard-secret
+kubectl create secret generic launchboard-secret \
+  --namespace devops-launchboard \
+  --from-literal=POSTGRES_PASSWORD='NEW_STRONG_PASSWORD' \
+  --from-literal=DATABASE_URL='postgresql+asyncpg://launchboard_user:NEW_STRONG_PASSWORD@launchboard-db:5432/launchboard'
+```
+
+Restart affected resources:
+
+```bash
+kubectl -n devops-launchboard rollout restart deployment/launchboard-db
+kubectl -n devops-launchboard rollout restart deployment/launchboard-backend
+```
+
+Important:
+
+If PostgreSQL already initialized with an old password, changing only the Secret may not update the existing database user password. For a lab reset, delete the namespace and recreate the deployment.
 
 ## Cleanup
 
@@ -1520,6 +2081,12 @@ Remove Docker images:
 docker rmi launchboard-backend:phase-6 launchboard-backend:phase-6-v2 launchboard-frontend:phase-6 || true
 ```
 
+Optional Docker cleanup for lab servers:
+
+```bash
+docker system prune -f
+```
+
 AWS cleanup:
 
 - Terminate the EC2 instance.
@@ -1527,16 +2094,49 @@ AWS cleanup:
 - Release unused Elastic IPs.
 - Check AWS Billing.
 
+Why cleanup matters:
+
+Even if Kind runs locally, the EC2 server and AWS resources can still create charges if they are left running.
+
 ## Security Notes
 
 - Do not expose PostgreSQL publicly.
 - Do not expose backend directly.
 - Use Secrets for passwords.
-- Do not commit real Secret YAML.
+- Do not commit real Secret YAML files.
 - Use Ingress as the public entry point.
 - Use resource requests and limits.
 - Use readiness and liveness probes.
+- Run app containers as non-root where possible.
+- Use versioned image tags instead of `latest`.
 - Use managed database storage for serious production.
+- Use HTTPS for real public deployments.
+
+## Image Review
+
+Backend image:
+
+```text
+Base image: python:3.12-slim
+Build style: multi-stage
+Runtime user: non-root app user
+Runtime port: 8000
+Includes Alembic: yes, through .[dev]
+Suitable for this phase: yes
+```
+
+Frontend image:
+
+```text
+Build image: node:22-alpine
+Runtime image: nginxinc/nginx-unprivileged:1.27-alpine
+Node included in final image: no
+Runtime user: non-root Nginx user
+Runtime port: 8080
+Suitable for this phase: yes
+```
+
+For a student-level production-style Kubernetes lab, both images are clean and lightweight enough. For real company production, add image scanning, CI/CD, SBOM generation, and signed images.
 
 ## Production Checklist
 
@@ -1556,8 +2156,7 @@ AWS cleanup:
 [ ] CORS_ORIGINS updated
 [ ] Kind cluster created
 [ ] Ingress Controller installed
-[ ] Images built
-[ ] Images loaded into Kind
+[ ] Images built and loaded into Kind, or published images configured
 [ ] Namespace created
 [ ] Secret created
 [ ] Manifests applied
@@ -1567,6 +2166,7 @@ AWS cleanup:
 [ ] Frontend rollout successful
 [ ] Ingress works
 [ ] Public browser URL works
+[ ] API works through /api
 [ ] Rollout tested
 [ ] Rollback tested
 [ ] Cleanup plan understood
@@ -1600,4 +2200,4 @@ Phase 7: CI/CD
 
 Why:
 
-Phase 6 teaches Kubernetes deployment manually. Phase 7 teaches how to automate checks, builds, and deployment steps through CI/CD.
+Phase 6 teaches Kubernetes deployment manually. Phase 7 teaches how to automate checks, image builds, and deployment steps through CI/CD.
