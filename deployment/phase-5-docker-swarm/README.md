@@ -1678,7 +1678,7 @@ docker build -f deployment/phase-5-docker-swarm/Dockerfile.backend -t launchboar
 Update the service:
 
 ```bash
-docker service update --image launchboard-backend:phase-5-v2 --resolve-image never devops-launchboard_launchboard-backend
+docker service update --image launchboard-backend:phase-5-v2 --no-resolve-image devops-launchboard_launchboard-backend
 ```
 
 Watch rollout:
@@ -1691,7 +1691,7 @@ Command explanation:
 
 - `docker build ... -t launchboard-backend:phase-5-v2 .` builds a new backend image tag.
 - `docker service update --image ...` updates the running Swarm service to use the new image.
-- `--resolve-image never` prevents Swarm from checking a remote registry.
+- `--no-resolve-image` prevents Swarm from checking a remote registry.
 - `docker service ps ...` shows each backend task during the rollout.
 
 Why this step exists:
