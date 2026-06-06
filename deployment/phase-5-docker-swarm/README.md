@@ -1482,7 +1482,7 @@ Command explanation:
 
 - `docker build ... -t launchboard-backend:phase-5-v2 .` builds a new backend image tag.
 - `docker service update --image ...` updates the running Swarm service to use the new image.
-- `--resolve-image never` prevents Swarm from checking a remote registry.
+- `--no-resolve-image` prevents Swarm from checking a remote registry.
 - `docker service ps ...` shows each backend task during the rollout.
 
 Why this step exists:
