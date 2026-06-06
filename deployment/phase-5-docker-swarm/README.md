@@ -156,6 +156,54 @@ The frontend image is lightweight because it uses:
 - `nginx:1.27-alpine` for the final runtime stage.
 - Only static build files copied into the final image.
 
+## Image Deployment Options
+
+This phase supports two image deployment scenarios.
+
+### Option A: Build Images Locally On The EC2 Server
+
+Use this option when students are learning how Docker builds images from source code.
+
+In this option, the EC2 server builds these local images:
+
+```text
+launchboard-backend:phase-5
+launchboard-frontend:phase-5
+```
+
+The stack file can use those local image names directly.
+
+This is good for:
+
+- Beginner hands-on practice.
+- Single-node Swarm labs.
+- Understanding Dockerfile build flow.
+
+### Option B: Use Published Images From A Registry
+
+Use this option when the images are already built and pushed to Docker Hub, Amazon ECR, GitHub Container Registry, or another image registry.
+
+In this option, students do not need to build images on the EC2 server. They only update the image names in `stack.yml` and deploy the stack.
+
+Example published images:
+
+```text
+DOCKERHUB_USERNAME/launchboard-backend-swarm:v1
+DOCKERHUB_USERNAME/launchboard-frontend-swarm:v1
+```
+
+Replace `DOCKERHUB_USERNAME` with your real Docker Hub username.
+
+This is good for:
+
+- Production-style deployment.
+- Faster server setup.
+- Multi-node Swarm clusters, because every node can pull the same images.
+- CI/CD workflows where images are built before deployment.
+
+Important:
+
+For a real multi-node Swarm, published registry images are the correct approach. Local images only exist on the node where they were built.
 
 ## Step 1: Create EC2 Server
 
@@ -1231,9 +1279,26 @@ Reference:
 - Docker Swarm secrets: https://docs.docker.com/engine/swarm/secrets/
 - Swarm services: https://docs.docker.com/engine/swarm/how-swarm-mode-works/services/
 
-## Step 14: Build Backend And Frontend Images
+## Step 14: Prepare Backend And Frontend Images
 
-Run:
+Swarm deploys services from Docker images.
+
+Unlike Docker Compose, `docker stack deploy` does not build images automatically.
+
+You have two choices:
+
+```text
+Option A: Build images locally on this EC2 server.
+Option B: Use images already published to Docker Hub or another registry.
+```
+
+Choose only one option for your deployment.
+
+### Option A: Build Images Locally
+
+Use this option when students are learning the full Docker build process.
+
+Run from the project root:
 
 ```bash
 cd /opt/devops-launchboard/app-source
@@ -1246,29 +1311,128 @@ Command explanation:
 - `cd /opt/devops-launchboard/app-source` moves to the project root.
 - `docker build` builds a Docker image.
 - `-f deployment/phase-5-docker-swarm/Dockerfile.backend` tells Docker which backend Dockerfile to use.
-- `-t launchboard-backend:phase-5` names and tags the backend image.
+- `-t launchboard-backend:phase-5` names and tags the backend image locally.
 - `.` sends the current project root as the build context.
 - The frontend build command uses `Dockerfile.frontend`.
 - `--build-arg VITE_API_URL=` keeps the frontend API URL empty so the frontend uses same-origin `/api` calls through Nginx.
-- `-t launchboard-frontend:phase-5` names and tags the frontend image.
+- `-t launchboard-frontend:phase-5` names and tags the frontend image locally.
 
-Verify:
+Verify local images:
 
 ```bash
 docker images | grep launchboard
 ```
 
-Why this step exists:
+Expected local images:
 
-Swarm deploys services from images. Unlike Docker Compose, `docker stack deploy` does not build images automatically.
+```text
+launchboard-backend    phase-5
+launchboard-frontend   phase-5
+```
 
-Important note:
+With this option, keep these image names in `stack.yml`:
 
-This single-node lab uses local images. In a multi-node Swarm cluster, push images to a registry such as Docker Hub, Amazon ECR, or GitHub Container Registry so every Swarm node can pull them.
+```yaml
+image: launchboard-backend:phase-5
+image: launchboard-frontend:phase-5
+```
+
+Important:
+
+This option is fine for a single-node Swarm lab. For a multi-node Swarm cluster, use Option B because other nodes cannot use images that exist only on this EC2 server.
+
+### Option B: Use Published Images From Docker Hub Or Another Registry
+
+Use this option when the images are already built and pushed to a registry.
+
+In this option, students do not run `docker build` on the EC2 server.
+
+First, choose your published image names.
+
+Example:
+
+```text
+DOCKERHUB_USERNAME/launchboard-backend-swarm:v1
+DOCKERHUB_USERNAME/launchboard-frontend-swarm:v1
+```
+
+Replace `DOCKERHUB_USERNAME` with your real Docker Hub username.
+
+Edit the stack file:
+
+```bash
+cd /opt/devops-launchboard/app-source/deployment/phase-5-docker-swarm
+vim stack.yml
+```
+
+Change the backend image in two places.
+
+For `launchboard-migrate`:
+
+```yaml
+image: DOCKERHUB_USERNAME/launchboard-backend-swarm:v1
+```
+
+For `launchboard-backend`:
+
+```yaml
+image: DOCKERHUB_USERNAME/launchboard-backend-swarm:v1
+```
+
+Change the frontend image:
+
+```yaml
+image: DOCKERHUB_USERNAME/launchboard-frontend-swarm:v1
+```
+
+Why the backend image appears twice:
+
+The migration service and backend service use the same backend image.
+
+```text
+launchboard-migrate   -> runs alembic upgrade head
+launchboard-backend   -> runs uvicorn backend API
+```
+
+Same image, different command.
+
+Optional: pull the images manually to test registry access.
+
+```bash
+docker pull DOCKERHUB_USERNAME/launchboard-backend-swarm:v1
+docker pull DOCKERHUB_USERNAME/launchboard-frontend-swarm:v1
+```
+
+Command explanation:
+
+- `docker pull` downloads the image from the registry to the EC2 server.
+- This is optional for public images because Swarm can pull during deployment.
+- Pulling manually is useful because it confirms that the image name and tag are correct.
+
+If the images are private, log in first:
+
+```bash
+docker login
+```
+
+For private images, deploy later with:
+
+```bash
+docker stack deploy --with-registry-auth -c stack.yml devops-launchboard
+```
+
+Why `--with-registry-auth` is used:
+
+It passes your registry authentication to Swarm so the service can pull private images.
+
+Important:
+
+Do not use `--resolve-image never` when you want Swarm to pull published registry images normally. Use `--resolve-image never` only for the local image lab scenario.
 
 Reference:
 
-- Docker build docs: https://docs.docker.com/reference/cli/docker/buildx/build/
+- Docker image pull: https://docs.docker.com/reference/cli/docker/image/pull/
+- Docker stack deploy: https://docs.docker.com/reference/cli/docker/stack/deploy/
 
 ## Step 15: Initialize Docker Swarm
 
@@ -1364,6 +1528,17 @@ This checks whether Swarm can understand the stack file before you deploy it.
 
 ## Step 18: Deploy The Stack
 
+Deploy the stack based on the image option you chose in Step 14.
+
+### Deploy With Locally Built Images
+
+Use this command if your `stack.yml` uses local image names like:
+
+```text
+launchboard-backend:phase-5
+launchboard-frontend:phase-5
+```
+
 Run:
 
 ```bash
@@ -1378,11 +1553,45 @@ Command explanation:
 - `-c stack.yml` chooses the stack file.
 - `devops-launchboard` is the stack name.
 
-Why `--resolve-image never` is used:
+Why `--resolve-image never` is used here:
 
-This lab uses images built locally on one EC2 server. This flag tells Swarm not to contact a registry to resolve the image digest.
+This local-image lab uses images built on the same EC2 server. The images are not coming from Docker Hub or another registry.
 
-Verify:
+### Deploy With Published Registry Images
+
+Use this command if your `stack.yml` uses published image names like:
+
+```text
+DOCKERHUB_USERNAME/launchboard-backend-swarm:v1
+DOCKERHUB_USERNAME/launchboard-frontend-swarm:v1
+```
+
+For public images, run:
+
+```bash
+cd /opt/devops-launchboard/app-source/deployment/phase-5-docker-swarm
+docker stack deploy -c stack.yml devops-launchboard
+```
+
+For private images, run:
+
+```bash
+cd /opt/devops-launchboard/app-source/deployment/phase-5-docker-swarm
+docker stack deploy --with-registry-auth -c stack.yml devops-launchboard
+```
+
+Command explanation:
+
+- `docker stack deploy` deploys the Swarm stack.
+- `-c stack.yml` uses your stack file.
+- `--with-registry-auth` is only needed when the image registry requires login.
+- `devops-launchboard` is the stack name.
+
+Why this is production-style:
+
+Published images make deployment repeatable. The server does not need to build application code. It only pulls known image tags from a registry.
+
+Verify the stack:
 
 ```bash
 docker stack ls
@@ -1469,7 +1678,7 @@ docker build -f deployment/phase-5-docker-swarm/Dockerfile.backend -t launchboar
 Update the service:
 
 ```bash
-docker service update --image launchboard-backend:phase-5-v2 --no-resolve-image devops-launchboard_launchboard-backend
+docker service update --image launchboard-backend:phase-5-v2 --resolve-image never devops-launchboard_launchboard-backend
 ```
 
 Watch rollout:
@@ -1482,7 +1691,7 @@ Command explanation:
 
 - `docker build ... -t launchboard-backend:phase-5-v2 .` builds a new backend image tag.
 - `docker service update --image ...` updates the running Swarm service to use the new image.
-- `--no-resolve-image` prevents Swarm from checking a remote registry.
+- `--resolve-image never` prevents Swarm from checking a remote registry.
 - `docker service ps ...` shows each backend task during the rollout.
 
 Why this step exists:
@@ -1831,8 +2040,9 @@ Reference:
 [ ] Secret example file created
 [ ] Swarm stack file created
 [ ] YOUR_EC2_PUBLIC_IP replaced in stack.yml
-[ ] Backend image built
-[ ] Frontend image built
+[ ] Image deployment option selected: local build or published registry image
+[ ] Backend image built locally or published backend image configured
+[ ] Frontend image built locally or published frontend image configured
 [ ] Docker Swarm initialized
 [ ] Docker secret created
 [ ] Stack config validates
