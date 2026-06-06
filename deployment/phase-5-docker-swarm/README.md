@@ -1469,7 +1469,7 @@ docker build -f deployment/phase-5-docker-swarm/Dockerfile.backend -t launchboar
 Update the service:
 
 ```bash
-docker service update --image launchboard-backend:phase-5-v2 --no-resolve-image never devops-launchboard_launchboard-backend
+docker service update --image launchboard-backend:phase-5-v2 --no-resolve-image devops-launchboard_launchboard-backend
 ```
 
 Watch rollout:
