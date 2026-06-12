@@ -2090,12 +2090,18 @@ ssh -i devops-launchboard-key.pem ubuntu@YOUR_CONTROL_PLANE_PUBLIC_IP
 ```bash
 sudo apt update
 sudo apt upgrade -y
-sudo apt install -y git curl wget vim unzip jq ca-certificates gnupg lsb-release apt-transport-https
+sudo apt install -y git curl wget vim unzip jq ca-certificates gnupg lsb-release apt-transport-https conntrack socat
 ```
 
 Command explanation:
 
 - All packages are the same as Scenario 1 except `apt-transport-https`, which allows apt to download packages over HTTPS. This is needed for the Kubernetes apt repository.
+- `conntrack` is a connection-tracking utility that kube-proxy uses to manage
+  network connection entries when Services change. kubeadm's preflight check
+  fails with `[ERROR FileExisting-conntrack]: conntrack not found in system path`
+  if it is missing.
+- `socat` is a port-forwarding relay used by `kubectl port-forward`. kubeadm
+  warns if it is absent.
 
 Reference:
 
@@ -2651,7 +2657,7 @@ ssh -i devops-launchboard-key.pem ubuntu@YOUR_WORKER_1_PUBLIC_IP
 ```bash
 sudo apt update
 sudo apt upgrade -y
-sudo apt install -y git curl wget vim unzip jq ca-certificates gnupg lsb-release apt-transport-https
+sudo apt install -y git curl wget vim unzip jq ca-certificates gnupg lsb-release apt-transport-https conntrack socat
 ```
 
 Reference:
