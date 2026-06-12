@@ -3006,11 +3006,71 @@ Create the scenario folder:
 mkdir -p deployment/phase-6-kubeadm/k8s
 ```
 
-## Step 2: Install Docker On The Control Plane, Build, And Push To Docker Hub
+## Step 2: Build And Push Images From A Separate Build Machine
 
-In Scenario 1, Kind let you load locally built images straight into the cluster with `kind load docker-image`. A kubeadm cluster has no equivalent: the worker nodes run containerd and pull images from a registry like any production cluster. So before deploying, your backend and frontend images must exist in a registry the nodes can pull from. Docker Hub's free tier with public repositories is enough, and you will do the whole build-and-push from the control plane terminal.
+In Scenario 1, Kind let you load locally built images straight into the cluster with `kind load docker-image`. A kubeadm cluster has no equivalent: the worker nodes run containerd and pull images from a registry like any production cluster. So before deploying, your backend and frontend images must exist in a registry the nodes can pull from. Docker Hub's free tier with public repositories is enough.
 
-One important thing happens when you install Docker on a kubeadm node, and this step handles it explicitly: the `docker-ce` package replaces the Ubuntu `containerd` package with Docker's own `containerd.io` package. That replacement overwrites the containerd configuration you created in Scenario 2, and Docker's default config disables the CRI plugin that the kubelet depends on. If you install Docker and stop there, the kubelet loses its container runtime and the node goes NotReady. The fix is simple: regenerate the Kubernetes-compatible config right after installing Docker, restart containerd and the kubelet, and verify the cluster is healthy before building anything. Docker and Kubernetes then share the same containerd peacefully, because containerd isolates them in separate namespaces (`moby` for Docker, `k8s.io` for Kubernetes).
+Where to build: NOT on the cluster nodes. Use a separate machine with Docker. This is not just a lab convenience, it is how production works: build machines and cluster nodes are always separate. Installing Docker on a kubeadm node replaces its `containerd` package with Docker's `containerd.io` package, overwrites the containerd configuration the kubelet depends on, and adds memory pressure that can knock the kubelet over on a t3.medium. None of that can happen on a machine that only builds.
+
+You have two options for the build machine:
+
+- Option A: reuse the Scenario 1 EC2 (`devops-launchboard-phase-6-s1`) if it still exists. It already has Docker and the repository.
+- Option B: create a fresh, short-lived build EC2. You will terminate it as soon as the images are pushed. Total cost is around one cent.
+
+The steps below assume Option B. For Option A, skip to the Docker Hub account part.
+
+### Create the build EC2
+
+| Item | Value |
+| --- | --- |
+| EC2 Name | `devops-launchboard-build` |
+| AMI | Ubuntu Server 24.04 LTS |
+| Instance Type | `t3.small` |
+| Storage | 20 GB gp3 |
+| Key Pair | `devops-launchboard-key` |
+| Security Group | SSH port 22 from your IP only |
+
+t3.small (2 GB RAM) is the minimum: the frontend `npm run build` step runs out of memory on smaller instances. No other inbound ports are needed because this machine only makes outbound connections (GitHub, Docker Hub).
+
+SSH in and install Docker (same commands as Scenario 1 Step 4):
+
+```bash
+ssh -i devops-launchboard-key.pem ubuntu@YOUR_BUILD_EC2_PUBLIC_IP
+
+sudo apt update
+sudo apt install -y git curl ca-certificates gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo ${UBUNTU_CODENAME:-$VERSION_CODENAME}) stable" | sudo tee /etc/apt/sources.list.d/docker.list
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+sudo usermod -aG docker ubuntu
+exit
+```
+
+SSH back in so the docker group membership takes effect, then verify:
+
+```bash
+ssh -i devops-launchboard-key.pem ubuntu@YOUR_BUILD_EC2_PUBLIC_IP
+docker --version
+```
+
+There is no Kubernetes on this machine, so the containerd package replacement that Docker performs is harmless here. That is the entire point of a separate build machine.
+
+### Clone the repository
+
+The repository is public, so the build machine can clone it read-only over HTTPS with no SSH key setup:
+
+```bash
+sudo mkdir -p /opt/devops-launchboard
+sudo chown -R ubuntu:ubuntu /opt/devops-launchboard
+cd /opt/devops-launchboard
+git clone https://github.com/ashraful2430/N-tier-application.git app-source
+cd app-source
+```
+
+This machine never pushes to Git, it only reads, so HTTPS without credentials is enough. Note: the files for this scenario (the Dockerfiles below and the manifests in Step 3) must be committed and pushed from wherever you edit them so this clone can see them. If you just created files on the control plane, commit and push there first, then `git pull` here.
 
 ### Create a Docker Hub account and repositories
 
@@ -3024,96 +3084,9 @@ launchboard-frontend-k8s
 
 Public visibility matters: Kubernetes pulls public images with no credentials. A private repository would require an `imagePullSecret` in the cluster and a reference to it in every Deployment, which is extra complexity you do not need in this lab.
 
-### Install Docker on the control plane
-
-SSH into the control plane and run:
-
-```bash
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo ${UBUNTU_CODENAME:-$VERSION_CODENAME}) stable" | sudo tee /etc/apt/sources.list.d/docker.list
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
-sudo usermod -aG docker ubuntu
-```
-
-Command explanation:
-
-- The repository setup lines are identical to Scenario 1 Step 4.
-- During `apt install`, apt prints that it is REMOVING the `containerd` package and installing `containerd.io`. This is expected. Both packages provide the same containerd runtime binary; they just cannot be installed together.
-- `sudo usermod -aG docker ubuntu` lets the ubuntu user run docker without sudo after re-login.
-
-### Restore the Kubernetes containerd configuration
-
-This is the critical part. Regenerate the config with the CRI plugin enabled and the systemd cgroup driver, exactly as in Scenario 2 Step 7:
-
-```bash
-containerd config default | sudo tee /etc/containerd/config.toml
-sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-sudo systemctl restart containerd
-sudo systemctl restart kubelet
-```
-
-Command explanation:
-
-- `containerd config default` regenerates the full default configuration, which has the CRI plugin enabled. The config file that `containerd.io` installed had `disabled_plugins = ["cri"]`, which is exactly what breaks the kubelet.
-- `sed ... SystemdCgroup = true` re-applies the systemd cgroup driver. Without it, the kubelet and containerd disagree on cgroup management and Pods fail to start.
-- Restarting containerd loads the new config. Restarting the kubelet makes it reconnect to the CRI socket immediately instead of waiting for its retry loop.
-
-Log out and SSH back in so the docker group membership takes effect:
-
-```bash
-exit
-ssh -i devops-launchboard-key.pem ubuntu@YOUR_CONTROL_PLANE_PUBLIC_IP
-```
-
-### Verify the cluster survived
-
-Do not skip this. Confirm the node is Ready and system Pods are running before you build anything:
-
-```bash
-kubectl get nodes
-kubectl get pods -n kube-system
-docker --version
-```
-
-Expected: all nodes `Ready`, all kube-system Pods `Running`, and the Docker version prints without a permission error.
-
-If the control plane shows NotReady while kube-system Pods are all Running, the cause is almost always the Flannel CNI Pod on that node, which was killed when containerd was replaced. Confirm and fix:
-
-```bash
-kubectl describe node CONTROL_PLANE_NODE_NAME | grep -A4 "Ready "
-```
-
-If the message mentions `NetworkReady=false` or `cni plugin not initialized`, restart the runtime and recreate the Flannel Pod on that node:
-
-```bash
-grep -E "SystemdCgroup|disabled_plugins" /etc/containerd/config.toml
-sudo systemctl restart containerd
-sudo systemctl restart kubelet
-kubectl -n kube-flannel get pods -o wide
-kubectl -n kube-flannel delete pod -l app=flannel \
-  --field-selector spec.nodeName=CONTROL_PLANE_NODE_NAME
-```
-
-The DaemonSet recreates the Pod within seconds. Wait 30 to 60 seconds and re-check `kubectl get nodes`. Do not proceed to building until all nodes are Ready.
-
-### Log in to Docker Hub (required)
-
-You cannot push without authenticating. Run:
-
-```bash
-docker login -u YOUR_DOCKERHUB_USERNAME
-```
-
-When prompted for a password, use an access token instead of your account password: Docker Hub > Account Settings > Personal access tokens > Generate new token (Read & Write scope). Tokens can be revoked individually if a lab machine is compromised; your account password cannot. A successful login prints `Login Succeeded`.
-
 ### Put the Dockerfiles in the Scenario 4 folder
 
-The kubeadm cluster's clone may not contain the Scenario 1 folder (`deployment/phase-6-kubernetes-local/`) if those files were never committed and pushed. To make this scenario self-contained, the Dockerfiles and Nginx config live in `deployment/phase-6-kubeadm/` too.
-
-If your repository contains the Scenario 1 files, copy them:
+To make this scenario self-contained, the Dockerfiles and Nginx config live in `deployment/phase-6-kubeadm/`. If your repository contains the Scenario 1 files, copy them:
 
 ```bash
 cd /opt/devops-launchboard/app-source
@@ -3142,13 +3115,22 @@ To:
 COPY deployment/phase-6-kubeadm/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 ```
 
+### Log in to Docker Hub (required)
+
+You cannot push without authenticating. Run:
+
+```bash
+docker login -u YOUR_DOCKERHUB_USERNAME
+```
+
+When prompted for a password, use an access token instead of your account password: Docker Hub > Account Settings > Personal access tokens > Generate new token (Read & Write scope). Tokens can be revoked individually if a lab machine is compromised; your account password cannot. A successful login prints `Login Succeeded`.
+
 ### Build the images
 
 Both the `-f` path and the trailing `.` (the build context) are relative to your current directory, and the Dockerfiles copy `backend/` and `frontend/` from the repository root. So these commands MUST be run from the repository root, not from inside the deployment folder. Running them from anywhere else fails with `lstat deployment: no such file or directory`.
 
 ```bash
 cd /opt/devops-launchboard/app-source
-git pull
 
 docker build -f deployment/phase-6-kubeadm/Dockerfile.backend \
   -t YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s:v1 .
@@ -3172,18 +3154,24 @@ docker push YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s:v1
 docker push YOUR_DOCKERHUB_USERNAME/launchboard-frontend-k8s:v1
 ```
 
-Verify by opening `https://hub.docker.com/r/YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s` in a browser; the `v1` tag should be listed.
-
-### Clean up build space and credentials
-
-The control plane disk is only 20 GB and the Node.js build stage is large. Reclaim space and remove the stored credential:
+Verify by opening `https://hub.docker.com/r/YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s` in a browser; the `v1` tag should be listed. You can also test the pull path from the control plane without deploying anything (cluster nodes have no Docker, so this uses containerd's own CLI):
 
 ```bash
-docker system prune -f
-docker logout
+sudo ctr image pull docker.io/YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s:v1
 ```
 
-`docker logout` removes your Docker Hub credential from `~/.docker/config.json`. You only need to log in again the next time you push.
+### Terminate the build machine
+
+```bash
+docker logout
+exit
+```
+
+Then terminate `devops-launchboard-build` from the AWS Console. The images live on Docker Hub now; the build machine has done its job. When you need a `v2` image later, launch a new one (or reuse the Scenario 1 instance), which takes five minutes.
+
+Why this flow is the safe one:
+
+The cluster nodes are never touched. There is no containerd package conflict, no kubelet restart, no risk of a NotReady control plane, and no build competing with etcd for memory. The only things that move between machines are Git commits (in) and images (out), which is exactly the separation a real CI system like the one in Phase 7 formalizes.
 
 Important for the rest of this scenario:
 
@@ -3194,7 +3182,6 @@ Reference:
 - Docker Hub quickstart: https://docs.docker.com/docker-hub/quickstart/
 - Docker Hub access tokens: https://docs.docker.com/security/access-tokens/
 - docker push: https://docs.docker.com/reference/cli/docker/image/push/
-- containerd for Kubernetes: https://kubernetes.io/docs/setup/production-environment/container-runtimes/#containerd
 
 ## Step 3: Create Kubernetes Manifests
 
@@ -5724,10 +5711,11 @@ Scenario 3 - Worker Nodes
 Scenario 4 - App on kubeadm
 [ ] Project cloned on control plane
 [ ] Docker Hub account and two public repositories created
-[ ] Docker installed on control plane
-[ ] containerd config restored (CRI enabled, SystemdCgroup=true) and cluster still Ready
+[ ] Separate build EC2 created (or Scenario 1 EC2 reused), Docker installed there
+[ ] Dockerfiles copied into deployment/phase-6-kubeadm and frontend COPY path updated
 [ ] docker login completed with access token
 [ ] Images built with YOUR_DOCKERHUB_USERNAME tags and pushed (v1)
+[ ] Build EC2 terminated after push
 [ ] deployment/phase-6-kubeadm/k8s folder created
 [ ] All manifests created with YOUR_DOCKERHUB_USERNAME replaced by your real username
 [ ] CORS_ORIGINS set to worker IP and port 30080
