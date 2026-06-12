@@ -1298,6 +1298,8 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -1348,14 +1350,22 @@ Line explanation:
 - `spec.strategy.type: RollingUpdate` updates Pods gradually instead of all at once. When you push a new image, Kubernetes creates a new Pod, waits for it to be ready, then removes an old Pod, repeating until all Pods run the new version.
 - `rollingUpdate.maxSurge: 1` allows one extra Pod to exist during the update. With 2 replicas and maxSurge 1, there can be at most 3 Pods during the rollout.
 - `rollingUpdate.maxUnavailable: 0` means zero Pods can be unavailable during the update. Kubernetes will not remove an old Pod until the new one is fully ready. This ensures zero downtime during updates.
-- `spec.template.spec.securityContext` applies security settings at the Pod level, affecting all containers.
-- `runAsNonRoot: true` prevents any container in this Pod from running as root. If an image tries to run as root, Kubernetes rejects it. This is enforced at the Kubernetes level, not just in the Dockerfile.
-- `seccompProfile.type: RuntimeDefault` applies the container runtime's default seccomp profile to the Pod. Seccomp filters which system calls a process can make. The default profile blocks dangerous syscalls while allowing everything a normal app needs.
+- `spec.template.spec.securityContext` applies security settings at the Pod level, affecting all containers in the Pod.
+- `runAsNonRoot: true` is a verification gate enforced by the kubelet. Before starting the container, the kubelet must prove the process will not run as root (UID 0). If it cannot prove this, it refuses to start the container. Running as non-root matters because root inside a container is the same UID 0 as root on the host node: containers share the host kernel, so a compromised root container is one kernel exploit away from owning the node. A non-root process that gets compromised can only touch the app's own files.
+- `runAsUser: 999` forces the container process to run as UID 999. Linux identifies users by numbers (UIDs), not names; names like `app` are just labels mapped to numbers in `/etc/passwd`. The Dockerfile created the `app` user with `useradd --system`, which assigned UID 999 inside the image. This line is required and not optional: the Dockerfile says `USER app` (a name), and the kubelet cannot resolve names because it checks image metadata before the container starts and will not trust the image's own `/etc/passwd`. With only `runAsNonRoot: true` and a name-based USER, every backend Pod fails with `CreateContainerConfigError` and the event message `container has runAsNonRoot and image has non-numeric user (app), cannot verify user is non-root`. Providing the numeric UID here gives the kubelet a number it can verify (999 is not 0, check passes) and also overrides the image's USER, so the Deployment, not the image, is the final authority on which user runs.
+- To confirm the UID of the `app` user in your own built image, run: `docker run --rm launchboard-backend:phase-6 id -u` and use that number here.
+- `runAsGroup: 999` sets the primary group ID of the process to 999, matching the `app` group the Dockerfile created. Files the process writes are owned by 999:999.
+- The frontend Deployment in 15.10 uses the same pattern with `runAsUser: 101` because 101 is the UID of the nginx user inside the unprivileged Nginx image. Different image, different built-in user, same rule: the Deployment must state the numeric UID.
+- `seccompProfile.type: RuntimeDefault` applies the container runtime's default seccomp profile to the Pod. Seccomp filters which system calls a process can make. The default profile blocks dangerous syscalls (such as loading kernel modules) while allowing everything a normal app needs. This is a separate protection layer from the user controls above.
 - `command` overrides CMD from the Dockerfile. It waits for PostgreSQL to be available before starting Uvicorn, preventing startup errors.
 - `exec uvicorn ...` uses `exec` to replace the shell process with Uvicorn. Without `exec`, Uvicorn runs as a child of the shell. With `exec`, Uvicorn becomes PID 1 in the container and receives signals directly, which means `kubectl rollout` and `kubectl scale` work correctly.
 - `readinessProbe.httpGet.path: /ready` makes an HTTP GET request to the backend's `/ready` endpoint. This endpoint typically checks database connectivity. A Pod only receives traffic after this probe succeeds.
 - `readinessProbe.httpGet.port: 8000` sends the probe to port 8000 on the container.
 - `livenessProbe.httpGet.path: /health` checks the `/health` endpoint. If this returns a non-2xx status or times out, Kubernetes restarts the container.
+
+Troubleshooting note:
+
+If backend Pods show `CreateContainerConfigError` with the event `image has non-numeric user (app), cannot verify user is non-root`, the `runAsUser` line above is missing. Add it (with the UID from the `docker run --rm ... id -u` command), re-apply, and the Pods start. A longer-term alternative is to make the image itself self-verifying by using numeric IDs in the Dockerfile: create the user with `useradd --system --uid 10001` and end the Dockerfile with `USER 10001:10001` instead of `USER app`, then set `runAsUser: 10001` and `runAsGroup: 10001` here to match. A high UID like 10001 also guarantees no collision with any real user on the host node.
 
 Reference:
 
