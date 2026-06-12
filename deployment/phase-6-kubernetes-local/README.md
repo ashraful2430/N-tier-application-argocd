@@ -3003,13 +3003,11 @@ Create the scenario folder:
 mkdir -p deployment/phase-6-kubeadm/k8s
 ```
 
-## Step 2: Build And Push Your Images To Docker Hub
+## Step 2: Install Docker On The Control Plane, Build, And Push To Docker Hub
 
-In Scenario 1, Kind let you load locally built images straight into the cluster with `kind load docker-image`. A kubeadm cluster has no equivalent: the worker nodes run containerd and pull images from a registry like any production cluster. So before deploying, your backend and frontend images must exist in a registry the nodes can reach. Docker Hub's free tier with public repositories is enough.
+In Scenario 1, Kind let you load locally built images straight into the cluster with `kind load docker-image`. A kubeadm cluster has no equivalent: the worker nodes run containerd and pull images from a registry like any production cluster. So before deploying, your backend and frontend images must exist in a registry the nodes can pull from. Docker Hub's free tier with public repositories is enough, and you will do the whole build-and-push from the control plane terminal.
 
-Where to run this step:
-
-Run it on a machine that has Docker installed and the repository cloned. The Scenario 1 EC2 instance is ideal because it already has both. Your own laptop also works if Docker is installed there. Do NOT install Docker on the kubeadm cluster nodes: the `docker-ce` package pulls in `containerd.io`, which conflicts with the `containerd` package the cluster nodes already use, and can break the kubelet.
+One important thing happens when you install Docker on a kubeadm node, and this step handles it explicitly: the `docker-ce` package replaces the Ubuntu `containerd` package with Docker's own `containerd.io` package. That replacement overwrites the containerd configuration you created in Scenario 2, and Docker's default config disables the CRI plugin that the kubelet depends on. If you install Docker and stop there, the kubelet loses its container runtime and the node goes NotReady. The fix is simple: regenerate the Kubernetes-compatible config right after installing Docker, restart containerd and the kubelet, and verify the cluster is healthy before building anything. Docker and Kubernetes then share the same containerd peacefully, because containerd isolates them in separate namespaces (`moby` for Docker, `k8s.io` for Kubernetes).
 
 ### Create a Docker Hub account and repositories
 
@@ -3021,17 +3019,77 @@ launchboard-backend-k8s
 launchboard-frontend-k8s
 ```
 
-Public visibility matters: Kubernetes can pull public images with no credentials. A private repository would require creating an `imagePullSecret` in the cluster and referencing it in every Deployment, which is extra complexity you do not need in this lab.
+Public visibility matters: Kubernetes pulls public images with no credentials. A private repository would require an `imagePullSecret` in the cluster and a reference to it in every Deployment, which is extra complexity you do not need in this lab.
 
-### Log in to Docker Hub from the build machine
+### Install Docker on the control plane
+
+SSH into the control plane and run:
+
+```bash
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo ${UBUNTU_CODENAME:-$VERSION_CODENAME}) stable" | sudo tee /etc/apt/sources.list.d/docker.list
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+sudo usermod -aG docker ubuntu
+```
+
+Command explanation:
+
+- The repository setup lines are identical to Scenario 1 Step 4.
+- During `apt install`, apt prints that it is REMOVING the `containerd` package and installing `containerd.io`. This is expected. Both packages provide the same containerd runtime binary; they just cannot be installed together.
+- `sudo usermod -aG docker ubuntu` lets the ubuntu user run docker without sudo after re-login.
+
+### Restore the Kubernetes containerd configuration
+
+This is the critical part. Regenerate the config with the CRI plugin enabled and the systemd cgroup driver, exactly as in Scenario 2 Step 7:
+
+```bash
+containerd config default | sudo tee /etc/containerd/config.toml
+sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+sudo systemctl restart containerd
+sudo systemctl restart kubelet
+```
+
+Command explanation:
+
+- `containerd config default` regenerates the full default configuration, which has the CRI plugin enabled. The config file that `containerd.io` installed had `disabled_plugins = ["cri"]`, which is exactly what breaks the kubelet.
+- `sed ... SystemdCgroup = true` re-applies the systemd cgroup driver. Without it, the kubelet and containerd disagree on cgroup management and Pods fail to start.
+- Restarting containerd loads the new config. Restarting the kubelet makes it reconnect to the CRI socket immediately instead of waiting for its retry loop.
+
+Log out and SSH back in so the docker group membership takes effect:
+
+```bash
+exit
+ssh -i devops-launchboard-key.pem ubuntu@YOUR_CONTROL_PLANE_PUBLIC_IP
+```
+
+### Verify the cluster survived
+
+Do not skip this. Confirm the node is Ready and system Pods are running before you build anything:
+
+```bash
+kubectl get nodes
+kubectl get pods -n kube-system
+docker --version
+```
+
+Expected: all nodes `Ready`, all kube-system Pods `Running`, and the Docker version prints without a permission error. If the control plane shows NotReady, re-run the config restoration commands above and wait 30 seconds.
+
+### Log in to Docker Hub (required)
+
+You cannot push without authenticating. Run:
 
 ```bash
 docker login -u YOUR_DOCKERHUB_USERNAME
 ```
 
-When prompted for a password, use an access token instead of your account password: Docker Hub > Account Settings > Personal access tokens > Generate new token (Read & Write scope). Tokens can be revoked individually if a lab machine is compromised; your account password cannot.
+When prompted for a password, use an access token instead of your account password: Docker Hub > Account Settings > Personal access tokens > Generate new token (Read & Write scope). Tokens can be revoked individually if a lab machine is compromised; your account password cannot. A successful login prints `Login Succeeded`.
 
-### Build the images with your Docker Hub tags
+### Get the project onto the control plane and build
+
+If you have not cloned the repository on the control plane yet, Step 1 of this scenario covers it. Then build with your Docker Hub tags:
 
 ```bash
 cd /opt/devops-launchboard/app-source
@@ -3059,19 +3117,18 @@ docker push YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s:v1
 docker push YOUR_DOCKERHUB_USERNAME/launchboard-frontend-k8s:v1
 ```
 
-Verify by opening `https://hub.docker.com/r/YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s` in a browser; the `v1` tag should be listed. You can also test the pull path from the control plane without deploying anything (this uses containerd's CLI since cluster nodes have no Docker):
+Verify by opening `https://hub.docker.com/r/YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s` in a browser; the `v1` tag should be listed.
+
+### Clean up build space and credentials
+
+The control plane disk is only 20 GB and the Node.js build stage is large. Reclaim space and remove the stored credential:
 
 ```bash
-sudo ctr image pull docker.io/YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s:v1
-```
-
-### Log out when done
-
-```bash
+docker system prune -f
 docker logout
 ```
 
-On a shared or disposable lab machine, logging out removes the stored credential from `~/.docker/config.json`.
+`docker logout` removes your Docker Hub credential from `~/.docker/config.json`. You only need to log in again the next time you push.
 
 Important for the rest of this scenario:
 
@@ -3082,6 +3139,7 @@ Reference:
 - Docker Hub quickstart: https://docs.docker.com/docker-hub/quickstart/
 - Docker Hub access tokens: https://docs.docker.com/security/access-tokens/
 - docker push: https://docs.docker.com/reference/cli/docker/image/push/
+- containerd for Kubernetes: https://kubernetes.io/docs/setup/production-environment/container-runtimes/#containerd
 
 ## Step 3: Create Kubernetes Manifests
 
@@ -5611,6 +5669,9 @@ Scenario 3 - Worker Nodes
 Scenario 4 - App on kubeadm
 [ ] Project cloned on control plane
 [ ] Docker Hub account and two public repositories created
+[ ] Docker installed on control plane
+[ ] containerd config restored (CRI enabled, SystemdCgroup=true) and cluster still Ready
+[ ] docker login completed with access token
 [ ] Images built with YOUR_DOCKERHUB_USERNAME tags and pushed (v1)
 [ ] deployment/phase-6-kubeadm/k8s folder created
 [ ] All manifests created with YOUR_DOCKERHUB_USERNAME replaced by your real username
