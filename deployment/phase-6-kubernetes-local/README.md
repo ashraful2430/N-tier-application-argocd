@@ -2096,12 +2096,8 @@ sudo apt install -y git curl wget vim unzip jq ca-certificates gnupg lsb-release
 Command explanation:
 
 - All packages are the same as Scenario 1 except `apt-transport-https`, which allows apt to download packages over HTTPS. This is needed for the Kubernetes apt repository.
-- `conntrack` is a connection-tracking utility that kube-proxy uses to manage
-  network connection entries when Services change. kubeadm's preflight check
-  fails with `[ERROR FileExisting-conntrack]: conntrack not found in system path`
-  if it is missing.
-- `socat` is a port-forwarding relay used by `kubectl port-forward`. kubeadm
-  warns if it is absent.
+- `conntrack` is a connection-tracking utility that kube-proxy uses to manage network connection entries when Services change. kubeadm's preflight check fails with `[ERROR FileExisting-conntrack]: conntrack not found in system path` if it is missing.
+- `socat` is a port-forwarding relay used by `kubectl port-forward`. kubeadm warns if it is absent.
 
 Reference:
 
@@ -2382,6 +2378,10 @@ Command explanation:
 - `--pod-network-cidr=10.244.0.0/16` sets the IP address range assigned to Pods. This exact CIDR (`10.244.0.0/16`) is required by Flannel, the CNI networking plugin you install next. Flannel expects this range. If you change it, Flannel will not work correctly.
 - `--apiserver-advertise-address=YOUR_CONTROL_PLANE_PRIVATE_IP` tells the API server which IP address to advertise to worker nodes and kubectl clients. Using the private IP is correct because worker nodes in the same VPC communicate over private IPs. The public IP is not stable (it changes when the EC2 instance stops and starts).
 
+Troubleshooting note:
+
+If `kubeadm init` fails with `[ERROR FileExisting-conntrack]: conntrack not found in system path`, the `conntrack` package is missing. Install it with `sudo apt install -y conntrack socat` and re-run the same `kubeadm init` command. No reset is needed because preflight checks run before kubeadm creates anything on the machine. The line `remote version is much newer: ... falling back to: stable-1.31` in the output is informational, not an error; the apt repository pins the cluster to the 1.31 series as intended.
+
 Reference:
 
 - kubeadm init reference: https://kubernetes.io/docs/reference/setup-tools/kubeadm/kubeadm-init/
@@ -2659,6 +2659,8 @@ sudo apt update
 sudo apt upgrade -y
 sudo apt install -y git curl wget vim unzip jq ca-certificates gnupg lsb-release apt-transport-https conntrack socat
 ```
+
+- `conntrack` and `socat` are required by kube-proxy and kubelet. `kubeadm join` runs the same preflight checks as `kubeadm init` and fails without them.
 
 Reference:
 
@@ -3001,7 +3003,87 @@ Create the scenario folder:
 mkdir -p deployment/phase-6-kubeadm/k8s
 ```
 
-## Step 2: Create Kubernetes Manifests
+## Step 2: Build And Push Your Images To Docker Hub
+
+In Scenario 1, Kind let you load locally built images straight into the cluster with `kind load docker-image`. A kubeadm cluster has no equivalent: the worker nodes run containerd and pull images from a registry like any production cluster. So before deploying, your backend and frontend images must exist in a registry the nodes can reach. Docker Hub's free tier with public repositories is enough.
+
+Where to run this step:
+
+Run it on a machine that has Docker installed and the repository cloned. The Scenario 1 EC2 instance is ideal because it already has both. Your own laptop also works if Docker is installed there. Do NOT install Docker on the kubeadm cluster nodes: the `docker-ce` package pulls in `containerd.io`, which conflicts with the `containerd` package the cluster nodes already use, and can break the kubelet.
+
+### Create a Docker Hub account and repositories
+
+1. Sign up free at https://hub.docker.com if you do not have an account.
+2. Create two repositories, both set to Public:
+
+```text
+launchboard-backend-k8s
+launchboard-frontend-k8s
+```
+
+Public visibility matters: Kubernetes can pull public images with no credentials. A private repository would require creating an `imagePullSecret` in the cluster and referencing it in every Deployment, which is extra complexity you do not need in this lab.
+
+### Log in to Docker Hub from the build machine
+
+```bash
+docker login -u YOUR_DOCKERHUB_USERNAME
+```
+
+When prompted for a password, use an access token instead of your account password: Docker Hub > Account Settings > Personal access tokens > Generate new token (Read & Write scope). Tokens can be revoked individually if a lab machine is compromised; your account password cannot.
+
+### Build the images with your Docker Hub tags
+
+```bash
+cd /opt/devops-launchboard/app-source
+git pull
+
+docker build -f deployment/phase-6-kubernetes-local/Dockerfile.backend \
+  -t YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s:v1 .
+
+docker build -f deployment/phase-6-kubernetes-local/Dockerfile.frontend \
+  --build-arg VITE_API_URL= \
+  -t YOUR_DOCKERHUB_USERNAME/launchboard-frontend-k8s:v1 .
+```
+
+Command explanation:
+
+- These are the same Dockerfiles from Scenario 1; nothing about the images changes for kubeadm. Only the tag changes.
+- The tag format `YOUR_DOCKERHUB_USERNAME/REPOSITORY:VERSION` is how Docker knows where to push. A tag without a username (like `launchboard-backend:phase-6` in Scenario 1) cannot be pushed to Docker Hub because Docker does not know which account owns it. The registry hostname `docker.io` is implied when omitted.
+- `--build-arg VITE_API_URL=` is empty for the same reason as Scenario 1: the frontend uses relative `/api` paths and Nginx proxies them, so no IP gets baked into the JavaScript bundle.
+- `:v1` is the version. When you later change code, build and push `:v2` and update the manifests, which gives you a real rollout in Kubernetes.
+
+### Push to Docker Hub
+
+```bash
+docker push YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s:v1
+docker push YOUR_DOCKERHUB_USERNAME/launchboard-frontend-k8s:v1
+```
+
+Verify by opening `https://hub.docker.com/r/YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s` in a browser; the `v1` tag should be listed. You can also test the pull path from the control plane without deploying anything (this uses containerd's CLI since cluster nodes have no Docker):
+
+```bash
+sudo ctr image pull docker.io/YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s:v1
+```
+
+### Log out when done
+
+```bash
+docker logout
+```
+
+On a shared or disposable lab machine, logging out removes the stored credential from `~/.docker/config.json`.
+
+Important for the rest of this scenario:
+
+Every manifest below that references an image uses the placeholder `YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s:v1` or `YOUR_DOCKERHUB_USERNAME/launchboard-frontend-k8s:v1`. Replace `YOUR_DOCKERHUB_USERNAME` with your actual Docker Hub username in all three places: the migration Job, the backend Deployment, and the frontend Deployment.
+
+Reference:
+
+- Docker Hub quickstart: https://docs.docker.com/docker-hub/quickstart/
+- Docker Hub access tokens: https://docs.docker.com/security/access-tokens/
+- docker push: https://docs.docker.com/reference/cli/docker/image/push/
+
+## Step 3: Create Kubernetes Manifests
 
 ```bash
 cd /opt/devops-launchboard/app-source
@@ -3285,7 +3367,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: migrate
-          image: ashik6251/launchboard-backend-k8s:v1
+          image: YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s:v1
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -3312,7 +3394,7 @@ spec:
 
 Line explanation:
 
-- `image: ashik6251/launchboard-backend-k8s:v1` pulls from Docker Hub. Update this to your published image name if you have pushed your own images.
+- `image: YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s:v1` pulls from Docker Hub. Update this to your published image name if you have pushed your own images.
 - `imagePullPolicy: IfNotPresent` uses a cached image if it exists and only pulls if missing.
 - The `until` loop waits until a TCP connection to `launchboard-db:5432` succeeds, ensuring PostgreSQL is ready before running migrations.
 - `alembic upgrade head` applies all pending database migrations up to the latest version.
@@ -3355,11 +3437,13 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: backend
-          image: ashik6251/launchboard-backend-k8s:v1
+          image: YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s:v1
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -3403,7 +3487,8 @@ Line explanation:
 
 - `replicas: 2` runs two backend Pods. Kubernetes schedules them across both worker nodes automatically. If one worker goes down, the other worker still runs a backend Pod.
 - `strategy.type: RollingUpdate` with `maxUnavailable: 0` ensures zero downtime during image updates.
-- `securityContext.runAsNonRoot: true` prevents the container from running as root at the Kubernetes level, in addition to the Dockerfile USER instruction.
+- `securityContext.runAsNonRoot: true` makes the kubelet verify the container will not run as root before starting it, in addition to the Dockerfile USER instruction.
+- `runAsUser: 999` and `runAsGroup: 999` are required alongside `runAsNonRoot`. The image's Dockerfile uses `USER app`, a name, and the kubelet cannot verify names, only numeric UIDs. Without these two lines the Pods fail with `CreateContainerConfigError` and the event `image has non-numeric user (app), cannot verify user is non-root`. UID 999 is the UID that `useradd --system` assigned to the `app` user when the image was built. See the detailed explanation in Scenario 1, section 15.8.
 - `exec uvicorn ...` uses `exec` to replace the shell with Uvicorn so Uvicorn receives signals directly. This makes `kubectl rollout restart` and graceful shutdown work correctly.
 
 Reference:
@@ -3483,7 +3568,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: frontend
-          image: ashik6251/launchboard-frontend-k8s:v1
+          image: YOUR_DOCKERHUB_USERNAME/launchboard-frontend-k8s:v1
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -3626,7 +3711,7 @@ Reference:
 - Kustomize: https://kustomize.io/
 - kubectl apply -k: https://kubernetes.io/docs/tasks/manage-kubernetes-objects/kustomization/
 
-## Step 3: Create Namespace And Secret
+## Step 4: Create Namespace And Secret
 
 ```bash
 cd /opt/devops-launchboard/app-source
@@ -3644,13 +3729,13 @@ Reference:
 
 - kubectl create secret: https://kubernetes.io/docs/tasks/configmap-secret/managing-secret-using-kubectl/
 
-## Step 4: Apply Manifests
+## Step 5: Apply Manifests
 
 ```bash
 kubectl apply -k deployment/phase-6-kubeadm/k8s
 ```
 
-## Step 5: Verify Deployment
+## Step 6: Verify Deployment
 
 ```bash
 kubectl -n devops-launchboard get all
@@ -3681,7 +3766,7 @@ kubectl -n devops-launchboard logs job/launchboard-migrate
 
 Expected: Alembic migration output ending with successful completion.
 
-## Step 6: Allow NodePort In Worker Security Group
+## Step 7: Allow NodePort In Worker Security Group
 
 Go to the `devops-launchboard-k8s-worker-sg` security group and add:
 
@@ -3689,7 +3774,7 @@ Go to the `devops-launchboard-k8s-worker-sg` security group and add:
 | --- | ---: | --- |
 | Custom TCP | 30080 | Anywhere |
 
-## Step 7: Verify The App
+## Step 8: Verify The App
 
 Open in browser:
 
@@ -5525,8 +5610,10 @@ Scenario 3 - Worker Nodes
 
 Scenario 4 - App on kubeadm
 [ ] Project cloned on control plane
+[ ] Docker Hub account and two public repositories created
+[ ] Images built with YOUR_DOCKERHUB_USERNAME tags and pushed (v1)
 [ ] deployment/phase-6-kubeadm/k8s folder created
-[ ] All manifests created with correct image names
+[ ] All manifests created with YOUR_DOCKERHUB_USERNAME replaced by your real username
 [ ] CORS_ORIGINS set to worker IP and port 30080
 [ ] Namespace created
 [ ] Secret created
