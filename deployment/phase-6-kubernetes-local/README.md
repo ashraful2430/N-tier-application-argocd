@@ -2928,6 +2928,9 @@ Your 3-node cluster is ready. Move to Scenario 4 to deploy the LaunchBoard appli
 /opt/devops-launchboard/app-source/
 +-- deployment/
     +-- phase-6-kubeadm/
+        +-- Dockerfile.backend                             (same as Scenario 1, copied here)
+        +-- Dockerfile.frontend                            (same as Scenario 1, COPY path updated)
+        +-- nginx-frontend.conf                            (same as Scenario 1, copied here)
         +-- k8s/
             +-- namespace.yaml                             (Kubernetes namespace)
             +-- configmap.yaml                             (non-secret app configuration)
@@ -3075,7 +3078,26 @@ kubectl get pods -n kube-system
 docker --version
 ```
 
-Expected: all nodes `Ready`, all kube-system Pods `Running`, and the Docker version prints without a permission error. If the control plane shows NotReady, re-run the config restoration commands above and wait 30 seconds.
+Expected: all nodes `Ready`, all kube-system Pods `Running`, and the Docker version prints without a permission error.
+
+If the control plane shows NotReady while kube-system Pods are all Running, the cause is almost always the Flannel CNI Pod on that node, which was killed when containerd was replaced. Confirm and fix:
+
+```bash
+kubectl describe node CONTROL_PLANE_NODE_NAME | grep -A4 "Ready "
+```
+
+If the message mentions `NetworkReady=false` or `cni plugin not initialized`, restart the runtime and recreate the Flannel Pod on that node:
+
+```bash
+grep -E "SystemdCgroup|disabled_plugins" /etc/containerd/config.toml
+sudo systemctl restart containerd
+sudo systemctl restart kubelet
+kubectl -n kube-flannel get pods -o wide
+kubectl -n kube-flannel delete pod -l app=flannel \
+  --field-selector spec.nodeName=CONTROL_PLANE_NODE_NAME
+```
+
+The DaemonSet recreates the Pod within seconds. Wait 30 to 60 seconds and re-check `kubectl get nodes`. Do not proceed to building until all nodes are Ready.
 
 ### Log in to Docker Hub (required)
 
@@ -3087,25 +3109,58 @@ docker login -u YOUR_DOCKERHUB_USERNAME
 
 When prompted for a password, use an access token instead of your account password: Docker Hub > Account Settings > Personal access tokens > Generate new token (Read & Write scope). Tokens can be revoked individually if a lab machine is compromised; your account password cannot. A successful login prints `Login Succeeded`.
 
-### Get the project onto the control plane and build
+### Put the Dockerfiles in the Scenario 4 folder
 
-If you have not cloned the repository on the control plane yet, Step 1 of this scenario covers it. Then build with your Docker Hub tags:
+The kubeadm cluster's clone may not contain the Scenario 1 folder (`deployment/phase-6-kubernetes-local/`) if those files were never committed and pushed. To make this scenario self-contained, the Dockerfiles and Nginx config live in `deployment/phase-6-kubeadm/` too.
+
+If your repository contains the Scenario 1 files, copy them:
+
+```bash
+cd /opt/devops-launchboard/app-source
+cp deployment/phase-6-kubernetes-local/Dockerfile.backend deployment/phase-6-kubeadm/
+cp deployment/phase-6-kubernetes-local/Dockerfile.frontend deployment/phase-6-kubeadm/
+cp deployment/phase-6-kubernetes-local/nginx-frontend.conf deployment/phase-6-kubeadm/
+```
+
+If it does not, create the three files inside `deployment/phase-6-kubeadm/` with `vim`, using the exact contents from Scenario 1 Steps 12, 13, and 14.
+
+Either way, one line inside `Dockerfile.frontend` MUST be updated to match the new location, or the frontend build fails at the COPY step:
+
+```bash
+vim deployment/phase-6-kubeadm/Dockerfile.frontend
+```
+
+Change:
+
+```dockerfile
+COPY deployment/phase-6-kubernetes-local/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+```
+
+To:
+
+```dockerfile
+COPY deployment/phase-6-kubeadm/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+```
+
+### Build the images
+
+Both the `-f` path and the trailing `.` (the build context) are relative to your current directory, and the Dockerfiles copy `backend/` and `frontend/` from the repository root. So these commands MUST be run from the repository root, not from inside the deployment folder. Running them from anywhere else fails with `lstat deployment: no such file or directory`.
 
 ```bash
 cd /opt/devops-launchboard/app-source
 git pull
 
-docker build -f deployment/phase-6-kubernetes-local/Dockerfile.backend \
+docker build -f deployment/phase-6-kubeadm/Dockerfile.backend \
   -t YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s:v1 .
 
-docker build -f deployment/phase-6-kubernetes-local/Dockerfile.frontend \
+docker build -f deployment/phase-6-kubeadm/Dockerfile.frontend \
   --build-arg VITE_API_URL= \
   -t YOUR_DOCKERHUB_USERNAME/launchboard-frontend-k8s:v1 .
 ```
 
 Command explanation:
 
-- These are the same Dockerfiles from Scenario 1; nothing about the images changes for kubeadm. Only the tag changes.
+- These are the same Dockerfiles from Scenario 1; nothing about the images changes for kubeadm. Only the tag and the folder change.
 - The tag format `YOUR_DOCKERHUB_USERNAME/REPOSITORY:VERSION` is how Docker knows where to push. A tag without a username (like `launchboard-backend:phase-6` in Scenario 1) cannot be pushed to Docker Hub because Docker does not know which account owns it. The registry hostname `docker.io` is implied when omitted.
 - `--build-arg VITE_API_URL=` is empty for the same reason as Scenario 1: the frontend uses relative `/api` paths and Nginx proxies them, so no IP gets baked into the JavaScript bundle.
 - `:v1` is the version. When you later change code, build and push `:v2` and update the manifests, which gives you a real rollout in Kubernetes.
