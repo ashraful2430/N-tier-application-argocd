@@ -2,22 +2,19 @@
 
 ## Fresh Start Assumption
 
-This phase starts from a clean machine and a clean AWS setup.
+This phase starts from a clean AWS environment and a clean Ubuntu EC2 workstation.
 
-You do not need to finish any previous phase before using this phase.
+You do not need to complete any previous phase before using this guide.
 
 This guide assumes:
 
-- You have an AWS account.
-- You have GitHub access to this repository.
-- You will clone the repository with SSH.
-- You will create a new EKS cluster for this phase.
-- You will build and push fresh Docker images for this phase.
-- You will deploy the frontend, backend, and PostgreSQL database to Kubernetes.
-- You will then add security controls on top of the running application.
+- You have an AWS account with permissions to create EKS, EC2, IAM, ECR, ALB, EBS, VPC, NAT Gateway, CloudWatch, and Secrets Manager resources.
+- AWS CLI, Docker, kubectl, eksctl, and Helm are not installed yet.
+- No EKS cluster exists yet.
+- The repository is not cloned yet.
+- You will create files with `vim`.
 - You will type commands manually.
-- You will use `vim` to create files.
-- You will not use custom shell scripts for deployment automation.
+- You will not use shell scripts.
 
 Project repository:
 
@@ -25,81 +22,64 @@ Project repository:
 git@github.com:ashraful2430/N-tier-application.git
 ```
 
-## What This Phase Deploys
+## What This Phase Covers
 
-This phase deploys the N-tier application on Amazon EKS and then hardens it.
+This phase deploys the N-tier application on Amazon EKS and then adds production security controls on top of it. The deployment comes first (Steps 1–11), then security hardening is layered on (Steps 12–21).
 
-The deployment includes:
+Security controls you will implement:
 
-- Vite frontend served by Nginx
-- FastAPI backend
-- PostgreSQL database running inside Kubernetes for the lab
-- Amazon ECR repositories
-- Amazon EKS cluster
-- AWS Load Balancer Controller
-- Kubernetes RBAC
-- Kubernetes NetworkPolicy
-- Kubernetes Pod Security Admission labels
-- ResourceQuota and LimitRange
-- Trivy image scanning
-- Semgrep SAST scanning
-- SonarQube learning deployment
-- AWS Secrets Manager example
-- External Secrets Operator example
-- Sealed Secrets example
-- Vault policy example
+| Control | What It Does | Why It Matters |
+| --- | --- | --- |
+| Pod Security Admission | Rejects Pods with dangerous configurations | Prevents privileged containers, host namespace access, root escalation |
+| RBAC | Limits what identities can do in the cluster | Deployers get only what they need, not cluster-admin |
+| NetworkPolicy | Controls which Pods can talk to each other | A compromised frontend cannot reach the database directly |
+| ResourceQuota | Caps total CPU, memory, and object counts per namespace | One app cannot consume the entire cluster |
+| LimitRange | Sets default and maximum resource limits per container | Prevents containers with no limits from starving others |
+| Trivy image scanning | Scans Docker images for known vulnerabilities | Catches CVEs before images reach the cluster |
+| Semgrep SAST | Scans source code for security anti-patterns | Finds hardcoded secrets and unsafe code before merge |
+| SonarQube (optional) | Code quality and security dashboard | Continuous visibility into code health |
+| AWS Secrets Manager | Stores secrets outside Kubernetes | Versioning, audit trails, rotation, IAM access control |
+| External Secrets Operator (optional) | Syncs cloud secrets into Kubernetes Secrets automatically | Keeps plaintext out of Git and out of manual YAML |
+| Sealed Secrets (optional) | Encrypts secrets so they can be committed to Git safely | Enables GitOps for secrets |
+| Vault policy (optional) | Dedicated secrets platform with fine-grained policies | Shows the production-grade secret management pattern |
 
 ## When To Use This Architecture
 
 Use this architecture when:
 
-- You already know how to deploy the app on Kubernetes.
-- You want to learn security controls that real platform teams add after the app is running.
+- You already know how to deploy the app on Kubernetes (Phases 6 or 8).
+- You want to learn the security controls that real platform teams add after the app is running.
 - You need least-privilege Kubernetes access.
-- You need network isolation between frontend, backend, and database pods.
+- You need network isolation between frontend, backend, and database Pods.
 - You need image vulnerability scanning before deployment.
-- You need SAST scanning before merging code.
 - You want to learn safer secret handling options.
 
 Do not start here if:
 
 - You only want a small local demo.
 - You are not ready for AWS costs.
-- You do not want to manage Kubernetes security settings.
 - You want the fastest beginner deployment path.
 
-For a simple first deployment, use bare metal EC2 or Docker Compose. Use this phase when students are ready to understand how production teams reduce risk after moving to Kubernetes.
+## Cost Warning
 
-## Recommended AWS Setup
+Same cost profile as Phase 8 and 9. The security tools themselves (Pod Security Admission, RBAC, NetworkPolicy, ResourceQuota, LimitRange) are built into Kubernetes and cost nothing extra. Trivy and Semgrep run as one-off Docker containers and cost nothing. The optional SonarQube Deployment needs ~2 GB memory and a 20 GB PVC, which may require scaling to 3 worker nodes.
 
-| Item | Recommended Value |
+| Resource | Approximate Cost |
 | --- | --- |
-| AWS Region | `ap-southeast-1` or the closest region |
-| Cluster Name | `devops-launchboard-phase-10` |
-| Kubernetes Version | `1.34` |
-| Node Type | `t3.medium` |
-| Desired Nodes | `2` |
-| Minimum Nodes | `2` |
-| Maximum Nodes | `4` |
-| Node Storage | `30 GB gp3` |
-| ECR Backend Repo | `launchboard-backend` |
-| ECR Frontend Repo | `launchboard-frontend` |
-| Public Access | Through AWS Application Load Balancer |
-| Database | PostgreSQL inside Kubernetes for student lab |
+| EKS control plane | ~$0.10/hour |
+| 2 × t3.medium workers | ~$0.08/hour |
+| NAT Gateway | ~$0.045/hour |
+| ALB | ~$0.02/hour |
+| EBS volumes | ~$0.01/hour |
+| AWS Secrets Manager | $0.40/secret/month + $0.05 per 10,000 API calls |
 
-Cost warning:
+Running for 8 hours costs roughly $2 to $3. Delete the cluster after each lab session.
 
-- EKS has a cluster hourly cost.
-- EC2 worker nodes cost money.
-- EBS volumes cost money.
-- Load balancers cost money.
-- ECR storage may cost money.
-- CloudWatch logs may cost money.
-- Delete everything after practice.
+Create an AWS Budget before starting: AWS Console > Billing > Budgets > Create budget.
 
 Reference:
 
-- AWS EKS pricing: https://aws.amazon.com/eks/pricing/
+- EKS pricing: https://aws.amazon.com/eks/pricing/
 - AWS Budgets: https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html
 
 ## Architecture
@@ -107,233 +87,193 @@ Reference:
 ```text
 Browser
   |
-  | HTTPS or HTTP
+  | HTTP port 80
   v
 AWS Application Load Balancer
   |
   v
-Frontend pod running Nginx on port 8080
-  |
-  | /api traffic
+Frontend Pod (Nginx on port 8080)
+  |                                     [NetworkPolicy: only frontend can reach backend]
+  | /api traffic proxied by Nginx
   v
-Backend pod running FastAPI on port 8000
+Backend Pod (FastAPI on port 8000)
+  |                                     [NetworkPolicy: only backend + migrate can reach DB]
+  | DATABASE_URL from Secret
+  v
+PostgreSQL Pod (port 5432)
   |
   v
-PostgreSQL pod on port 5432
+Encrypted gp3 EBS Volume
 
-Security controls:
-
-RBAC limits what deployment identities can do.
-NetworkPolicy limits which pods can talk to each other.
-Pod Security Admission rejects unsafe pod settings.
-ResourceQuota prevents one app from using too much namespace capacity.
-Trivy scans container images.
-Semgrep scans source code.
-Secrets Manager, External Secrets, Sealed Secrets, and Vault show safer secret patterns.
+Security controls applied:
+  [Pod Security Admission]  → restricted level on namespace, rejects unsafe Pods
+  [RBAC]                    → deployer ServiceAccount with scoped permissions
+  [ResourceQuota]           → caps total CPU, memory, Pods, PVCs, Secrets in namespace
+  [LimitRange]              → default + max resource limits per container
+  [NetworkPolicy]           → default-deny + explicit allow rules
+  [Trivy]                   → image scan before push
+  [Semgrep]                 → source code scan before merge
+  [Secrets Manager]         → secrets stored in AWS, synced by External Secrets Operator
 ```
 
-## Step 1: Install Local Tools
-
-Run from: your local machine
-
-Why this step exists: this phase uses AWS, Docker, Kubernetes, Helm, Git, and SSH. These tools let your laptop create cloud resources, build images, push images, and deploy Kubernetes files.
-
-Check tools:
-
-```bash
-git --version
-ssh -V
-docker --version
-aws --version
-kubectl version --client
-eksctl version
-helm version
-```
-
-If a tool is missing, install it from the official documentation:
-
-- Git: https://git-scm.com/downloads
-- Docker: https://docs.docker.com/get-docker/
-- AWS CLI: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
-- kubectl: https://kubernetes.io/docs/tasks/tools/
-- eksctl: https://eksctl.io/installation/
-- Helm: https://helm.sh/docs/intro/install/
-
-Simple explanation:
-
-- `git` downloads the project.
-- `ssh` authenticates to GitHub.
-- `docker` builds container images.
-- `aws` talks to your AWS account.
-- `kubectl` talks to Kubernetes.
-- `eksctl` creates EKS clusters.
-- `helm` installs Kubernetes add-ons.
-
-## Step 2: Configure AWS Credentials
-
-Run from: your local machine
-
-```bash
-aws configure
-```
-
-Enter:
+## Files Included In This Phase
 
 ```text
-AWS Access Key ID
-AWS Secret Access Key
-Default region name: ap-southeast-1
-Default output format: json
+deployment/phase-10-security/
++-- cluster/
+|   +-- eksctl-cluster.yaml                    (EKS cluster definition)
++-- ecr/
+|   +-- lifecycle-policy.json                  (auto-expire old ECR images)
++-- app-k8s/
+|   +-- namespace.yaml                         (app namespace)
+|   +-- storageclass.yaml                      (gp3 encrypted EBS)
+|   +-- configmap.yaml                         (app configuration)
+|   +-- secret.example.yaml                    (example secret)
+|   +-- pvc.yaml                               (PostgreSQL persistent storage)
+|   +-- launchboard-postgres-deployment.yaml   (database Pod)
+|   +-- launchboard-postgres-service.yaml      (database DNS)
+|   +-- launchboard-migration-job.yaml         (Alembic migrations)
+|   +-- launchboard-backend-deployment.yaml    (FastAPI backend)
+|   +-- launchboard-backend-service.yaml       (backend DNS)
+|   +-- launchboard-frontend-deployment.yaml   (React frontend)
+|   +-- launchboard-frontend-service.yaml      (frontend DNS)
+|   +-- ingress.yaml                           (ALB Ingress)
+|   +-- hpa.yaml                               (backend autoscaler)
+|   +-- kustomization.yaml                     (groups app manifests)
++-- k8s-security/
+|   +-- pod-security-standards.yaml            (PSA namespace labels)
+|   +-- rbac.yaml                              (deployer ServiceAccount + Role)
+|   +-- resource-quota.yaml                    (namespace resource caps)
+|   +-- limit-range.yaml                       (per-container defaults and maximums)
+|   +-- network-policy.yaml                    (Pod-to-Pod traffic rules)
++-- secrets-management/
+|   +-- aws-secrets-manager-policy.json        (IAM policy for secret reads)
+|   +-- external-secret.example.yaml           (External Secrets Operator config)
+|   +-- sealed-secret.example.yaml             (Sealed Secrets example)
++-- sast/
+|   +-- semgrep-config.yaml                    (custom Semgrep rules)
+|   +-- sonarqube.yaml                         (optional SonarQube deployment)
++-- vault/
+|   +-- vault-values.yaml                      (Vault Helm values)
+|   +-- launchboard-policy.hcl                 (Vault read-only policy)
++-- Dockerfile.backend                         (multi-stage FastAPI image)
++-- Dockerfile.frontend                        (multi-stage React/Nginx image)
++-- nginx-frontend.conf                        (Nginx reverse proxy config)
++-- README.md
 ```
 
-Verify:
+## Step 1: Create EC2 Workstation And Install Tools
+
+Create one Ubuntu EC2 workstation:
+
+| Field | Value |
+| --- | --- |
+| Name | `devops-launchboard-phase-10-workstation` |
+| AMI | Ubuntu Server 24.04 LTS |
+| Instance Type | `t3.small` |
+| Storage | 30 GB gp3 |
+| Key Pair | `devops-launchboard-key` |
+| Security Group | SSH port 22, your IP only |
+
+SSH in:
 
 ```bash
-aws sts get-caller-identity
+chmod 400 devops-launchboard-key.pem
+ssh -i devops-launchboard-key.pem ubuntu@YOUR_WORKSTATION_PUBLIC_IP
 ```
 
-Expected output:
-
-```json
-{
-  "Account": "123456789012"
-}
-```
-
-Replace placeholders:
-
-```text
-YOUR_AWS_REGION
-YOUR_ACCOUNT_ID
-```
-
-Create the IAM policy:
-
-```bash
-aws iam create-policy \
-  --policy-name devops-launchboard-phase-10-secrets-read \
-  --policy-document file://deployment/phase-10-security/secrets-management/aws-secrets-manager-policy.json
-```
-
-Why this step exists:
-
-AWS CLI needs credentials before it can create EKS clusters, ECR repositories, IAM roles, and secrets. Without this step, every AWS command fails because AWS does not know who is making the request.
-
-Reference:
-
-- AWS CLI configure: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-quickstart.html
-
-## Step 3: Create SSH Key For GitHub
-
-Run from: your local machine
+Install all tools:
 
 ```bash
 cd ~
-mkdir -p ~/.ssh
-chmod 700 ~/.ssh
-ssh-keygen -t ed25519 -C "devops-launchboard-phase-10" -f ~/.ssh/devops_launchboard_phase_10
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y git curl wget vim unzip jq ca-certificates gnupg lsb-release
+
+# Docker
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo ${UBUNTU_CODENAME:-$VERSION_CODENAME}) stable" | sudo tee /etc/apt/sources.list.d/docker.list
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+sudo systemctl enable docker && sudo systemctl start docker
+sudo usermod -aG docker ubuntu
+
+# AWS CLI
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip && sudo ./aws/install && rm -rf aws awscliv2.zip
+
+# kubectl
+curl -LO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
+
+# eksctl
+curl -sL "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz" | tar xz
+sudo mv eksctl /usr/local/bin/eksctl
+
+# Helm
+curl -fsSL https://baltocdn.com/helm/signing.asc | sudo gpg --dearmor -o /usr/share/keyrings/helm.gpg
+sudo apt install -y apt-transport-https
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+sudo apt update && sudo apt install -y helm
 ```
 
-Press Enter twice when it asks for a passphrase for this student lab.
-
-Print the public key:
+Log out and SSH back in for docker group:
 
 ```bash
-cat ~/.ssh/devops_launchboard_phase_10.pub
+exit
+ssh -i devops-launchboard-key.pem ubuntu@YOUR_WORKSTATION_PUBLIC_IP
 ```
 
-Add that public key to GitHub:
-
-```text
-GitHub
-Settings
-SSH and GPG keys
-New SSH key
-```
-
-Create SSH config:
+Configure AWS and verify:
 
 ```bash
-vim ~/.ssh/config
+aws configure
+aws sts get-caller-identity
+docker --version && kubectl version --client && eksctl version && helm version
 ```
 
-Paste:
+See Phase 8 Steps 2–7 for detailed explanations of each tool installation.
 
-```text
+## Step 2: Clone Repository
+
+```bash
+cd ~
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+ssh-keygen -t ed25519 -C "devops-launchboard-phase-10" -f ~/.ssh/devops_launchboard_github_key
+cat ~/.ssh/devops_launchboard_github_key.pub
+```
+
+Add the public key to GitHub as a read-only deploy key.
+
+```bash
+cat > ~/.ssh/config << 'EOF'
 Host github.com
   HostName github.com
   User git
-  IdentityFile ~/.ssh/devops_launchboard_phase_10
+  IdentityFile ~/.ssh/devops_launchboard_github_key
   IdentitiesOnly yes
-```
-
-Save and secure the files:
-
-```bash
-chmod 600 ~/.ssh/config
-chmod 600 ~/.ssh/devops_launchboard_phase_10
-chmod 644 ~/.ssh/devops_launchboard_phase_10.pub
+EOF
+chmod 600 ~/.ssh/config ~/.ssh/devops_launchboard_github_key
 ssh -T git@github.com
-```
 
-Why this step exists:
-
-The project uses an SSH clone URL. GitHub allows the clone only when your machine owns a private key that matches a public key saved in GitHub. The SSH config tells your machine which private key to use for `github.com`.
-
-Reference:
-
-- GitHub SSH docs: https://docs.github.com/en/authentication/connecting-to-github-with-ssh
-
-## Step 4: Clone The Repository
-
-Run from: your local machine
-
-```bash
 sudo mkdir -p /opt/devops-launchboard
-sudo chown -R $USER:$USER /opt/devops-launchboard
+sudo chown -R ubuntu:ubuntu /opt/devops-launchboard
 cd /opt/devops-launchboard
 git clone git@github.com:ashraful2430/N-tier-application.git app-source
 cd app-source
-git branch --show-current
 ```
 
-Expected output:
-
-```text
-main
-```
-
-Why this step exists:
-
-The deployment files and application source code must be on your machine before you can build Docker images or create Kubernetes manifests. The `/opt/devops-launchboard` folder gives the project a stable home.
-
-## Step 5: Create Phase 10 Folders
-
-Run from: `/opt/devops-launchboard/app-source`
+## Step 3: Create Phase 10 Folders
 
 ```bash
-mkdir -p deployment/phase-10-security/cluster
-mkdir -p deployment/phase-10-security/ecr
-mkdir -p deployment/phase-10-security/app-k8s
-mkdir -p deployment/phase-10-security/k8s-security
-mkdir -p deployment/phase-10-security/secrets-management
-mkdir -p deployment/phase-10-security/sast
-mkdir -p deployment/phase-10-security/vault
+cd /opt/devops-launchboard/app-source
+mkdir -p deployment/phase-10-security/{cluster,ecr,app-k8s,k8s-security,secrets-management,sast,vault}
 ```
 
-Why these folders exist:
+Each folder owns one concern: `cluster/` for eksctl config, `ecr/` for image lifecycle, `app-k8s/` for the application manifests, `k8s-security/` for hardening controls, `secrets-management/` for secret delivery patterns, `sast/` for source code scanning, and `vault/` for the Vault learning deployment.
 
-- `cluster` stores the EKS cluster definition.
-- `ecr` stores the ECR lifecycle policy.
-- `app-k8s` stores the normal application Kubernetes manifests.
-- `k8s-security` stores Kubernetes hardening controls.
-- `secrets-management` stores examples for safer secret delivery.
-- `sast` stores source scanning configuration.
-- `vault` stores Vault learning files.
-
-## Step 6: Create The EKS Cluster File
-
-Run:
+## Step 4: Create EKS Cluster
 
 ```bash
 vim deployment/phase-10-security/cluster/eksctl-cluster.yaml
@@ -348,7 +288,7 @@ kind: ClusterConfig
 metadata:
   name: devops-launchboard-phase-10
   region: YOUR_AWS_REGION
-  version: "1.34"
+  version: "1.32"
 
 availabilityZones:
   - YOUR_AWS_REGIONa
@@ -379,7 +319,6 @@ managedNodeGroups:
     tags:
       Project: devops-launchboard
       Environment: phase-10
-      Owner: student
 
 cloudWatch:
   clusterLogging:
@@ -396,53 +335,25 @@ addons:
       ebsCSIController: true
 ```
 
-Replace:
+Replace `YOUR_AWS_REGION` in three places. See Phase 8 Step 11 for the full line-by-line explanation.
 
-```text
-YOUR_AWS_REGION
-```
-
-Example for Singapore:
-
-```text
-ap-southeast-1
-ap-southeast-1a
-ap-southeast-1b
-```
-
-Create the cluster:
+Set variables and create the cluster (20–40 minutes):
 
 ```bash
+export AWS_REGION=YOUR_AWS_REGION
+export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+export CLUSTER_NAME=devops-launchboard-phase-10
+echo "Account: $ACCOUNT_ID  Region: $AWS_REGION  Cluster: $CLUSTER_NAME"
+
 eksctl create cluster -f deployment/phase-10-security/cluster/eksctl-cluster.yaml
 kubectl get nodes
 ```
 
-What this file means:
-
-- `metadata.name` names the EKS cluster.
-- `metadata.region` chooses where AWS creates the cluster.
-- `version` pins the Kubernetes version so students know what they are using.
-- `withOIDC` enables IAM Roles for Service Accounts, which is important for secure AWS access from pods.
-- `privateNetworking` places worker nodes in private subnets.
-- `nat.gateway: Single` lets private nodes reach the internet for image pulls while keeping the lab cost lower than one NAT Gateway per AZ.
-- `cloudWatch.clusterLogging` enables control plane logs so security events are easier to investigate.
-- `aws-ebs-csi-driver` lets Kubernetes create EBS volumes for PostgreSQL storage.
-
-Reference:
-
-- eksctl cluster config: https://eksctl.io/usage/schema/
-- EKS cluster logging: https://docs.aws.amazon.com/eks/latest/userguide/control-plane-logs.html
-
-## Step 7: Create ECR Repositories
-
-Run:
+## Step 5: Create ECR Repositories
 
 ```bash
-export AWS_REGION=ap-southeast-1
-export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-
-aws ecr create-repository --repository-name launchboard-backend --region $AWS_REGION
-aws ecr create-repository --repository-name launchboard-frontend --region $AWS_REGION
+aws ecr create-repository --repository-name launchboard-backend --region "$AWS_REGION"
+aws ecr create-repository --repository-name launchboard-frontend --region "$AWS_REGION"
 ```
 
 Create lifecycle policy:
@@ -486,31 +397,18 @@ Paste:
 }
 ```
 
-Apply lifecycle policy:
+Apply:
 
 ```bash
-aws ecr put-lifecycle-policy \
-  --repository-name launchboard-backend \
-  --lifecycle-policy-text file://deployment/phase-10-security/ecr/lifecycle-policy.json \
-  --region $AWS_REGION
-
-aws ecr put-lifecycle-policy \
-  --repository-name launchboard-frontend \
-  --lifecycle-policy-text file://deployment/phase-10-security/ecr/lifecycle-policy.json \
-  --region $AWS_REGION
+aws ecr put-lifecycle-policy --repository-name launchboard-backend \
+  --lifecycle-policy-text file://deployment/phase-10-security/ecr/lifecycle-policy.json --region "$AWS_REGION"
+aws ecr put-lifecycle-policy --repository-name launchboard-frontend \
+  --lifecycle-policy-text file://deployment/phase-10-security/ecr/lifecycle-policy.json --region "$AWS_REGION"
 ```
 
-Why this step exists:
+## Step 6: Create Dockerfiles And Nginx Config
 
-ECR stores Docker images. Lifecycle policies stop old images from piling up forever. This matters because old images cost money and make security cleanup harder.
-
-Reference:
-
-- Amazon ECR lifecycle policies: https://docs.aws.amazon.com/AmazonECR/latest/userguide/LifecyclePolicies.html
-
-## Step 8: Create Production Dockerfiles
-
-Create backend Dockerfile:
+### Dockerfile.backend
 
 ```bash
 vim deployment/phase-10-security/Dockerfile.backend
@@ -535,7 +433,7 @@ COPY backend/app ./app
 COPY backend/alembic ./alembic
 
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir .
+    && pip install --no-cache-dir ".[dev]"
 
 FROM python:3.12-slim AS runtime
 
@@ -559,12 +457,15 @@ USER app
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()" || exit 1
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 ```
 
-Create frontend Dockerfile:
+Note: `pip install ".[dev]"` installs the dev extras which include Alembic for the migration Job. See Phase 6 Scenario 1 Step 12 for the full line-by-line explanation.
+
+### Dockerfile.frontend
 
 ```bash
 vim deployment/phase-10-security/Dockerfile.frontend
@@ -586,141 +487,90 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM nginx:1.27-alpine AS runtime
-
-RUN addgroup -S app \
-    && adduser -S app -G app \
-    && mkdir -p /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp /var/cache/nginx/fastcgi_temp /var/cache/nginx/uwsgi_temp /var/cache/nginx/scgi_temp /var/run /tmp/nginx \
-    && chown -R app:app /usr/share/nginx/html /var/cache/nginx /var/run /tmp/nginx
+FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
 COPY deployment/phase-10-security/nginx-frontend.conf /etc/nginx/conf.d/default.conf
-COPY --from=builder /app/dist /usr/share/nginx/html
-
-USER app
+COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]
 ```
 
-Create frontend Nginx config:
+This uses the `nginxinc/nginx-unprivileged` image (UID 101) consistent with all other phases. The COPY path points to `deployment/phase-10-security/nginx-frontend.conf`.
+
+### nginx-frontend.conf
 
 ```bash
 vim deployment/phase-10-security/nginx-frontend.conf
 ```
 
+Paste the same content as Phase 8 Step 13 `nginx-frontend.conf`. See Phase 6 Scenario 1 Step 14 for the full line-by-line explanation.
+
+### Root .dockerignore
+
+```bash
+vim /opt/devops-launchboard/app-source/.dockerignore
+```
+
 Paste:
 
-```nginx
-server {
-    listen 8080;
-    server_name _;
-
-    root /usr/share/nginx/html;
-    index index.html;
-
-    client_max_body_size 10M;
-
-    location = /healthz {
-        access_log off;
-        add_header Content-Type text/plain;
-        return 200 "ok";
-    }
-
-    location /api/ {
-        proxy_pass http://launchboard-backend:8000/api/;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    location = /health {
-        proxy_pass http://launchboard-backend:8000/health;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    location = /ready {
-        proxy_pass http://launchboard-backend:8000/ready;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-}
+```dockerignore
+.git
+.github
+.venv
+backend/.venv
+frontend/node_modules
+frontend/dist
+node_modules
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.env
+.env.*
+deployment/phase-4-docker-compose/.env
 ```
 
-Why these files are production-grade:
+## Step 7: Build, Scan, And Push Images
 
-- Multi-stage builds keep runtime images smaller.
-- `npm ci` uses the lock file for repeatable frontend installs.
-- The backend runs as a non-root Linux user.
-- The frontend Nginx container also runs as a non-root user.
-- Health checks let Docker and Kubernetes know when the app is unhealthy.
-- Nginx proxies `/api` traffic to the backend service instead of exposing the backend directly.
-
-Reference:
-
-- Docker multi-stage builds: https://docs.docker.com/build/building/multi-stage/
-- Dockerfile reference: https://docs.docker.com/reference/dockerfile/
-- Nginx reverse proxy docs: https://nginx.org/en/docs/http/ngx_http_proxy_module.html
-
-## Step 9: Build, Scan, And Push Images
-
-Login to ECR:
+Log in to ECR:
 
 ```bash
-aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+aws ecr get-login-password --region "$AWS_REGION" | \
+  docker login --username AWS --password-stdin "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
 ```
 
-Build backend:
+Build:
 
 ```bash
-docker build \
-  -f deployment/phase-10-security/Dockerfile.backend \
-  -t launchboard-backend:phase-10 \
-  .
+cd /opt/devops-launchboard/app-source
+
+docker build -f deployment/phase-10-security/Dockerfile.backend \
+  -t launchboard-backend:phase-10 .
+
+docker build -f deployment/phase-10-security/Dockerfile.frontend \
+  --build-arg VITE_API_URL= \
+  -t launchboard-frontend:phase-10 .
 ```
 
-Build frontend:
+### Scan with Trivy before pushing
+
+This is the security gate: scan both images for known HIGH and CRITICAL vulnerabilities before they are allowed into the registry. If Trivy exits with code 1, the image has fixable vulnerabilities and should not be pushed until the base image is updated.
 
 ```bash
-docker build \
-  -f deployment/phase-10-security/Dockerfile.frontend \
-  --build-arg VITE_API_URL=/api \
-  -t launchboard-frontend:phase-10 \
-  .
-```
-
-Scan backend image:
-
-```bash
-docker run --rm \
-  -v /var/run/docker.sock:/var/run/docker.sock \
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
   aquasec/trivy:latest image \
   --severity HIGH,CRITICAL \
   --ignore-unfixed \
   --exit-code 1 \
   launchboard-backend:phase-10
-```
 
-Scan frontend image:
-
-```bash
-docker run --rm \
-  -v /var/run/docker.sock:/var/run/docker.sock \
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
   aquasec/trivy:latest image \
   --severity HIGH,CRITICAL \
   --ignore-unfixed \
@@ -728,165 +578,145 @@ docker run --rm \
   launchboard-frontend:phase-10
 ```
 
-Tag images:
+Command explanation:
+
+- `docker run --rm` runs Trivy as a disposable container. `-v /var/run/docker.sock:/var/run/docker.sock` gives Trivy access to the Docker daemon so it can inspect the local image.
+- `--severity HIGH,CRITICAL` only reports vulnerabilities at these two levels. LOW and MEDIUM findings are informational and usually do not block deployment.
+- `--ignore-unfixed` skips vulnerabilities that have no released fix yet. Failing the build over something nobody can fix teaches students to ignore the scanner, which is worse than having the vulnerability.
+- `--exit-code 1` makes Trivy return a non-zero exit code if any matching vulnerability is found. In a CI pipeline (Phase 7), this would fail the build. Here you run it manually.
+
+If Trivy finds vulnerabilities: read the table it prints. Each row shows the package name, installed version, and fixed version. The fix is usually to rebuild on a newer base image (`python:3.12-slim` or `node:22-alpine` with a newer digest that includes the patched OS packages).
+
+Tag and push:
 
 ```bash
-docker tag launchboard-backend:phase-10 $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-10
-docker tag launchboard-frontend:phase-10 $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-frontend:phase-10
+docker tag launchboard-backend:phase-10 \
+  "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-10"
+docker tag launchboard-frontend:phase-10 \
+  "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-frontend:phase-10"
+
+docker push "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-10"
+docker push "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-frontend:phase-10"
 ```
-
-Push images:
-
-```bash
-docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-10
-docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-frontend:phase-10
-```
-
-Why this step exists:
-
-Kubernetes pulls images from a registry. ECR is the private registry for this phase. Trivy scanning happens before pushing so students can stop risky images before they reach the cluster.
 
 Reference:
 
-- Trivy docs: https://aquasecurity.github.io/trivy/
-- Amazon ECR push image: https://docs.aws.amazon.com/AmazonECR/latest/userguide/docker-push-ecr-image.html
+- Trivy documentation: https://aquasecurity.github.io/trivy/
+- ECR push: https://docs.aws.amazon.com/AmazonECR/latest/userguide/docker-push-ecr-image.html
 
-## Step 10: Create Application Kubernetes Files
-
-Create the application files in:
-
-```text
-deployment/phase-10-security/app-k8s
-```
-
-Use `vim` for each file.
-
-Important replacement:
-
-```text
-YOUR_ACCOUNT_ID
-YOUR_AWS_REGION
-YOUR_ALB_DNS_NAME
-CHANGE_ME_STRONG_PASSWORD
-```
-
-The full manifests are stored in this phase folder so students can copy them file by file:
-
-```text
-app-k8s/namespace.yaml
-app-k8s/storageclass.yaml
-app-k8s/configmap.yaml
-app-k8s/secret.example.yaml
-app-k8s/pvc.yaml
-app-k8s/launchboard-postgres-deployment.yaml
-app-k8s/launchboard-postgres-service.yaml
-app-k8s/launchboard-migration-job.yaml
-app-k8s/launchboard-backend-deployment.yaml
-app-k8s/launchboard-backend-service.yaml
-app-k8s/launchboard-frontend-deployment.yaml
-app-k8s/launchboard-frontend-service.yaml
-app-k8s/ingress.yaml
-app-k8s/hpa.yaml
-app-k8s/kustomization.yaml
-```
-
-Why these files exist:
-
-- `namespace.yaml` gives the app its own Kubernetes area.
-- `storageclass.yaml` tells Kubernetes to create gp3 EBS volumes.
-- `configmap.yaml` stores non-secret app settings.
-- `secret.example.yaml` shows secret keys without committing real secrets.
-- `pvc.yaml` requests persistent storage for PostgreSQL.
-- PostgreSQL deployment and service run the lab database.
-- The migration job runs Alembic migrations before the backend serves traffic.
-- Backend deployment and service run the FastAPI API.
-- Frontend deployment and service run the Nginx frontend.
-- Ingress creates the public ALB entry point.
-- HPA scales backend pods based on CPU.
-- Kustomization lets `kubectl apply -k` apply the folder as one unit.
-
-Copy secret example to the real secret file:
+## Step 8: Install AWS Load Balancer Controller
 
 ```bash
-cd deployment/phase-10-security/app-k8s
-cp secret.example.yaml secret.yaml
-vim secret.yaml
-```
+cd ~
+curl -o aws-load-balancer-controller-policy.json \
+  https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
 
-Change:
+aws iam create-policy \
+  --policy-name AWSLoadBalancerControllerIAMPolicyPhase10 \
+  --policy-document file://aws-load-balancer-controller-policy.json
 
-```text
-CHANGE_ME_STRONG_PASSWORD
-```
-
-Edit image placeholders:
-
-```bash
-vim launchboard-backend-deployment.yaml
-vim launchboard-frontend-deployment.yaml
-vim launchboard-migration-job.yaml
-```
-
-Replace:
-
-```text
-YOUR_ACCOUNT_ID
-YOUR_AWS_REGION
-```
-
-Apply app:
-
-```bash
-cd /opt/devops-launchboard/app-source
-kubectl apply -f deployment/phase-10-security/app-k8s/secret.yaml
-kubectl apply -k deployment/phase-10-security/app-k8s
-kubectl -n devops-launchboard get pods
-kubectl -n devops-launchboard get svc
-kubectl -n devops-launchboard get ingress
-```
-
-## Step 11: Install AWS Load Balancer Controller
-
-Run:
-
-```bash
-helm repo add eks https://aws.github.io/eks-charts
-helm repo update
-```
-
-Create IAM role:
-
-```bash
 eksctl create iamserviceaccount \
-  --cluster devops-launchboard-phase-10 \
+  --cluster "$CLUSTER_NAME" \
   --namespace kube-system \
   --name aws-load-balancer-controller \
-  --role-name devops-launchboard-phase-10-alb-controller \
-  --attach-policy-arn arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess \
-  --approve
-```
+  --attach-policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicyPhase10" \
+  --approve \
+  --region "$AWS_REGION"
 
-Install controller:
+helm repo add eks https://aws.github.io/eks-charts
+helm repo update
 
-```bash
-helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
   --namespace kube-system \
-  --set clusterName=devops-launchboard-phase-10 \
+  --set clusterName="$CLUSTER_NAME" \
   --set serviceAccount.create=false \
   --set serviceAccount.name=aws-load-balancer-controller
 ```
 
-Why this step exists:
+Verify:
 
-Kubernetes Ingress is only a request for external traffic routing. On EKS, the AWS Load Balancer Controller watches Ingress objects and creates a real AWS Application Load Balancer.
+```bash
+kubectl -n kube-system rollout status deployment/aws-load-balancer-controller
+```
 
-Reference:
+This uses the official least-privilege IAM policy from the controller repository, not `ElasticLoadBalancingFullAccess`. In a security-focused phase, using the broadest possible AWS managed policy would contradict the principle of least privilege. See Phase 8 Step 18 for the full IRSA explanation.
 
-- AWS Load Balancer Controller: https://kubernetes-sigs.github.io/aws-load-balancer-controller/latest/
+## Step 9: Deploy The Application
 
-## Step 12: Add Pod Security Admission Labels
+The app k8s manifests are identical to Phase 8 Step 14 with `phase-10` image tags. Create every file under `deployment/phase-10-security/app-k8s/` using the content from Phase 8 Step 14, changing only:
 
-Create:
+- Image tags from `phase-8` to `phase-10` in the three ECR image references.
+- The cluster name context if referenced anywhere.
+
+See Phase 8 Step 14 for the full content and line-by-line explanation of every manifest (namespace, storageclass, configmap, secret.example, pvc, postgres deployment/service, migration job, backend deployment/service, frontend deployment/service, ingress, hpa, kustomization).
+
+Replace image placeholders:
+
+```bash
+cd /opt/devops-launchboard/app-source
+sed -i "s|YOUR_ACCOUNT_ID|${ACCOUNT_ID}|g; s|YOUR_AWS_REGION|${AWS_REGION}|g" \
+  deployment/phase-10-security/app-k8s/launchboard-backend-deployment.yaml \
+  deployment/phase-10-security/app-k8s/launchboard-migration-job.yaml \
+  deployment/phase-10-security/app-k8s/launchboard-frontend-deployment.yaml
+```
+
+Create namespace and Secret:
+
+```bash
+kubectl apply -f deployment/phase-10-security/app-k8s/namespace.yaml
+
+kubectl create secret generic launchboard-secret \
+  --namespace devops-launchboard \
+  --from-literal=POSTGRES_PASSWORD='CHANGE_ME_STRONG_PASSWORD' \
+  --from-literal=DATABASE_URL='postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard'
+```
+
+Apply and verify:
+
+```bash
+kubectl apply -k deployment/phase-10-security/app-k8s
+
+kubectl -n devops-launchboard rollout status deployment/launchboard-db --timeout=300s
+kubectl -n devops-launchboard wait --for=condition=complete job/launchboard-migrate --timeout=300s
+kubectl -n devops-launchboard rollout status deployment/launchboard-backend --timeout=300s
+kubectl -n devops-launchboard rollout status deployment/launchboard-frontend --timeout=300s
+
+kubectl -n devops-launchboard get ingress launchboard-ingress
+```
+
+Wait for the ALB DNS to appear, then update CORS:
+
+```bash
+ALB_DNS=$(kubectl -n devops-launchboard get ingress launchboard-ingress \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+echo "ALB: $ALB_DNS"
+
+vim deployment/phase-10-security/app-k8s/configmap.yaml
+```
+
+Set `CORS_ORIGINS` to `http://YOUR_ALB_DNS_NAME`, then:
+
+```bash
+kubectl apply -f deployment/phase-10-security/app-k8s/configmap.yaml
+kubectl -n devops-launchboard rollout restart deployment/launchboard-backend
+curl -s "http://$ALB_DNS/health" | jq
+```
+
+The application is running. Everything from here adds security controls on top of it.
+
+---
+
+# Security Hardening (Steps 10–21)
+
+The application is running. Every step from here adds a security control. Each control is independent — if one breaks the app, you can delete it and the app still works.
+
+---
+
+## Step 10: Pod Security Admission
+
+Pod Security Admission (PSA) is built into Kubernetes since v1.23. It evaluates every Pod against a security profile before allowing it to start. The `restricted` profile is the most secure: it requires non-root containers, drops all Linux capabilities, enforces read-only root filesystems (when possible), and requires seccomp profiles.
+
+Your application already meets the `restricted` requirements because the Dockerfiles run as non-root and the Deployments set `securityContext` with `runAsNonRoot`, `runAsUser`, and `seccompProfile`. Applying PSA formalizes this: if anyone later adds a Deployment that tries to run as root, Kubernetes rejects it immediately instead of letting it run.
 
 ```bash
 vim deployment/phase-10-security/k8s-security/pod-security-standards.yaml
@@ -901,8 +731,11 @@ metadata:
   name: devops-launchboard
   labels:
     pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
     pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
 ```
 
 Apply:
@@ -911,17 +744,49 @@ Apply:
 kubectl apply -f deployment/phase-10-security/k8s-security/pod-security-standards.yaml
 ```
 
-Why this file exists:
+Line explanation:
 
-Pod Security Admission is a built-in Kubernetes security control. The `restricted` level blocks common risky pod behavior, such as privileged containers and missing seccomp settings. This protects the cluster even if someone accidentally writes an unsafe deployment later.
+- `pod-security.kubernetes.io/enforce: restricted` rejects any Pod that violates the restricted policy. The Pod cannot be created.
+- `pod-security.kubernetes.io/audit: restricted` logs violations to the API server audit log even if they are also enforced. Useful for security incident investigation.
+- `pod-security.kubernetes.io/warn: restricted` shows a warning in the kubectl output when a Pod would violate the policy. Useful during migration to catch issues before switching to enforce.
+- Setting all three to `restricted` means violations are blocked, warned about, and logged.
+
+Test that a privileged Pod is rejected:
+
+```bash
+kubectl run test-privileged --image=nginx -n devops-launchboard \
+  --overrides='{"spec":{"containers":[{"name":"test","image":"nginx","securityContext":{"privileged":true}}]}}' \
+  --restart=Never
+```
+
+Expected:
+
+```text
+Error from server (Forbidden): ... violates PodSecurity "restricted:latest"
+```
+
+This proves the control works. Clean up:
+
+```bash
+kubectl delete pod test-privileged -n devops-launchboard --ignore-not-found
+```
+
+Verify existing Pods still run (they already meet restricted requirements):
+
+```bash
+kubectl -n devops-launchboard get pods
+```
 
 Reference:
 
-- Kubernetes Pod Security Standards: https://kubernetes.io/docs/concepts/security/pod-security-standards/
+- Pod Security Standards: https://kubernetes.io/docs/concepts/security/pod-security-standards/
+- Pod Security Admission: https://kubernetes.io/docs/concepts/security/pod-security-admission/
 
-## Step 13: Add RBAC
+## Step 11: RBAC (Role-Based Access Control)
 
-Create:
+Right now, you are using cluster-admin access (from the kubeconfig that eksctl configured). In production, different people and automation tools need different levels of access. A CI/CD pipeline that deploys the app needs permission to create Deployments but not to delete namespaces. A developer debugging needs permission to read Pods and logs but not to modify Secrets.
+
+This step creates a `launchboard-deployer` ServiceAccount with only the permissions needed to deploy and manage the application in the `devops-launchboard` namespace — nothing more.
 
 ```bash
 vim deployment/phase-10-security/k8s-security/rbac.yaml
@@ -942,75 +807,24 @@ metadata:
   name: launchboard-deployer
   namespace: devops-launchboard
 rules:
-  - apiGroups:
-      - ""
-    resources:
-      - configmaps
-      - pods
-      - services
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-  - apiGroups:
-      - ""
-    resources:
-      - secrets
-    verbs:
-      - get
-      - list
-      - create
-      - update
-      - patch
-  - apiGroups:
-      - apps
-    resources:
-      - deployments
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-  - apiGroups:
-      - batch
-    resources:
-      - jobs
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
-  - apiGroups:
-      - networking.k8s.io
-    resources:
-      - ingresses
-      - networkpolicies
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-  - apiGroups:
-      - autoscaling
-    resources:
-      - horizontalpodautoscalers
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
+  - apiGroups: [""]
+    resources: ["configmaps", "pods", "services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -1031,27 +845,46 @@ Apply:
 
 ```bash
 kubectl apply -f deployment/phase-10-security/k8s-security/rbac.yaml
-kubectl -n devops-launchboard get serviceaccount,role,rolebinding
 ```
 
-Why this file exists:
+Line explanation:
 
-RBAC means Role-Based Access Control. It decides what an identity can do inside Kubernetes. This phase creates a deployer service account with app-deployment permissions inside only the `devops-launchboard` namespace. That is safer than giving cluster-admin access.
+- `kind: ServiceAccount` creates an identity that Pods or CI pipelines can use to authenticate with the Kubernetes API. Unlike a human user, a ServiceAccount is namespace-scoped and has no password — it uses a JWT token.
+- `kind: Role` defines what the identity can do, scoped to the `devops-launchboard` namespace only. A Role cannot grant access to other namespaces; for that you would need a ClusterRole.
+- Each `rules` entry grants specific verbs on specific resources. Notice: Jobs have `delete` because the deploy workflow (Phase 7) needs to delete the old migration Job before re-creating it (Jobs are immutable). Other resources do not have `delete` — the deployer can create and update them but not remove them. Secrets have no `delete` either — the deployer can create/update secrets but cannot wipe them.
+- `kind: RoleBinding` connects the Role to the ServiceAccount. Without the binding, the Role exists but nobody has it.
+
+Test with impersonation:
+
+```bash
+kubectl auth can-i get pods -n devops-launchboard --as=system:serviceaccount:devops-launchboard:launchboard-deployer
+kubectl auth can-i delete namespaces --as=system:serviceaccount:devops-launchboard:launchboard-deployer
+kubectl auth can-i get pods -n kube-system --as=system:serviceaccount:devops-launchboard:launchboard-deployer
+```
+
+Expected:
+
+```text
+yes   (can get pods in own namespace)
+no    (cannot delete namespaces)
+no    (cannot access kube-system)
+```
 
 Reference:
 
 - Kubernetes RBAC: https://kubernetes.io/docs/reference/access-authn-authz/rbac/
 
-## Step 14: Add ResourceQuota And LimitRange
+## Step 12: ResourceQuota And LimitRange
 
-Create:
+ResourceQuota caps the total resources a namespace can consume. LimitRange sets per-container defaults and maximums. Together they prevent any single container or namespace from monopolizing the cluster.
+
+### resource-quota.yaml
 
 ```bash
 vim deployment/phase-10-security/k8s-security/resource-quota.yaml
-vim deployment/phase-10-security/k8s-security/limit-range.yaml
 ```
 
-Paste into `resource-quota.yaml`:
+Paste:
 
 ```yaml
 apiVersion: v1
@@ -1072,7 +905,22 @@ spec:
     configmaps: "20"
 ```
 
-Paste into `limit-range.yaml`:
+Line explanation:
+
+- `requests.cpu: "2"` means the sum of all `resources.requests.cpu` across all Pods cannot exceed 2 CPU cores. Kubernetes refuses to create a new Pod if it would push the total past this limit.
+- `requests.memory: 4Gi` caps total memory requests at 4 GiB.
+- `limits.cpu: "6"` and `limits.memory: 10Gi` cap the total limits (the burst ceiling).
+- `pods: "20"` prevents runaway HPA or a misconfigured Deployment from creating unlimited Pods.
+- `persistentvolumeclaims: "4"` prevents accidental EBS volume sprawl (each PVC creates a real EBS volume that costs money).
+- `services: "10"`, `secrets: "20"`, `configmaps: "20"` cap object counts for defense in depth.
+
+### limit-range.yaml
+
+```bash
+vim deployment/phase-10-security/k8s-security/limit-range.yaml
+```
+
+Paste:
 
 ```yaml
 apiVersion: v1
@@ -1097,7 +945,14 @@ spec:
         memory: 64Mi
 ```
 
-Apply:
+Line explanation:
+
+- `defaultRequest` is applied to any container that does not specify `resources.requests`. This prevents "no-request" Pods that the scheduler cannot account for.
+- `default` is applied as the `resources.limits` for containers that do not set their own limits. Without limits, a single container could consume all node memory and trigger OOMKilled events for other Pods.
+- `max` is the absolute ceiling per container. A Deployment that asks for `cpu: "4"` is rejected.
+- `min` is the floor. A container requesting less than 25m CPU or 64Mi memory is rejected (such small values usually indicate a copy-paste error).
+
+Apply both:
 
 ```bash
 kubectl apply -f deployment/phase-10-security/k8s-security/resource-quota.yaml
@@ -1106,20 +961,18 @@ kubectl -n devops-launchboard describe resourcequota launchboard-quota
 kubectl -n devops-launchboard describe limitrange launchboard-default-limits
 ```
 
-Why these files exist:
-
-`ResourceQuota` limits total namespace usage. It prevents one lab app from consuming too many pods, secrets, PVCs, CPU, or memory.
-
-`LimitRange` gives containers default CPU and memory settings. It helps avoid pods with no limits, which is dangerous because one container can consume too many node resources.
-
 Reference:
 
-- Kubernetes ResourceQuota: https://kubernetes.io/docs/concepts/policy/resource-quotas/
-- Kubernetes LimitRange: https://kubernetes.io/docs/concepts/policy/limit-range/
+- ResourceQuota: https://kubernetes.io/docs/concepts/policy/resource-quotas/
+- LimitRange: https://kubernetes.io/docs/concepts/policy/limit-range/
 
-## Step 15: Add NetworkPolicy
+## Step 13: NetworkPolicy
 
-Create:
+Without NetworkPolicy, every Pod in the cluster can reach every other Pod on any port. This is the Kubernetes default and it is dangerous: if an attacker compromises the frontend Pod, nothing stops them from connecting directly to the PostgreSQL Pod and dumping the database.
+
+NetworkPolicy is the Kubernetes firewall. You start with a default-deny rule (block everything), then add explicit allow rules for only the traffic your application needs.
+
+Important: on EKS, NetworkPolicy enforcement requires the VPC CNI network policy feature, which is enabled by default on EKS clusters running Kubernetes 1.25+. If your cluster is older, you need to enable it or install Calico.
 
 ```bash
 vim deployment/phase-10-security/k8s-security/network-policy.yaml
@@ -1128,6 +981,7 @@ vim deployment/phase-10-security/k8s-security/network-policy.yaml
 Paste:
 
 ```yaml
+# 1. Default deny all traffic in the namespace
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -1139,6 +993,7 @@ spec:
     - Ingress
     - Egress
 ---
+# 2. Allow all Pods to make DNS queries
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -1162,6 +1017,7 @@ spec:
         - protocol: TCP
           port: 53
 ---
+# 3. Allow ALB/public traffic to reach frontend, allow frontend to reach backend
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -1190,6 +1046,7 @@ spec:
         - protocol: TCP
           port: 8000
 ---
+# 4. Allow frontend to reach backend, allow backend to reach database
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -1219,6 +1076,7 @@ spec:
         - protocol: TCP
           port: 5432
 ---
+# 5. Allow backend and migration job to reach PostgreSQL
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -1242,6 +1100,7 @@ spec:
         - protocol: TCP
           port: 5432
 ---
+# 6. Allow migration job to reach PostgreSQL
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -1270,23 +1129,33 @@ kubectl apply -f deployment/phase-10-security/k8s-security/network-policy.yaml
 kubectl -n devops-launchboard get networkpolicy
 ```
 
-Why this file exists:
+Verify the app still works:
 
-Without NetworkPolicy, pods in the same cluster can often talk to each other freely. That is too open for production. These policies create a default deny rule, then allow only the traffic this app needs:
+```bash
+curl -s "http://$ALB_DNS/health" | jq
+curl -s "http://$ALB_DNS/api/summary" | jq
+```
 
-- Public traffic can reach the frontend on port `8080`.
-- Frontend can reach backend on port `8000`.
-- Backend and migration job can reach PostgreSQL on port `5432`.
-- The migration job can send outbound traffic to PostgreSQL before the backend serves users.
-- Pods can still reach DNS on port `53`.
+Traffic flow after NetworkPolicy:
+
+```text
+ALB → frontend:8080     ✓ (policy 3: allow public to frontend)
+frontend → backend:8000  ✓ (policy 3 egress + policy 4 ingress)
+backend → postgres:5432  ✓ (policy 4 egress + policy 5 ingress)
+migrate → postgres:5432  ✓ (policy 6 egress + policy 5 ingress)
+frontend → postgres:5432 ✗ (no policy allows this)
+backend → frontend:8080  ✗ (no policy allows this)
+any pod → internet       ✗ (default deny, only DNS allowed)
+```
 
 Reference:
 
-- Kubernetes NetworkPolicy: https://kubernetes.io/docs/concepts/services-networking/network-policies/
+- NetworkPolicy: https://kubernetes.io/docs/concepts/services-networking/network-policies/
+- EKS VPC CNI network policy: https://docs.aws.amazon.com/eks/latest/userguide/cni-network-policy.html
 
-## Step 16: Run Semgrep SAST
+## Step 14: Semgrep SAST Scanning
 
-Create:
+SAST (Static Application Security Testing) scans source code for security anti-patterns without running the application. Semgrep is an open-source SAST tool that uses pattern-matching rules.
 
 ```bash
 vim deployment/phase-10-security/sast/semgrep-config.yaml
@@ -1297,15 +1166,20 @@ Paste:
 ```yaml
 rules:
   - id: launchboard-hardcoded-secret
-    message: Hardcoded secret-like value detected. Move the value to a secret manager or environment variable.
+    message: >
+      Hardcoded secret-like value detected.
+      Move the value to a secret manager or environment variable.
     severity: ERROR
     languages:
       - python
       - javascript
       - typescript
     pattern-regex: (?i)(password|secret|token|api_key)\s*=\s*["'][^"']{8,}["']
+
   - id: launchboard-python-subprocess-shell-true
-    message: subprocess with shell=True can execute unexpected shell input.
+    message: >
+      subprocess with shell=True can execute unexpected shell input.
+      Use shell=False and pass arguments as a list instead.
     severity: WARNING
     languages:
       - python
@@ -1313,26 +1187,37 @@ rules:
       - pattern: subprocess.$FUNC(..., shell=True, ...)
 ```
 
-Run scan:
+Line explanation:
+
+- `id: launchboard-hardcoded-secret` names the rule. IDs appear in scan output so you can identify which rule flagged a finding.
+- `pattern-regex` matches assignments where a variable named `password`, `secret`, `token`, or `api_key` (case-insensitive) is set to a string literal of 8+ characters. This catches patterns like `password = "mysecretvalue123"` in Python or JavaScript files.
+- `severity: ERROR` makes this rule a blocking finding. `WARNING` is informational.
+- The second rule catches `subprocess.run(cmd, shell=True)` in Python, which is a code injection risk: if `cmd` contains user input, an attacker can append shell commands.
+
+Run the scan:
 
 ```bash
-docker run --rm \
-  -v "$PWD:/src" \
-  returntocorp/semgrep:latest \
+cd /opt/devops-launchboard/app-source
+docker run --rm -v "$PWD:/src" returntocorp/semgrep:latest \
   semgrep scan --config /src/deployment/phase-10-security/sast/semgrep-config.yaml /src
 ```
 
-Why this step exists:
+Command explanation:
 
-SAST means Static Application Security Testing. It scans source code before the app runs. This catches risky patterns like hardcoded secrets or unsafe shell execution early, before they become production incidents.
+- `docker run --rm -v "$PWD:/src"` mounts the repository into the Semgrep container at `/src`.
+- `semgrep scan --config ...` runs the scan using the custom rules file. Semgrep also supports `--config auto` to use community-maintained rules from the Semgrep registry.
+- Output shows each finding with file path, line number, matched code, and rule ID.
+
+If findings appear: review each one. Hardcoded secrets should be moved to environment variables or a secret manager. `shell=True` calls should be rewritten with `shell=False` and a list of arguments.
 
 Reference:
 
-- Semgrep docs: https://semgrep.dev/docs/
+- Semgrep documentation: https://semgrep.dev/docs/
+- Semgrep rules registry: https://semgrep.dev/r
 
-## Step 17: Optional SonarQube Learning Deployment
+## Step 15: Optional SonarQube Learning Deployment
 
-Create:
+SonarQube provides a web dashboard for continuous code quality and security analysis. It is heavier than Semgrep (requires 2+ GB memory and a persistent volume) so it is optional.
 
 ```bash
 vim deployment/phase-10-security/sast/sonarqube.yaml
@@ -1354,6 +1239,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: gp3-encrypted
   resources:
     requests:
       storage: 20Gi
@@ -1379,6 +1265,15 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: fix-permissions
+          image: busybox:1.36
+          command: ["sh", "-c", "chown -R 1000:1000 /opt/sonarqube/data"]
+          volumeMounts:
+            - name: sonarqube-data
+              mountPath: /opt/sonarqube/data
+          securityContext:
+            runAsUser: 0
       containers:
         - name: sonarqube
           image: sonarqube:10-community
@@ -1416,40 +1311,42 @@ spec:
       targetPort: 9000
 ```
 
-Apply:
+Apply and access:
 
 ```bash
 kubectl apply -f deployment/phase-10-security/sast/sonarqube.yaml
-kubectl -n security get pods,svc
-kubectl -n security port-forward svc/sonarqube 9000:9000
+kubectl -n security rollout status deployment/sonarqube --timeout=300s
+kubectl -n security port-forward svc/sonarqube 9000:9000 --address 0.0.0.0 &
 ```
 
-Open:
+Add port 9000 to the workstation security group, then open `http://YOUR_WORKSTATION_IP:9000`. Default login: `admin` / `admin` (you will be prompted to change the password on first login).
 
-```text
-http://127.0.0.1:9000
-```
-
-Why this step exists:
-
-SonarQube gives a dashboard for code quality and security findings. In real production, teams usually run it as a separate platform service instead of inside the app namespace. This lab keeps it isolated in the `security` namespace.
+SonarQube lives in the `security` namespace, separate from the application, because it is a platform tool, not part of the app.
 
 Reference:
 
-- SonarQube docs: https://docs.sonarsource.com/sonarqube-server/
+- SonarQube documentation: https://docs.sonarsource.com/sonarqube-server/
 
-## Step 18: AWS Secrets Manager Example
+## Step 16: AWS Secrets Manager
 
-Create the secret:
+Kubernetes Secrets are base64-encoded, not encrypted (by default), and anyone with `get secrets` RBAC permission can read them in plaintext. Production teams store sensitive values in a dedicated secrets platform and sync them into Kubernetes. AWS Secrets Manager is the AWS-native option: it encrypts secrets at rest with KMS, provides version history, supports automatic rotation, and integrates with IAM for access control.
+
+Create the secret in AWS:
 
 ```bash
 aws secretsmanager create-secret \
   --name devops-launchboard/phase-10/database \
   --secret-string '{"POSTGRES_PASSWORD":"CHANGE_ME_STRONG_PASSWORD","DATABASE_URL":"postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard"}' \
-  --region $AWS_REGION
+  --region "$AWS_REGION"
 ```
 
-Create IAM policy file:
+Command explanation:
+
+- `--name devops-launchboard/phase-10/database` uses a path-like naming convention that matches the app and phase. Slashes in the name are cosmetic (Secrets Manager treats the whole string as one name), but they make the console and IAM policies more readable.
+- `--secret-string` stores a JSON object with the same keys the Kubernetes Secret uses. The External Secrets Operator (Step 17) will read individual properties from this JSON.
+- AWS encrypts this at rest with the default `aws/secretsmanager` KMS key. You can specify a custom KMS key for tighter access control.
+
+Create the IAM policy that allows reading this specific secret:
 
 ```bash
 vim deployment/phase-10-security/secrets-management/aws-secrets-manager-policy.json
@@ -1474,40 +1371,58 @@ Paste:
 }
 ```
 
-Why this step exists:
+Replace `YOUR_AWS_REGION` and `YOUR_ACCOUNT_ID`. The trailing `-*` wildcard in the Resource ARN is required because Secrets Manager appends a random 6-character suffix to the secret ARN.
 
-Kubernetes Secrets are convenient, but production teams often store real secrets in a cloud secret manager. AWS Secrets Manager gives versioning, IAM access control, audit trails, and rotation options.
+Line explanation:
+
+- `secretsmanager:GetSecretValue` allows reading the secret's encrypted value. This is the only action the application needs.
+- `secretsmanager:DescribeSecret` allows reading metadata (version, rotation status) without the value. The External Secrets Operator uses this to check if the secret has changed.
+- `Resource` is scoped to exactly one secret. The operator cannot read any other secret in the account.
+
+Create the policy:
+
+```bash
+sed -i "s|YOUR_AWS_REGION|${AWS_REGION}|g; s|YOUR_ACCOUNT_ID|${ACCOUNT_ID}|g" \
+  deployment/phase-10-security/secrets-management/aws-secrets-manager-policy.json
+
+aws iam create-policy \
+  --policy-name devops-launchboard-phase-10-secrets-read \
+  --policy-document file://deployment/phase-10-security/secrets-management/aws-secrets-manager-policy.json
+```
 
 Reference:
 
 - AWS Secrets Manager: https://docs.aws.amazon.com/secretsmanager/
+- Secrets Manager pricing: https://aws.amazon.com/secrets-manager/pricing/
 
-## Step 19: Optional External Secrets Operator
+## Step 17: Optional — External Secrets Operator
 
-Install External Secrets Operator:
+The External Secrets Operator (ESO) watches for `ExternalSecret` custom resources in Kubernetes, reads the referenced secret from AWS Secrets Manager, and creates a normal Kubernetes Secret that your Pods consume via `envFrom`. The loop runs on a configurable refresh interval, so if you rotate the secret in AWS, the Kubernetes Secret updates automatically.
+
+Install ESO:
 
 ```bash
 helm repo add external-secrets https://charts.external-secrets.io
 helm repo update
-helm upgrade --install external-secrets external-secrets/external-secrets \
+helm install external-secrets external-secrets/external-secrets \
   --namespace external-secrets \
   --create-namespace \
   --set installCRDs=true
 ```
 
-Create service account for AWS secret reads:
+Create an IRSA service account so ESO can read the AWS secret:
 
 ```bash
 eksctl create iamserviceaccount \
-  --cluster devops-launchboard-phase-10 \
+  --cluster "$CLUSTER_NAME" \
   --namespace devops-launchboard \
   --name launchboard-secrets-reader \
-  --role-name devops-launchboard-phase-10-secrets-reader \
-  --attach-policy-arn arn:aws:iam::$AWS_ACCOUNT_ID:policy/devops-launchboard-phase-10-secrets-read \
-  --approve
+  --attach-policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/devops-launchboard-phase-10-secrets-read" \
+  --approve \
+  --region "$AWS_REGION"
 ```
 
-Create:
+Create the SecretStore and ExternalSecret:
 
 ```bash
 vim deployment/phase-10-security/secrets-management/external-secret.example.yaml
@@ -1555,97 +1470,110 @@ spec:
         property: DATABASE_URL
 ```
 
-Apply after replacing placeholders:
+Replace `YOUR_AWS_REGION`.
+
+Line explanation:
+
+- `kind: SecretStore` configures how ESO connects to the secret provider. `auth.jwt.serviceAccountRef` tells ESO to use the IRSA-enabled ServiceAccount for authentication. No AWS access keys are stored in the cluster.
+- `kind: ExternalSecret` defines what to sync. `refreshInterval: 1h` checks for changes every hour. `target.name: launchboard-secret` is the Kubernetes Secret that ESO creates — it has the same name as the manual Secret from Step 9. `creationPolicy: Owner` means ESO owns the Secret and recreates it if deleted.
+- Each `data` entry maps a Kubernetes Secret key (`secretKey`) to a JSON property in the AWS secret (`remoteRef.property`).
+
+Important: before applying this, delete the manually created Secret so ESO can take ownership:
 
 ```bash
-kubectl apply -f deployment/phase-10-security/secrets-management/external-secret.example.yaml
-kubectl -n devops-launchboard get externalsecret,secret
-```
-
-Why this step exists:
-
-External Secrets Operator reads from AWS Secrets Manager and creates a normal Kubernetes Secret for the app. This keeps raw secret values out of Git and out of manual YAML files.
-
-Reference:
-
-- External Secrets Operator: https://external-secrets.io/latest/
-
-## Step 20: Optional Sealed Secrets
-
-Create:
-
-```bash
-vim deployment/phase-10-security/secrets-management/sealed-secret.example.yaml
-```
-
-Paste:
-
-```yaml
-apiVersion: bitnami.com/v1alpha1
-kind: SealedSecret
-metadata:
-  name: launchboard-secret
-  namespace: devops-launchboard
-spec:
-  encryptedData:
-    POSTGRES_PASSWORD: REPLACE_WITH_KUBESEAL_OUTPUT
-    DATABASE_URL: REPLACE_WITH_KUBESEAL_OUTPUT
-  template:
-    metadata:
-      name: launchboard-secret
-      namespace: devops-launchboard
-    type: Opaque
-```
-
-Install controller:
-
-```bash
-helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets
-helm repo update
-helm upgrade --install sealed-secrets sealed-secrets/sealed-secrets \
-  --namespace kube-system
-```
-
-Create a normal secret locally:
-
-```bash
-kubectl -n devops-launchboard create secret generic launchboard-secret \
-  --from-literal=POSTGRES_PASSWORD='CHANGE_ME_STRONG_PASSWORD' \
-  --from-literal=DATABASE_URL='postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard' \
-  --dry-run=client \
-  -o yaml > launchboard-secret.yaml
-```
-
-Seal it:
-
-```bash
-kubeseal --format yaml < launchboard-secret.yaml > deployment/phase-10-security/secrets-management/sealed-secret.yaml
+kubectl -n devops-launchboard delete secret launchboard-secret
 ```
 
 Apply:
 
 ```bash
+sed -i "s|YOUR_AWS_REGION|${AWS_REGION}|g" \
+  deployment/phase-10-security/secrets-management/external-secret.example.yaml
+kubectl apply -f deployment/phase-10-security/secrets-management/external-secret.example.yaml
+```
+
+Verify:
+
+```bash
+kubectl -n devops-launchboard get externalsecret
+kubectl -n devops-launchboard get secret launchboard-secret
+```
+
+Expected: ExternalSecret shows `SecretSynced` status, and the Kubernetes Secret exists with the values from AWS.
+
+Restart the backend to pick up the new Secret:
+
+```bash
+kubectl -n devops-launchboard rollout restart deployment/launchboard-backend
+```
+
+Reference:
+
+- External Secrets Operator: https://external-secrets.io/latest/
+- ESO AWS provider: https://external-secrets.io/latest/provider/aws-secrets-manager/
+
+## Step 18: Optional — Sealed Secrets
+
+Sealed Secrets takes a different approach: you encrypt the secret locally with a public key, commit the encrypted version to Git, and the Sealed Secrets controller inside the cluster decrypts it. This enables GitOps for secrets — the encrypted `SealedSecret` YAML is safe to commit because only the controller's private key (which never leaves the cluster) can decrypt it.
+
+Install the controller:
+
+```bash
+helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets
+helm repo update
+helm install sealed-secrets sealed-secrets/sealed-secrets --namespace kube-system
+```
+
+Install the `kubeseal` CLI on the workstation:
+
+```bash
+KUBESEAL_VERSION=$(curl -s https://api.github.com/repos/bitnami-labs/sealed-secrets/releases/latest | jq -r .tag_name | sed 's/v//')
+curl -OL "https://github.com/bitnami-labs/sealed-secrets/releases/download/v${KUBESEAL_VERSION}/kubeseal-${KUBESEAL_VERSION}-linux-amd64.tar.gz"
+tar -xzf kubeseal-*.tar.gz kubeseal
+sudo mv kubeseal /usr/local/bin/kubeseal
+rm kubeseal-*.tar.gz
+```
+
+Create a normal Secret YAML locally (never commit this file):
+
+```bash
+kubectl -n devops-launchboard create secret generic launchboard-secret \
+  --from-literal=POSTGRES_PASSWORD='CHANGE_ME_STRONG_PASSWORD' \
+  --from-literal=DATABASE_URL='postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard' \
+  --dry-run=client -o yaml > /tmp/launchboard-secret.yaml
+```
+
+Seal it:
+
+```bash
+kubeseal --format yaml < /tmp/launchboard-secret.yaml \
+  > deployment/phase-10-security/secrets-management/sealed-secret.yaml
+rm /tmp/launchboard-secret.yaml
+```
+
+The output file `sealed-secret.yaml` contains encrypted values that are safe to commit to Git. Apply it:
+
+```bash
 kubectl apply -f deployment/phase-10-security/secrets-management/sealed-secret.yaml
 ```
 
-Why this step exists:
-
-Sealed Secrets lets students commit encrypted secrets safely. The controller inside the cluster decrypts them. This is useful when a team wants GitOps but does not want plaintext Kubernetes Secrets in Git.
+The controller decrypts it and creates a normal Kubernetes Secret.
 
 Reference:
 
 - Sealed Secrets: https://github.com/bitnami-labs/sealed-secrets
 
-## Step 21: Optional Vault Policy
+## Step 19: Optional — Vault Policy Example
 
-Create:
+HashiCorp Vault is a dedicated secrets management platform. It is more complex than Secrets Manager or Sealed Secrets but offers fine-grained access policies, dynamic secrets (generated on demand), lease-based expiration, and a rich audit log.
+
+This step deploys Vault in HA mode as a learning exercise. It is optional and requires ~1.5 GB memory across the 3 replicas.
 
 ```bash
 vim deployment/phase-10-security/vault/vault-values.yaml
-vim deployment/phase-10-security/vault/launchboard-policy.hcl
 ```
 
-Paste into `vault-values.yaml`:
+Paste:
 
 ```yaml
 server:
@@ -1658,9 +1586,11 @@ server:
   dataStorage:
     enabled: true
     size: 10Gi
+    storageClass: gp3-encrypted
   auditStorage:
     enabled: true
     size: 5Gi
+    storageClass: gp3-encrypted
   resources:
     requests:
       cpu: 250m
@@ -1675,239 +1605,288 @@ injector:
   enabled: true
 ```
 
-Paste into `launchboard-policy.hcl`:
+Line explanation:
+
+- `ha.enabled: true` with `replicas: 3` runs Vault in high-availability mode using the integrated Raft storage backend. Three Vault Pods form a consensus cluster; if one fails, the other two continue serving.
+- `raft.enabled: true` uses Raft for internal storage instead of requiring an external backend like Consul.
+- `dataStorage` and `auditStorage` use `gp3-encrypted` EBS volumes to persist Vault's encrypted data and audit logs.
+- `injector.enabled: true` installs the Vault Agent Injector, which can automatically inject secrets into Pod containers via annotations.
+
+Create the application-scoped policy:
+
+```bash
+vim deployment/phase-10-security/vault/launchboard-policy.hcl
+```
+
+Paste:
 
 ```hcl
+# Allow reading secrets under the launchboard path
 path "secret/data/devops-launchboard/phase-10/*" {
   capabilities = ["read", "list"]
 }
 
+# Allow listing secret metadata (for discovery)
 path "secret/metadata/devops-launchboard/phase-10/*" {
   capabilities = ["read", "list"]
 }
 ```
+
+This policy grants read-only access to secrets under a specific path. The application cannot write, delete, or access secrets outside its path. This is least-privilege applied to secrets.
 
 Install Vault:
 
 ```bash
 helm repo add hashicorp https://helm.releases.hashicorp.com
 helm repo update
-helm upgrade --install vault hashicorp/vault \
+helm install vault hashicorp/vault \
   --namespace vault \
   --create-namespace \
   -f deployment/phase-10-security/vault/vault-values.yaml
 ```
 
-Why this step exists:
+Note: Vault starts sealed and requires initialization and unsealing before use. This is a manual process in a lab:
 
-Vault is a dedicated secrets platform. It is more advanced than the simple lab secret file. This phase shows the shape of a Vault policy so students understand that apps should receive narrowly scoped read access, not broad admin access.
+```bash
+kubectl -n vault exec vault-0 -- vault operator init -key-shares=1 -key-threshold=1
+```
+
+Save the unseal key and root token from the output. Then unseal each replica:
+
+```bash
+kubectl -n vault exec vault-0 -- vault operator unseal YOUR_UNSEAL_KEY
+kubectl -n vault exec vault-1 -- vault operator unseal YOUR_UNSEAL_KEY
+kubectl -n vault exec vault-2 -- vault operator unseal YOUR_UNSEAL_KEY
+```
+
+Access the UI:
+
+```bash
+kubectl -n vault port-forward svc/vault 8200:8200 --address 0.0.0.0 &
+```
+
+Open `http://YOUR_WORKSTATION_IP:8200` and log in with the root token.
 
 Reference:
 
-- HashiCorp Vault Kubernetes: https://developer.hashicorp.com/vault/docs/platform/k8s
+- Vault on Kubernetes: https://developer.hashicorp.com/vault/docs/platform/k8s
+- Vault policies: https://developer.hashicorp.com/vault/docs/concepts/policies
 
-## Step 22: Verify Security Controls
-
-Check app:
-
-```bash
-kubectl -n devops-launchboard get pods
-kubectl -n devops-launchboard get svc
-kubectl -n devops-launchboard get ingress
-```
-
-Check pod security labels:
+## Step 20: Verify All Security Controls
 
 ```bash
-kubectl get namespace devops-launchboard --show-labels
-```
+echo "=== Pod Security Admission ==="
+kubectl get namespace devops-launchboard --show-labels | grep pod-security
 
-Check RBAC:
-
-```bash
+echo ""
+echo "=== RBAC ==="
 kubectl -n devops-launchboard get serviceaccount,role,rolebinding
-```
+kubectl auth can-i delete namespaces --as=system:serviceaccount:devops-launchboard:launchboard-deployer
 
-Check quota:
-
-```bash
+echo ""
+echo "=== ResourceQuota ==="
 kubectl -n devops-launchboard describe resourcequota launchboard-quota
-```
 
-Check network policy:
+echo ""
+echo "=== LimitRange ==="
+kubectl -n devops-launchboard describe limitrange launchboard-default-limits
 
-```bash
+echo ""
+echo "=== NetworkPolicy ==="
 kubectl -n devops-launchboard get networkpolicy
+
+echo ""
+echo "=== Application ==="
+kubectl -n devops-launchboard get pods
+curl -s "http://$ALB_DNS/health" | jq
+curl -s "http://$ALB_DNS/api/summary" | jq
 ```
 
-Check backend logs:
-
-```bash
-kubectl -n devops-launchboard logs deploy/launchboard-backend
-```
-
-Check frontend:
-
-```bash
-kubectl -n devops-launchboard get ingress launchboard-ingress
-```
-
-Open the ALB address in a browser after it becomes ready.
+Expected: all controls active, app still functional, deployer cannot delete namespaces, privileged Pods are rejected.
 
 ## Troubleshooting
 
-Problem: pods fail after Pod Security labels.
-
-Cause:
-
-```text
-The pod securityContext or container securityContext is missing required restricted settings.
-```
-
-Fix:
+### Pods rejected after Pod Security labels
 
 ```bash
+kubectl -n devops-launchboard get events --sort-by=.lastTimestamp | grep Forbidden
 kubectl -n devops-launchboard describe pod POD_NAME
-kubectl -n devops-launchboard get events --sort-by=.lastTimestamp
 ```
 
-Problem: frontend works but API fails.
+The rejection message tells you which `restricted` rule was violated (e.g., missing `runAsNonRoot`, missing `seccompProfile`). Fix the Deployment's `securityContext` and re-apply.
 
-Cause:
-
-```text
-NetworkPolicy may be blocking frontend-to-backend traffic, or Nginx may point to the wrong backend service.
-```
-
-Fix:
+### Frontend works but API calls fail after NetworkPolicy
 
 ```bash
 kubectl -n devops-launchboard get networkpolicy
-kubectl -n devops-launchboard get svc launchboard-backend
-kubectl -n devops-launchboard logs deploy/launchboard-frontend
+kubectl -n devops-launchboard describe networkpolicy allow-frontend-to-backend
 ```
 
-Problem: image pull fails.
+Common causes: the backend Pod labels do not match the NetworkPolicy selector, the port number in the policy does not match the container port, or the DNS egress policy is missing (Pods cannot resolve Service names without DNS access).
 
-Cause:
-
-```text
-The image placeholder was not replaced, the image was not pushed, or EKS cannot access ECR.
-```
-
-Fix:
-
-```bash
-kubectl -n devops-launchboard describe pod POD_NAME
-aws ecr describe-images --repository-name launchboard-backend --region $AWS_REGION
-aws ecr describe-images --repository-name launchboard-frontend --region $AWS_REGION
-```
-
-Problem: External Secret does not create a Kubernetes Secret.
-
-Cause:
-
-```text
-IAM role, SecretStore, region, or AWS secret key is wrong.
-```
-
-Fix:
+### External Secret shows error status
 
 ```bash
 kubectl -n devops-launchboard describe externalsecret launchboard-secret
 kubectl -n external-secrets logs deploy/external-secrets
 ```
 
+Common causes: the IRSA role is not attached (check `kubectl -n devops-launchboard get sa launchboard-secrets-reader -o yaml` for the annotation), the AWS secret name or property does not match, or the IAM policy Resource ARN is wrong (missing the trailing `-*` wildcard).
+
+### ResourceQuota blocks Pod creation
+
+```bash
+kubectl -n devops-launchboard describe resourcequota launchboard-quota
+```
+
+Look at the "Used" vs "Hard" columns. If `pods` shows `20/20`, no more Pods can be created. Either delete unused Pods or increase the quota.
+
 ## Cleanup
+
+Stop port-forwards:
+
+```bash
+pkill -f "port-forward"
+```
 
 Delete optional tools:
 
 ```bash
-helm uninstall vault -n vault
-helm uninstall sealed-secrets -n kube-system
-helm uninstall external-secrets -n external-secrets
-kubectl delete namespace vault
-kubectl delete namespace external-secrets
-kubectl delete namespace security
+helm uninstall vault -n vault 2>/dev/null
+helm uninstall sealed-secrets -n kube-system 2>/dev/null
+helm uninstall external-secrets -n external-secrets 2>/dev/null
+kubectl delete namespace vault external-secrets security 2>/dev/null
 ```
 
-Delete app:
+Delete security controls:
 
 ```bash
-kubectl delete -k deployment/phase-10-security/k8s-security
-kubectl delete -k deployment/phase-10-security/app-k8s
+kubectl delete -f deployment/phase-10-security/k8s-security/ 2>/dev/null
 ```
 
-Delete cluster:
+Delete application:
 
 ```bash
-eksctl delete cluster -f deployment/phase-10-security/cluster/eksctl-cluster.yaml
+kubectl delete namespace devops-launchboard
 ```
 
-Delete ECR images and repositories if you are done:
+Wait 2 to 3 minutes for the ALB to be deleted.
+
+Delete LB controller:
 
 ```bash
-aws ecr delete-repository --repository-name launchboard-backend --force --region $AWS_REGION
-aws ecr delete-repository --repository-name launchboard-frontend --force --region $AWS_REGION
+helm uninstall aws-load-balancer-controller -n kube-system
 ```
 
-Delete secret:
+Delete cluster (10–20 minutes):
+
+```bash
+eksctl delete cluster --name devops-launchboard-phase-10 --region "$AWS_REGION"
+```
+
+Delete ECR:
+
+```bash
+aws ecr delete-repository --repository-name launchboard-backend --force --region "$AWS_REGION"
+aws ecr delete-repository --repository-name launchboard-frontend --force --region "$AWS_REGION"
+```
+
+Delete AWS secret:
 
 ```bash
 aws secretsmanager delete-secret \
   --secret-id devops-launchboard/phase-10/database \
-  --force-delete-without-recovery \
-  --region $AWS_REGION
+  --force-delete-without-recovery --region "$AWS_REGION"
 ```
 
-Why cleanup matters:
+Delete IAM policies:
 
-EKS clusters, EC2 nodes, EBS volumes, load balancers, CloudWatch logs, and stored images can continue charging after practice. Cleanup is part of production discipline.
+```bash
+aws iam delete-policy --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/devops-launchboard-phase-10-secrets-read" 2>/dev/null
+aws iam delete-policy --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicyPhase10" 2>/dev/null
+```
+
+Check the AWS Console for leftover resources:
+
+```text
+EC2 > Load Balancers, Target Groups, Volumes
+VPC > NAT Gateways, Elastic IPs
+CloudWatch > Log Groups
+```
+
+Terminate the workstation EC2.
 
 ## Production Checklist
 
 ```text
-[ ] AWS credentials configured
-[ ] GitHub SSH clone works
+=== Infrastructure ===
+[ ] AWS Budget created
 [ ] EKS cluster created
-[ ] ECR repositories created
-[ ] Docker images built
-[ ] Docker images scanned with Trivy
+[ ] ECR repositories created with lifecycle policies
+[ ] Docker images built and scanned with Trivy
 [ ] Docker images pushed to ECR
-[ ] Kubernetes manifests updated with real account and region
-[ ] Application deployed
-[ ] ALB created
-[ ] Pod Security restricted labels applied
-[ ] RBAC created
-[ ] ResourceQuota created
-[ ] LimitRange created
-[ ] NetworkPolicy created
-[ ] Semgrep scan completed
-[ ] Secrets are not committed in plaintext
-[ ] Optional external secret flow tested
-[ ] Logs checked
+[ ] AWS Load Balancer Controller installed with least-privilege IAM
+[ ] Application deployed and ALB working
+[ ] CORS updated to ALB DNS
+
+=== Kubernetes Hardening ===
+[ ] Pod Security Admission restricted labels applied
+[ ] Privileged Pod test rejected
+[ ] RBAC deployer ServiceAccount created with scoped Role
+[ ] Deployer cannot access kube-system or delete namespaces
+[ ] ResourceQuota applied and visible in describe
+[ ] LimitRange applied with default requests/limits
+[ ] NetworkPolicy default-deny applied
+[ ] Explicit allow rules for frontend→backend→postgres traffic
+[ ] App still works after all policies applied
+
+=== Code And Image Scanning ===
+[ ] Trivy scan completed on both images before push
+[ ] Semgrep scan completed on source code
+[ ] SonarQube accessible (optional)
+
+=== Secrets Management ===
+[ ] AWS Secrets Manager secret created
+[ ] IAM policy scoped to one secret
+[ ] External Secrets Operator installed and syncing (optional)
+[ ] Sealed Secrets controller installed and seal/unseal tested (optional)
+[ ] Vault deployed and policy created (optional)
+[ ] No plaintext secrets committed to Git
+
+=== Cleanup ===
 [ ] Cleanup plan understood
+[ ] AWS Budget reviewed
 ```
 
 ## Reference Documentation
 
-| Topic | Official Link |
+| Topic | Link |
 | --- | --- |
 | EKS | https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html |
 | eksctl | https://eksctl.io/ |
 | ECR | https://docs.aws.amazon.com/AmazonECR/latest/userguide/what-is-ecr.html |
 | Kubernetes RBAC | https://kubernetes.io/docs/reference/access-authn-authz/rbac/ |
 | NetworkPolicy | https://kubernetes.io/docs/concepts/services-networking/network-policies/ |
+| EKS VPC CNI network policy | https://docs.aws.amazon.com/eks/latest/userguide/cni-network-policy.html |
 | Pod Security Standards | https://kubernetes.io/docs/concepts/security/pod-security-standards/ |
 | ResourceQuota | https://kubernetes.io/docs/concepts/policy/resource-quotas/ |
 | LimitRange | https://kubernetes.io/docs/concepts/policy/limit-range/ |
 | Trivy | https://aquasecurity.github.io/trivy/ |
 | Semgrep | https://semgrep.dev/docs/ |
+| SonarQube | https://docs.sonarsource.com/sonarqube-server/ |
 | AWS Secrets Manager | https://docs.aws.amazon.com/secretsmanager/ |
 | External Secrets Operator | https://external-secrets.io/latest/ |
 | Sealed Secrets | https://github.com/bitnami-labs/sealed-secrets |
 | Vault on Kubernetes | https://developer.hashicorp.com/vault/docs/platform/k8s |
 
-## Next Step
+## What To Do Next
 
-Move to Phase 11 for advanced deployment strategies such as blue-green, canary, rollout verification, and safer release controls.
+Move to:
+
+```text
+Phase 11: Advanced Deployment Strategies
+```
+
+Why:
+
+After the platform is deployed, observed, and hardened, the next step is to learn safer release strategies: blue-green deployments, canary releases, rollout verification gates, and progressive delivery with Argo Rollouts.
