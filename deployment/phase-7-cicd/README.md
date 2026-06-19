@@ -573,8 +573,12 @@ ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV APP_ENV=production
 
-RUN groupadd --system app \
-    && useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app
+RUN groupadd --system --gid 10001 app \
+    && useradd --system \
+       --uid 10001 \
+       --gid 10001 \
+       --home-dir /app \
+       --shell /usr/sbin/nologin app
 
 WORKDIR /app
 
@@ -1074,9 +1078,9 @@ spec:
         app: launchboard-backend
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 999
-        runAsGroup: 999
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:
