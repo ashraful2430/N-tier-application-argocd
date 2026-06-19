@@ -13,7 +13,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: migrate
-          image: launchboard-backend:phase-7
+          image: launchboard-backend:IMAGE_TAG_PLACEHOLDER
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
