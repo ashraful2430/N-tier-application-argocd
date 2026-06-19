@@ -5,97 +5,115 @@ on:
   push:
     branches:
       - main
-    paths:
-      - backend/**
-      - frontend/**
-      - deployment/phase-7-cicd/**
-      - .github/workflows/deploy-k8s.yml
 
 permissions:
   contents: read
 
-env:
-  NAMESPACE: devops-launchboard
-  KIND_CLUSTER_NAME: launchboard-cicd
-  PUBLIC_APP_URL: ${{ vars.PHASE7_PUBLIC_APP_URL }}
-  DB_PASSWORD: ${{ secrets.PHASE7_DB_PASSWORD }}
+concurrency:
+  group: phase-7-deploy
+  cancel-in-progress: false
 
 jobs:
   deploy:
-    name: Deploy to local Kind cluster
+    name: Deploy to Kind on EC2
     runs-on: self-hosted
+    env:
+      KIND_CLUSTER: launchboard-cicd
+      NAMESPACE: devops-launchboard
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Confirm required tools
-        run: |
-          docker --version
-          kind version
-          kubectl version --client
+      - name: Set image tag from commit SHA
+        run: echo "IMAGE_TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
 
-      - name: Create Kind cluster when missing
+      - name: Create Kind cluster if it does not exist
         run: |
-          if kind get clusters | grep -qx "${KIND_CLUSTER_NAME}"; then
-            echo "Kind cluster already exists."
+          if ! kind get clusters | grep -q "^${KIND_CLUSTER}$"; then
+            kind create cluster --name "${KIND_CLUSTER}" \
+              --config deployment/phase-7-cicd/kind-config.yaml
           else
-            kind create cluster --name "${KIND_CLUSTER_NAME}" --config deployment/phase-7-cicd/kind-config.yaml
+            echo "Cluster ${KIND_CLUSTER} already exists, reusing it."
+          fi
+          kubectl cluster-info --context "kind-${KIND_CLUSTER}"
+
+      - name: Install Nginx Ingress Controller if missing
+        run: |
+          if ! kubectl get namespace ingress-nginx >/dev/null 2>&1; then
+            kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/kind/deploy.yaml
+            sleep 10
+          fi
+          kubectl wait --namespace ingress-nginx \
+            --for=condition=ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=180s
+
+      - name: Install Metrics Server if missing
+        run: |
+          if ! kubectl -n kube-system get deployment metrics-server >/dev/null 2>&1; then
+            kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+            kubectl patch deployment metrics-server -n kube-system --type='json' \
+              -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
           fi
 
-      - name: Install Nginx Ingress Controller
+      - name: Build images
         run: |
-          kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
-          kubectl wait --namespace ingress-nginx --for=condition=ready pod --selector=app.kubernetes.io/component=controller --timeout=180s
-
-      - name: Build backend image
-        run: docker build -f deployment/phase-7-cicd/Dockerfile.backend -t launchboard-backend:phase-7 .
-
-      - name: Build frontend image
-        run: docker build -f deployment/phase-7-cicd/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-7 .
+          docker build -f deployment/phase-7-cicd/Dockerfile.backend \
+            -t "launchboard-backend:${IMAGE_TAG}" .
+          docker build -f deployment/phase-7-cicd/Dockerfile.frontend \
+            -t "launchboard-frontend:${IMAGE_TAG}" .
 
       - name: Load images into Kind
         run: |
-          kind load docker-image launchboard-backend:phase-7 --name "${KIND_CLUSTER_NAME}"
-          kind load docker-image launchboard-frontend:phase-7 --name "${KIND_CLUSTER_NAME}"
+          kind load docker-image "launchboard-backend:${IMAGE_TAG}" --name "${KIND_CLUSTER}"
+          kind load docker-image "launchboard-frontend:${IMAGE_TAG}" --name "${KIND_CLUSTER}"
+
+      - name: Stamp image tag into manifests
+        run: |
+          sed -i "s|IMAGE_TAG_PLACEHOLDER|${IMAGE_TAG}|g" \
+            deployment/phase-7-cicd/k8s/launchboard-backend-deployment.yaml \
+            deployment/phase-7-cicd/k8s/launchboard-frontend-deployment.yaml \
+            deployment/phase-7-cicd/k8s/launchboard-migration-job.yaml
 
       - name: Create namespace
         run: kubectl apply -f deployment/phase-7-cicd/k8s/namespace.yaml
 
-      - name: Apply runtime ConfigMap
+      - name: Create or update application Secret
         run: |
-          kubectl create configmap launchboard-config \
-            --namespace "${NAMESPACE}" \
-            --from-literal=APP_NAME="DevOps LaunchBoard API" \
-            --from-literal=APP_ENV=production \
-            --from-literal=CORS_ORIGINS="${PUBLIC_APP_URL}" \
-            --from-literal=SEED_DEMO_DATA=true \
-            --from-literal=POSTGRES_DB=launchboard \
-            --from-literal=POSTGRES_USER=launchboard_user \
+          kubectl -n "${NAMESPACE}" create secret generic launchboard-secret \
+            --from-literal=POSTGRES_PASSWORD='${{ secrets.PHASE7_DB_PASSWORD }}' \
+            --from-literal=DATABASE_URL='postgresql+asyncpg://launchboard_user:${{ secrets.PHASE7_DB_PASSWORD }}@launchboard-db:5432/launchboard' \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Apply runtime Secret
-        run: |
-          kubectl create secret generic launchboard-secret \
-            --namespace "${NAMESPACE}" \
-            --from-literal=POSTGRES_PASSWORD="${DB_PASSWORD}" \
-            --from-literal=DATABASE_URL="postgresql+asyncpg://launchboard_user:${DB_PASSWORD}@launchboard-db:5432/launchboard" \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Recreate migration job
+      - name: Delete previous migration Job
         run: kubectl -n "${NAMESPACE}" delete job launchboard-migrate --ignore-not-found
 
       - name: Apply Kubernetes manifests
         run: kubectl apply -k deployment/phase-7-cicd/k8s
 
-      - name: Wait for rollout
+      - name: Set CORS origin from GitHub variable
         run: |
-          kubectl -n "${NAMESPACE}" rollout status deployment/launchboard-db --timeout=180s
-          kubectl -n "${NAMESPACE}" wait --for=condition=complete job/launchboard-migrate --timeout=180s
+          kubectl -n "${NAMESPACE}" patch configmap launchboard-config --type merge \
+            -p '{"data":{"CORS_ORIGINS":"${{ vars.PHASE7_PUBLIC_APP_URL }}"}}'
+          kubectl -n "${NAMESPACE}" rollout restart deployment/launchboard-backend
+
+      - name: Wait for database
+        run: kubectl -n "${NAMESPACE}" rollout status deployment/launchboard-db --timeout=180s
+
+      - name: Wait for migration Job
+        run: kubectl -n "${NAMESPACE}" wait --for=condition=complete job/launchboard-migrate --timeout=180s
+
+      - name: Wait for application rollout
+        run: |
           kubectl -n "${NAMESPACE}" rollout status deployment/launchboard-backend --timeout=180s
           kubectl -n "${NAMESPACE}" rollout status deployment/launchboard-frontend --timeout=180s
 
       - name: Verify application
         run: |
+          sleep 5
+          curl -fsS http://127.0.0.1/healthz
           curl -fsS http://127.0.0.1/health
           curl -fsS http://127.0.0.1/ready
-          curl -fsS http://127.0.0.1/api/summary
+          curl -fsS http://127.0.0.1/api/summary | head -c 400
+          echo
+          echo "Deployment of ${IMAGE_TAG} verified."
