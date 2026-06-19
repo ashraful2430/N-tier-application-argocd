@@ -1,7 +1,7 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: launchboard-backend
+  name: launchboard-backend-hpa
   namespace: devops-launchboard
 spec:
   scaleTargetRef:
@@ -9,7 +9,7 @@ spec:
     kind: Deployment
     name: launchboard-backend
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 4
   metrics:
     - type: Resource
       resource:
