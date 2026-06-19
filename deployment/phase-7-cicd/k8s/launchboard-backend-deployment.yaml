@@ -26,7 +26,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: backend
-          image: launchboard-backend:phase-7
+          image: launchboard-backend:IMAGE_TAG_PLACEHOLDER
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -62,5 +62,5 @@ spec:
               cpu: 100m
               memory: 128Mi
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: 400m
+              memory: 384Mi
