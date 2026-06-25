@@ -144,7 +144,7 @@ The backend and database should stay private inside the Docker Compose network.
 ## Files Included In This Phase
 
 ```text
-deployment/phase-4-docker-compose/
+deployment/phase-04-docker-compose/
 ├── .env.example
 ├── Dockerfile.backend
 ├── Dockerfile.frontend
@@ -436,7 +436,7 @@ Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-mkdir -p deployment/phase-4-docker-compose
+mkdir -p deployment/phase-04-docker-compose
 ```
 
 Line-by-line explanation:
@@ -444,7 +444,7 @@ Line-by-line explanation:
 | Line | Explanation |
 | --- | --- |
 | `cd /opt/devops-launchboard/app-source` | Moves to the root of the cloned repository. |
-| `mkdir -p deployment/phase-4-docker-compose` | Creates the Phase 4 folder and parent folders if needed. |
+| `mkdir -p deployment/phase-04-docker-compose` | Creates the Phase 4 folder and parent folders if needed. |
 
 ## Step 8: Create Root `.dockerignore`
 
@@ -472,7 +472,7 @@ __pycache__
 .ruff_cache
 .env
 .env.*
-deployment/phase-4-docker-compose/.env
+deployment/phase-04-docker-compose/.env
 
 ```
 
@@ -493,7 +493,7 @@ This file must be placed at the repository root:
 Run:
 
 ```bash
-vim deployment/phase-4-docker-compose/Dockerfile.backend
+vim deployment/phase-04-docker-compose/Dockerfile.backend
 ```
 
 Paste:
@@ -578,7 +578,7 @@ This backend image is production-style for this phase because it uses a slim bas
 Run:
 
 ```bash
-vim deployment/phase-4-docker-compose/Dockerfile.frontend
+vim deployment/phase-04-docker-compose/Dockerfile.frontend
 ```
 
 Paste:
@@ -599,7 +599,7 @@ RUN npm run build
 
 FROM nginx:1.27-alpine AS runtime
 
-COPY deployment/phase-4-docker-compose/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deployment/phase-04-docker-compose/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
@@ -642,7 +642,7 @@ This version does not force a custom non-root Nginx user. The official Nginx Alp
 Run:
 
 ```bash
-vim deployment/phase-4-docker-compose/nginx-frontend.conf
+vim deployment/phase-04-docker-compose/nginx-frontend.conf
 ```
 
 Paste:
@@ -727,7 +727,7 @@ Line-by-line explanation:
 Run:
 
 ```bash
-vim deployment/phase-4-docker-compose/.env.example
+vim deployment/phase-04-docker-compose/.env.example
 ```
 
 Paste:
@@ -756,7 +756,7 @@ FRONTEND_IMAGE=launchboard-frontend:phase-4
 Create the real `.env` file:
 
 ```bash
-cd /opt/devops-launchboard/app-source/deployment/phase-4-docker-compose
+cd /opt/devops-launchboard/app-source/deployment/phase-04-docker-compose
 cp .env.example .env
 vim .env
 ```
@@ -795,7 +795,7 @@ Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-vim deployment/phase-4-docker-compose/docker-compose.yml
+vim deployment/phase-04-docker-compose/docker-compose.yml
 ```
 
 Paste:
@@ -822,7 +822,7 @@ services:
   launchboard-migrate:
     build:
       context: ../..
-      dockerfile: deployment/phase-4-docker-compose/Dockerfile.backend
+      dockerfile: deployment/phase-04-docker-compose/Dockerfile.backend
     image: ${BACKEND_IMAGE}
     container_name: launchboard-migrate
     env_file:
@@ -838,7 +838,7 @@ services:
   launchboard-backend:
     build:
       context: ../..
-      dockerfile: deployment/phase-4-docker-compose/Dockerfile.backend
+      dockerfile: deployment/phase-04-docker-compose/Dockerfile.backend
     image: ${BACKEND_IMAGE}
     container_name: launchboard-backend
     env_file:
@@ -861,7 +861,7 @@ services:
   launchboard-frontend:
     build:
       context: ../..
-      dockerfile: deployment/phase-4-docker-compose/Dockerfile.frontend
+      dockerfile: deployment/phase-04-docker-compose/Dockerfile.frontend
       args:
         VITE_API_URL: ${VITE_API_URL}
     image: ${FRONTEND_IMAGE}
@@ -919,7 +919,7 @@ Important Compose line explanation:
 Run:
 
 ```bash
-vim deployment/phase-4-docker-compose/docker-compose.prod.yml
+vim deployment/phase-04-docker-compose/docker-compose.prod.yml
 ```
 
 Paste:
@@ -927,16 +927,16 @@ Paste:
 ```yaml
 services:
   launchboard-db:
-    cpus: "0.75"
-    mem_limit: 512m
+    cpus: "1.0"
+    mem_limit: 1g
 
   launchboard-backend:
-    cpus: "0.75"
-    mem_limit: 384m
+    cpus: "1.0"
+    mem_limit: 512m
 
   launchboard-frontend:
-    cpus: "0.25"
-    mem_limit: 128m
+    cpus: "0.5"
+    mem_limit: 256m
 
 ```
 
@@ -946,12 +946,12 @@ Line-by-line explanation:
 | --- | --- |
 | `services:` | Starts service override definitions. |
 | `launchboard-db:` | Adds resource limits for PostgreSQL. |
-| `cpus: "0.75"` | Allows up to 75 percent of one CPU core. |
-| `mem_limit: 512m` | Limits PostgreSQL memory usage to 512 MB. |
+| `cpus: "1.0"` | Allows up to one full CPU core. |
+| `mem_limit: 1g` | Limits PostgreSQL memory usage to 1 GB. |
 | `launchboard-backend:` | Adds resource limits for backend. |
-| `mem_limit: 384m` | Keeps backend memory controlled on small servers. |
+| `mem_limit: 512m` | Keeps backend memory controlled on small servers. |
 | `launchboard-frontend:` | Adds resource limits for frontend. |
-| `mem_limit: 128m` | Nginx static frontend does not need much memory. |
+| `mem_limit: 256m` | Nginx static frontend does not need much memory. |
 
 Note:
 
@@ -962,7 +962,7 @@ These limits are lab-friendly. On a real production server, tune CPU and memory 
 Run:
 
 ```bash
-cd /opt/devops-launchboard/app-source/deployment/phase-4-docker-compose
+cd /opt/devops-launchboard/app-source/deployment/phase-04-docker-compose
 docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 ```
 
@@ -980,7 +980,7 @@ Command explanation:
 Run:
 
 ```bash
-cd /opt/devops-launchboard/app-source/deployment/phase-4-docker-compose
+cd /opt/devops-launchboard/app-source/deployment/phase-04-docker-compose
 docker compose -f docker-compose.yml -f docker-compose.prod.yml build
 ```
 
@@ -1003,7 +1003,7 @@ Command explanation:
 Run:
 
 ```bash
-cd /opt/devops-launchboard/app-source/deployment/phase-4-docker-compose
+cd /opt/devops-launchboard/app-source/deployment/phase-04-docker-compose
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
@@ -1069,7 +1069,7 @@ No CORS error appears in the browser console.
 Run:
 
 ```bash
-cd /opt/devops-launchboard/app-source/deployment/phase-4-docker-compose
+cd /opt/devops-launchboard/app-source/deployment/phase-04-docker-compose
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs launchboard-db
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs launchboard-migrate
@@ -1103,7 +1103,7 @@ Tool explanation:
 Stop the running app:
 
 ```bash
-cd /opt/devops-launchboard/app-source/deployment/phase-4-docker-compose
+cd /opt/devops-launchboard/app-source/deployment/phase-04-docker-compose
 docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 ```
 
@@ -1118,7 +1118,7 @@ git checkout PREVIOUS_COMMIT
 Rebuild and start:
 
 ```bash
-cd /opt/devops-launchboard/app-source/deployment/phase-4-docker-compose
+cd /opt/devops-launchboard/app-source/deployment/phase-04-docker-compose
 docker compose -f docker-compose.yml -f docker-compose.prod.yml build
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
@@ -1129,7 +1129,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 Stop and remove containers while keeping database data:
 
 ```bash
-cd /opt/devops-launchboard/app-source/deployment/phase-4-docker-compose
+cd /opt/devops-launchboard/app-source/deployment/phase-04-docker-compose
 docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 ```
 

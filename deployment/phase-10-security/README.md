@@ -433,7 +433,7 @@ COPY backend/app ./app
 COPY backend/alembic ./alembic
 
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir ".[dev]"
+    && pip install --no-cache-dir .
 
 FROM python:3.12-slim AS runtime
 
@@ -443,8 +443,12 @@ ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV APP_ENV=production
 
-RUN groupadd --system app \
-    && useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app
+RUN groupadd --system --gid 10001 app \
+    && useradd --system \
+       --uid 10001 \
+       --gid 10001 \
+       --home-dir /app \
+       --shell /usr/sbin/nologin app
 
 WORKDIR /app
 
@@ -463,7 +467,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 ```
 
-Note: `pip install ".[dev]"` installs the dev extras which include Alembic for the migration Job. See Phase 6 Scenario 1 Step 12 for the full line-by-line explanation.
+Note: Alembic is a base dependency (not a dev extra), so the plain `pip install .` is enough for the migration Job. `groupadd`/`useradd` pin an explicit `--uid 10001 --gid 10001` so the numeric UID is deterministic and matches the Kubernetes `securityContext` instead of relying on whatever UID the system auto-assigns. See Phase 6 Scenario 1 Step 12 for the full line-by-line explanation.
 
 ### Dockerfile.frontend
 
@@ -533,7 +537,7 @@ __pycache__
 .ruff_cache
 .env
 .env.*
-deployment/phase-4-docker-compose/.env
+deployment/phase-04-docker-compose/.env
 ```
 
 ## Step 7: Build, Scan, And Push Images

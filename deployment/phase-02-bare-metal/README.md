@@ -908,8 +908,8 @@ Create backend service:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-mkdir -p deployment/phase-2-bare-metal/systemd
-vim deployment/phase-2-bare-metal/systemd/launchboard-backend.service
+mkdir -p deployment/phase-02-bare-metal/systemd
+vim deployment/phase-02-bare-metal/systemd/launchboard-backend.service
 ```
 
 Paste:
@@ -968,7 +968,7 @@ Backend service explanation:
 Create frontend validation service:
 
 ```bash
-vim deployment/phase-2-bare-metal/systemd/launchboard-frontend.service
+vim deployment/phase-02-bare-metal/systemd/launchboard-frontend.service
 ```
 
 Paste:
@@ -1012,8 +1012,8 @@ Command explanation:
 Install services:
 
 ```bash
-sudo cp deployment/phase-2-bare-metal/systemd/launchboard-backend.service /etc/systemd/system/launchboard-backend.service
-sudo cp deployment/phase-2-bare-metal/systemd/launchboard-frontend.service /etc/systemd/system/launchboard-frontend.service
+sudo cp deployment/phase-02-bare-metal/systemd/launchboard-backend.service /etc/systemd/system/launchboard-backend.service
+sudo cp deployment/phase-02-bare-metal/systemd/launchboard-frontend.service /etc/systemd/system/launchboard-frontend.service
 sudo systemctl daemon-reload
 sudo systemctl enable launchboard-backend
 sudo systemctl enable launchboard-frontend
@@ -1047,8 +1047,8 @@ Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-mkdir -p deployment/phase-2-bare-metal/nginx
-vim deployment/phase-2-bare-metal/nginx/default.conf
+mkdir -p deployment/phase-02-bare-metal/nginx
+vim deployment/phase-02-bare-metal/nginx/default.conf
 ```
 
 Paste:
@@ -1122,7 +1122,7 @@ Nginx config explanation:
 Install config:
 
 ```bash
-sudo cp deployment/phase-2-bare-metal/nginx/default.conf /etc/nginx/sites-available/devops-launchboard
+sudo cp deployment/phase-02-bare-metal/nginx/default.conf /etc/nginx/sites-available/devops-launchboard
 sudo ln -sf /etc/nginx/sites-available/devops-launchboard /etc/nginx/sites-enabled/devops-launchboard
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
@@ -1582,7 +1582,7 @@ Before calling Phase 2 complete:
 ## Required Files Created In This Phase
 
 ```text
-deployment/phase-2-bare-metal/
+deployment/phase-02-bare-metal/
 +-- env/
 |   +-- backend.env.example
 |   +-- frontend.env.example

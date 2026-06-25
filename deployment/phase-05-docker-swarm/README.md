@@ -127,7 +127,7 @@ Why:
 ## Files Included In This Phase
 
 ```text
-deployment/phase-5-docker-swarm/
+deployment/phase-05-docker-swarm/
 ├── secrets/
 │   └── db_password.example
 ├── Dockerfile.backend
@@ -507,13 +507,13 @@ Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-mkdir -p deployment/phase-5-docker-swarm/secrets
+mkdir -p deployment/phase-05-docker-swarm/secrets
 ```
 
 Command explanation:
 
 - `cd /opt/devops-launchboard/app-source` moves to the project root.
-- `mkdir -p deployment/phase-5-docker-swarm/secrets` creates the Swarm phase folder and a secrets example folder.
+- `mkdir -p deployment/phase-05-docker-swarm/secrets` creates the Swarm phase folder and a secrets example folder.
 
 Why this folder exists:
 
@@ -545,8 +545,8 @@ __pycache__
 .ruff_cache
 .env
 .env.*
-deployment/phase-4-docker-compose/.env
-deployment/phase-5-docker-swarm/secrets/db_password
+deployment/phase-04-docker-compose/.env
+deployment/phase-05-docker-swarm/secrets/db_password
 ```
 
 Line explanation:
@@ -560,8 +560,8 @@ Line explanation:
 - `__pycache__`, `**/__pycache__`, and `*.pyc` ignore Python cache files.
 - `.pytest_cache` and `.ruff_cache` ignore test and lint caches.
 - `.env` and `.env.*` keep secret env files out of images.
-- `deployment/phase-4-docker-compose/.env` ignores the Phase 4 real env file.
-- `deployment/phase-5-docker-swarm/secrets/db_password` ignores any real Swarm secret file if a student creates one locally.
+- `deployment/phase-04-docker-compose/.env` ignores the Phase 4 real env file.
+- `deployment/phase-05-docker-swarm/secrets/db_password` ignores any real Swarm secret file if a student creates one locally.
 
 Why this file exists:
 
@@ -576,7 +576,7 @@ Reference:
 Run:
 
 ```bash
-vim deployment/phase-5-docker-swarm/Dockerfile.backend
+vim deployment/phase-05-docker-swarm/Dockerfile.backend
 ```
 
 Paste:
@@ -673,7 +673,7 @@ Reference:
 Run:
 
 ```bash
-vim deployment/phase-5-docker-swarm/Dockerfile.frontend
+vim deployment/phase-05-docker-swarm/Dockerfile.frontend
 ```
 
 Paste:
@@ -694,7 +694,7 @@ RUN npm run build
 
 FROM nginx:1.27-alpine AS runtime
 
-COPY deployment/phase-5-docker-swarm/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deployment/phase-05-docker-swarm/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
@@ -736,7 +736,7 @@ Reference:
 Run:
 
 ```bash
-vim deployment/phase-5-docker-swarm/nginx-frontend.conf
+vim deployment/phase-05-docker-swarm/nginx-frontend.conf
 ```
 
 Paste:
@@ -825,7 +825,7 @@ Reference:
 Run:
 
 ```bash
-vim deployment/phase-5-docker-swarm/secrets/db_password.example
+vim deployment/phase-05-docker-swarm/secrets/db_password.example
 ```
 
 Paste:
@@ -847,7 +847,7 @@ The real password should be created directly as a Docker secret in Step 16.
 Run:
 
 ```bash
-vim deployment/phase-5-docker-swarm/stack.yml
+vim deployment/phase-05-docker-swarm/stack.yml
 ```
 
 Paste:
@@ -1302,15 +1302,15 @@ Run from the project root:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-docker build -f deployment/phase-5-docker-swarm/Dockerfile.backend -t launchboard-backend:phase-5 .
-docker build -f deployment/phase-5-docker-swarm/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-5 .
+docker build -f deployment/phase-05-docker-swarm/Dockerfile.backend -t launchboard-backend:phase-5 .
+docker build -f deployment/phase-05-docker-swarm/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-5 .
 ```
 
 Command explanation:
 
 - `cd /opt/devops-launchboard/app-source` moves to the project root.
 - `docker build` builds a Docker image.
-- `-f deployment/phase-5-docker-swarm/Dockerfile.backend` tells Docker which backend Dockerfile to use.
+- `-f deployment/phase-05-docker-swarm/Dockerfile.backend` tells Docker which backend Dockerfile to use.
 - `-t launchboard-backend:phase-5` names and tags the backend image locally.
 - `.` sends the current project root as the build context.
 - The frontend build command uses `Dockerfile.frontend`.
@@ -1361,7 +1361,7 @@ Replace `DOCKERHUB_USERNAME` with your real Docker Hub username.
 Edit the stack file:
 
 ```bash
-cd /opt/devops-launchboard/app-source/deployment/phase-5-docker-swarm
+cd /opt/devops-launchboard/app-source/deployment/phase-05-docker-swarm
 vim stack.yml
 ```
 
@@ -1513,7 +1513,7 @@ Reference:
 Run:
 
 ```bash
-cd /opt/devops-launchboard/app-source/deployment/phase-5-docker-swarm
+cd /opt/devops-launchboard/app-source/deployment/phase-05-docker-swarm
 docker stack config -c stack.yml
 ```
 
@@ -1542,7 +1542,7 @@ launchboard-frontend:phase-5
 Run:
 
 ```bash
-cd /opt/devops-launchboard/app-source/deployment/phase-5-docker-swarm
+cd /opt/devops-launchboard/app-source/deployment/phase-05-docker-swarm
 docker stack deploy --resolve-image never -c stack.yml devops-launchboard
 ```
 
@@ -1569,14 +1569,14 @@ DOCKERHUB_USERNAME/launchboard-frontend-swarm:v1
 For public images, run:
 
 ```bash
-cd /opt/devops-launchboard/app-source/deployment/phase-5-docker-swarm
+cd /opt/devops-launchboard/app-source/deployment/phase-05-docker-swarm
 docker stack deploy -c stack.yml devops-launchboard
 ```
 
 For private images, run:
 
 ```bash
-cd /opt/devops-launchboard/app-source/deployment/phase-5-docker-swarm
+cd /opt/devops-launchboard/app-source/deployment/phase-05-docker-swarm
 docker stack deploy --with-registry-auth -c stack.yml devops-launchboard
 ```
 
@@ -1672,7 +1672,7 @@ Build a new backend image tag:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-docker build -f deployment/phase-5-docker-swarm/Dockerfile.backend -t launchboard-backend:phase-5-v2 .
+docker build -f deployment/phase-05-docker-swarm/Dockerfile.backend -t launchboard-backend:phase-5-v2 .
 ```
 
 Update the service:
@@ -1830,8 +1830,8 @@ Fix:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-docker build -f deployment/phase-5-docker-swarm/Dockerfile.backend -t launchboard-backend:phase-5 .
-docker build -f deployment/phase-5-docker-swarm/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-5 .
+docker build -f deployment/phase-05-docker-swarm/Dockerfile.backend -t launchboard-backend:phase-5 .
+docker build -f deployment/phase-05-docker-swarm/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-5 .
 ```
 
 ### Problem 4: Migration Service Fails
@@ -1943,9 +1943,9 @@ Deploy a previous Git version:
 cd /opt/devops-launchboard/app-source
 git log --oneline -5
 git checkout PREVIOUS_COMMIT
-docker build -f deployment/phase-5-docker-swarm/Dockerfile.backend -t launchboard-backend:phase-5 .
-docker build -f deployment/phase-5-docker-swarm/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-5 .
-cd deployment/phase-5-docker-swarm
+docker build -f deployment/phase-05-docker-swarm/Dockerfile.backend -t launchboard-backend:phase-5 .
+docker build -f deployment/phase-05-docker-swarm/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-5 .
+cd deployment/phase-05-docker-swarm
 docker stack deploy --resolve-image never -c stack.yml devops-launchboard
 ```
 

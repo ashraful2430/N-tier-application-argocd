@@ -36,8 +36,8 @@ pipeline {
 
     stage('Build Images') {
       steps {
-        sh 'docker build -f deployment/phase-7-cicd/Dockerfile.backend -t launchboard-backend:phase-7 .'
-        sh 'docker build -f deployment/phase-7-cicd/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-7 .'
+        sh 'docker build -f deployment/phase-07-cicd-self-hosted/Dockerfile.backend -t launchboard-backend:phase-7 .'
+        sh 'docker build -f deployment/phase-07-cicd-self-hosted/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-7 .'
       }
     }
 
@@ -45,7 +45,7 @@ pipeline {
       steps {
         sh 'kind load docker-image launchboard-backend:phase-7 --name "$KIND_CLUSTER_NAME"'
         sh 'kind load docker-image launchboard-frontend:phase-7 --name "$KIND_CLUSTER_NAME"'
-        sh 'kubectl apply -f deployment/phase-7-cicd/k8s/namespace.yaml'
+        sh 'kubectl apply -f deployment/phase-07-cicd-self-hosted/k8s/namespace.yaml'
         sh '''
           kubectl create configmap launchboard-config \
             --namespace "$NAMESPACE" \
@@ -65,7 +65,7 @@ pipeline {
             --dry-run=client -o yaml | kubectl apply -f -
         '''
         sh 'kubectl -n "$NAMESPACE" delete job launchboard-migrate --ignore-not-found'
-        sh 'kubectl apply -k deployment/phase-7-cicd/k8s'
+        sh 'kubectl apply -k deployment/phase-07-cicd-self-hosted/k8s'
         sh 'kubectl -n "$NAMESPACE" rollout status deployment/launchboard-db --timeout=180s'
         sh 'kubectl -n "$NAMESPACE" wait --for=condition=complete job/launchboard-migrate --timeout=180s'
         sh 'kubectl -n "$NAMESPACE" rollout status deployment/launchboard-backend --timeout=180s'

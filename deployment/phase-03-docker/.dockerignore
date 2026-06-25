@@ -12,4 +12,4 @@ __pycache__
 .ruff_cache
 .env
 .env.*
-deployment/phase-4-docker-compose/volumes
+deployment/phase-04-docker-compose/.env

@@ -19,15 +19,15 @@ Start with `phase-0-setup`, then move phase by phase. Each phase has its own REA
 | Phase | Topic | Main Learning Outcome |
 | --- | --- | --- |
 | `phase-0-setup` | Workstation and cloud prep | Install tools, set naming rules, understand cost risk |
-| `phase-1-local-baseline` | Local app baseline | Prove frontend, backend, and PostgreSQL work before cloud deployment |
-| `phase-2-bare-metal` | EC2 without containers | Run app directly with Linux services and Nginx |
-| `phase-3-docker` | Container images | Build secure, small, non-root images |
-| `phase-4-docker-compose` | Single-host stack | Run DB, migrations, API, and UI together |
-| `phase-5-docker-swarm` | Swarm orchestration | Deploy replicated services with secrets and rollback |
-| `phase-6-kubernetes-local` | Local Kubernetes | Learn Deployments, Services, Ingress, PVC, HPA |
-| `phase-7-cicd` | Automation | Test, scan, build, push, deploy, and rollback |
-| `phase-8-eks` | AWS Kubernetes | Provision EKS with eksctl and deploy app |
-| `phase-9-observability` | Monitoring and logs | Add metrics, alerts, dashboards, logs, and traces |
+| `phase-01-local-baseline` | Local app baseline | Prove frontend, backend, and PostgreSQL work before cloud deployment |
+| `phase-02-bare-metal` | EC2 without containers | Run app directly with Linux services and Nginx |
+| `phase-03-docker` | Container images | Build secure, small, non-root images |
+| `phase-04-docker-compose` | Single-host stack | Run DB, migrations, API, and UI together |
+| `phase-05-docker-swarm` | Swarm orchestration | Deploy replicated services with secrets and rollback |
+| `phase-06-kubernetes-local` | Local Kubernetes | Learn Deployments, Services, Ingress, PVC, HPA |
+| `phase-07-cicd-self-hosted` | Automation | Test, scan, build, push, deploy, and rollback |
+| `phase-08-eks` | AWS Kubernetes | Provision EKS with eksctl and deploy app |
+| `phase-09-observability` | Monitoring and logs | Add metrics, alerts, dashboards, logs, and traces |
 | `phase-10-security` | Hardening | Apply RBAC, NetworkPolicy, Vault, SAST, image scanning |
 | `phase-11-advanced-deployments` | Safer releases | Practice blue-green, canary, and feature flags |
 | `phase-12-disaster-recovery` | Recovery | Back up, restore, test failover, and run incident playbooks |
@@ -62,7 +62,7 @@ The files in this directory follow that order using Compose health checks, Kuber
 ## Quick Start For A Local Demo
 
 ```bash
-cd deployment/phase-4-docker-compose
+cd deployment/phase-04-docker-compose
 cp .env.example .env
 vim .env
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build

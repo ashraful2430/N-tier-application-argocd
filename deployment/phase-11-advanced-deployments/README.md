@@ -452,8 +452,12 @@ ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV APP_ENV=production
 
-RUN groupadd --system app \
-    && useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app
+RUN groupadd --system --gid 10001 app \
+    && useradd --system \
+       --uid 10001 \
+       --gid 10001 \
+       --home-dir /app \
+       --shell /usr/sbin/nologin app
 
 WORKDIR /app
 
@@ -466,10 +470,13 @@ USER app
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()" || exit 1
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 ```
+
+`groupadd`/`useradd` pin an explicit `--uid 10001 --gid 10001` so the numeric UID is deterministic and matches the Kubernetes `securityContext`, instead of relying on whatever UID the system auto-assigns to a name-only `USER app`.
 
 Create:
 
@@ -493,24 +500,20 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM nginx:1.27-alpine AS runtime
-
-RUN addgroup -S app \
-    && adduser -S app -G app \
-    && mkdir -p /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp /var/cache/nginx/fastcgi_temp /var/cache/nginx/uwsgi_temp /var/cache/nginx/scgi_temp /var/run /tmp/nginx \
-    && chown -R app:app /usr/share/nginx/html /var/cache/nginx /var/run /tmp/nginx
+FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
 COPY deployment/phase-11-advanced-deployments/nginx-frontend.conf /etc/nginx/conf.d/default.conf
-COPY --from=builder /app/dist /usr/share/nginx/html
-
-USER app
+COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]
 ```
+
+This uses the `nginxinc/nginx-unprivileged` image (UID 101), consistent with the other phases, instead of a plain `nginx:alpine` image with a manually created user.
 
 Create:
 

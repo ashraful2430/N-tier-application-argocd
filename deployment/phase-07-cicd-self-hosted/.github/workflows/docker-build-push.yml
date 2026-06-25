@@ -19,9 +19,9 @@ jobs:
       matrix:
         include:
           - component: backend
-            dockerfile: deployment/phase-7-cicd/Dockerfile.backend
+            dockerfile: deployment/phase-07-cicd-self-hosted/Dockerfile.backend
           - component: frontend
-            dockerfile: deployment/phase-7-cicd/Dockerfile.frontend
+            dockerfile: deployment/phase-07-cicd-self-hosted/Dockerfile.frontend
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

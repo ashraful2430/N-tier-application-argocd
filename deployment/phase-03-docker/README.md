@@ -169,7 +169,7 @@ Why:
 ## Files Created In This Phase
 
 ```text
-deployment/phase-3-docker/
+deployment/phase-03-docker/
 +-- env/
 |   +-- backend.docker.env.example
 |   +-- frontend.build.env.example
@@ -192,7 +192,7 @@ That means this file must exist here:
 /opt/devops-launchboard/app-source/.dockerignore
 ```
 
-If `.dockerignore` is created only inside `deployment/phase-3-docker/`, Docker will not use it for the build context.
+If `.dockerignore` is created only inside `deployment/phase-03-docker/`, Docker will not use it for the build context.
 
 ## Deployment Plan
 
@@ -549,7 +549,7 @@ main
 
 Why this step exists:
 
-The Dockerfiles use the repository root as the build context. Docker needs access to `backend`, `frontend`, and `deployment/phase-3-docker` during image builds.
+The Dockerfiles use the repository root as the build context. Docker needs access to `backend`, `frontend`, and `deployment/phase-03-docker` during image builds.
 
 Reference:
 
@@ -561,13 +561,13 @@ Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-mkdir -p deployment/phase-3-docker/env
+mkdir -p deployment/phase-03-docker/env
 ```
 
 Command explanation:
 
 - `cd /opt/devops-launchboard/app-source` moves to the repository root. This is important because Docker build commands later use this folder as the build context.
-- `mkdir -p deployment/phase-3-docker/env` creates the folder for Docker phase files and env examples.
+- `mkdir -p deployment/phase-03-docker/env` creates the folder for Docker phase files and env examples.
 
 Why this folder exists:
 
@@ -599,15 +599,14 @@ __pycache__
 .ruff_cache
 .env
 .env.*
-deployment/phase-3-docker/env/*.env
-deployment/phase-4-docker-compose/volumes
+deployment/phase-04-docker-compose/.env
 ```
 
 Command explanation:
 
 - `.dockerignore` tells Docker which files to exclude from the build context.
 - This file must be in the repository root because the build command uses `.` as the build context.
-- If this file is placed only in `deployment/phase-3-docker/`, Docker will ignore it.
+- If this file is placed only in `deployment/phase-03-docker/`, Docker will ignore it.
 
 Pattern explanation:
 
@@ -617,9 +616,7 @@ Pattern explanation:
 - `frontend/dist` is generated during the frontend Docker build.
 - `node_modules` excludes any accidental root-level Node dependency folder.
 - `__pycache__`, `*.pyc`, `.pytest_cache`, and `.ruff_cache` are Python cache and tool cache folders.
-- `.env` and `.env.*` prevent common env files from entering the build context.
-- `deployment/phase-3-docker/env/*.env` prevents the real Docker env file from entering the build context.
-- `deployment/phase-4-docker-compose/volumes` excludes later local volume data if it exists.
+- `.env` and `.env.*` already cover most env files entering the build context; `deployment/phase-04-docker-compose/.env` additionally excludes that later phase's compose env file by name.
 
 Verify:
 
@@ -640,7 +637,7 @@ Reference:
 Run:
 
 ```bash
-vim deployment/phase-3-docker/Dockerfile.backend
+vim deployment/phase-03-docker/Dockerfile.backend
 ```
 
 Paste:
@@ -662,7 +659,7 @@ COPY backend/app ./app
 COPY backend/alembic ./alembic
 
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir ".[dev]"
+    && pip install --no-cache-dir .
 
 FROM python:3.12-slim AS runtime
 
@@ -704,7 +701,7 @@ Dockerfile explanation:
 - `COPY backend/app ./app` copies FastAPI app code.
 - `COPY backend/alembic ./alembic` copies Alembic migration files.
 - `pip install --no-cache-dir --upgrade pip` upgrades pip without keeping cache files.
-- `pip install --no-cache-dir ".[dev]"` installs the backend package and dev extras. This is needed here because this phase runs `alembic upgrade head` from the backend image, and Alembic is often stored in dev dependencies.
+- `pip install --no-cache-dir .` installs the backend package. Alembic is a base dependency (not a dev extra), so this is enough for this phase's `alembic upgrade head` step.
 - `FROM python:3.12-slim AS runtime` starts a cleaner runtime image.
 - `groupadd` and `useradd` create a non-root user named `app`.
 - `COPY --from=builder /opt/venv /opt/venv` copies installed Python dependencies from the builder stage.
@@ -730,7 +727,7 @@ Reference:
 Run:
 
 ```bash
-vim deployment/phase-3-docker/Dockerfile.frontend
+vim deployment/phase-03-docker/Dockerfile.frontend
 ```
 
 Paste:
@@ -752,7 +749,7 @@ RUN npm run build
 FROM nginx:1.27-alpine AS runtime
 
 
-COPY deployment/phase-3-docker/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deployment/phase-03-docker/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
@@ -773,7 +770,7 @@ Dockerfile explanation:
 - `COPY frontend/ ./` copies the frontend source code.
 - `RUN npm run build` creates the production build in `dist`.
 - `FROM nginx:1.27-alpine AS runtime` starts a small Nginx runtime image.
-- `COPY deployment/phase-3-docker/nginx-frontend.conf ...` replaces Nginx's default site config.
+- `COPY deployment/phase-03-docker/nginx-frontend.conf ...` replaces Nginx's default site config.
 - `COPY --from=builder /app/dist /usr/share/nginx/html` copies built frontend files into Nginx's web root.
 - `EXPOSE 8080` documents the internal container port. It does not publish the port by itself. The `docker run -p 80:8080` command publishes it later.
 - `HEALTHCHECK` checks the frontend Nginx health endpoint.
@@ -793,7 +790,7 @@ Reference:
 Run:
 
 ```bash
-vim deployment/phase-3-docker/nginx-frontend.conf
+vim deployment/phase-03-docker/nginx-frontend.conf
 ```
 
 Paste:
@@ -887,7 +884,7 @@ Reference:
 Run:
 
 ```bash
-vim deployment/phase-3-docker/env/backend.docker.env.example
+vim deployment/phase-03-docker/env/backend.docker.env.example
 ```
 
 Paste:
@@ -921,7 +918,7 @@ For student labs, use a simple strong password with letters and numbers first. S
 Run:
 
 ```bash
-vim deployment/phase-3-docker/env/frontend.build.env.example
+vim deployment/phase-03-docker/env/frontend.build.env.example
 ```
 
 Paste:
@@ -950,8 +947,8 @@ Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-cp deployment/phase-3-docker/env/backend.docker.env.example deployment/phase-3-docker/env/backend.docker.env
-vim deployment/phase-3-docker/env/backend.docker.env
+cp deployment/phase-03-docker/env/backend.docker.env.example deployment/phase-03-docker/env/backend.docker.env
+vim deployment/phase-03-docker/env/backend.docker.env
 ```
 
 Replace:
@@ -980,7 +977,7 @@ Command explanation:
 Verify:
 
 ```bash
-cat deployment/phase-3-docker/env/backend.docker.env
+cat deployment/phase-03-docker/env/backend.docker.env
 ```
 
 Why this step exists:
@@ -993,15 +990,15 @@ Run from the repository root:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-docker build -f deployment/phase-3-docker/Dockerfile.backend -t launchboard-backend:phase-3 .
-docker build -f deployment/phase-3-docker/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-3 .
+docker build -f deployment/phase-03-docker/Dockerfile.backend -t launchboard-backend:phase-3 .
+docker build -f deployment/phase-03-docker/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-3 .
 ```
 
 Command explanation:
 
 - `cd /opt/devops-launchboard/app-source` moves to the repository root.
 - `docker build` builds a Docker image.
-- `-f deployment/phase-3-docker/Dockerfile.backend` tells Docker which Dockerfile to use.
+- `-f deployment/phase-03-docker/Dockerfile.backend` tells Docker which Dockerfile to use.
 - `-t launchboard-backend:phase-3` names and tags the backend image.
 - The final `.` means the current folder is the Docker build context.
 - `--build-arg VITE_API_URL=` passes an empty frontend API base URL, so the frontend uses relative API paths.
@@ -1028,10 +1025,10 @@ Common issue:
 If the backend build fails with an Alembic or dependency error, check this line in `Dockerfile.backend`:
 
 ```dockerfile
-pip install --no-cache-dir ".[dev]"
+pip install --no-cache-dir .
 ```
 
-This phase needs Alembic available inside the backend image because migrations run from the backend image.
+This phase needs Alembic available inside the backend image because migrations run from the backend image. Alembic is a base dependency, so the plain `.` install already includes it.
 
 Reference:
 
@@ -1132,7 +1129,7 @@ phase-3
 
 Important:
 
-Do not put secrets inside Docker images. In this phase, the backend password stays in `deployment/phase-3-docker/env/backend.docker.env` and gets passed at container runtime using `--env-file`. That is the correct pattern for this lab.
+Do not put secrets inside Docker images. In this phase, the backend password stays in `deployment/phase-03-docker/env/backend.docker.env` and gets passed at container runtime using `--env-file`. That is the correct pattern for this lab.
 
 If you open a new SSH terminal later, run this again before commands that use `$DOCKERHUB_USERNAME`:
 
@@ -1190,7 +1187,7 @@ Set one password variable first:
 DB_PASSWORD='CHANGE_ME_STRONG_PASSWORD'
 ```
 
-Replace `CHANGE_ME_STRONG_PASSWORD` with the same password used in `deployment/phase-3-docker/env/backend.docker.env`.
+Replace `CHANGE_ME_STRONG_PASSWORD` with the same password used in `deployment/phase-03-docker/env/backend.docker.env`.
 
 Example:
 
@@ -1269,7 +1266,7 @@ Run:
 cd /opt/devops-launchboard/app-source
 docker run --rm \
   --network launchboard-net \
-  --env-file deployment/phase-3-docker/env/backend.docker.env \
+  --env-file deployment/phase-03-docker/env/backend.docker.env \
   "$DOCKERHUB_USERNAME/launchboard-backend:phase-3" \
   alembic upgrade head
 ```
@@ -1323,7 +1320,7 @@ cd /opt/devops-launchboard/app-source
 docker run -d \
   --name launchboard-backend \
   --network launchboard-net \
-  --env-file deployment/phase-3-docker/env/backend.docker.env \
+  --env-file deployment/phase-03-docker/env/backend.docker.env \
   --restart unless-stopped \
   "$DOCKERHUB_USERNAME/launchboard-backend:phase-3"
 ```
@@ -1670,12 +1667,12 @@ Docker only uses `.dockerignore` from the build context root. This phase uses `.
 Check `Dockerfile.backend`:
 
 ```dockerfile
-pip install --no-cache-dir ".[dev]"
+pip install --no-cache-dir .
 ```
 
 Why this happens:
 
-Alembic may be listed under dev dependencies in the Python project. This phase runs migrations from the backend image, so Alembic must exist inside that image.
+Alembic is a base dependency in the Python project, so the plain `.` install already includes it. This phase runs migrations from the backend image, so Alembic must exist inside that image. If this line is missing or the package install fails for another reason, the migration command won't find Alembic.
 
 ### Problem 5: Migration fails because database is not ready
 
@@ -1700,7 +1697,7 @@ done
 Check env file:
 
 ```bash
-cat deployment/phase-3-docker/env/backend.docker.env
+cat deployment/phase-03-docker/env/backend.docker.env
 ```
 
 Expected host inside `DATABASE_URL`:
@@ -1835,8 +1832,8 @@ Run:
 cd /opt/devops-launchboard/app-source
 git pull origin main
 
-docker build -f deployment/phase-3-docker/Dockerfile.backend -t launchboard-backend:phase-3 .
-docker build -f deployment/phase-3-docker/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-3 .
+docker build -f deployment/phase-03-docker/Dockerfile.backend -t launchboard-backend:phase-3 .
+docker build -f deployment/phase-03-docker/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-3 .
 
 export DOCKERHUB_USERNAME=<dockerhub-username>
 docker tag launchboard-backend:phase-3 "$DOCKERHUB_USERNAME/launchboard-backend:phase-3"
@@ -1846,7 +1843,7 @@ docker push "$DOCKERHUB_USERNAME/launchboard-frontend:phase-3"
 
 docker run --rm \
   --network launchboard-net \
-  --env-file deployment/phase-3-docker/env/backend.docker.env \
+  --env-file deployment/phase-03-docker/env/backend.docker.env \
   "$DOCKERHUB_USERNAME/launchboard-backend:phase-3" \
   alembic upgrade head
 
@@ -1855,7 +1852,7 @@ docker rm -f launchboard-backend launchboard-frontend
 docker run -d \
   --name launchboard-backend \
   --network launchboard-net \
-  --env-file deployment/phase-3-docker/env/backend.docker.env \
+  --env-file deployment/phase-03-docker/env/backend.docker.env \
   --restart unless-stopped \
   "$DOCKERHUB_USERNAME/launchboard-backend:phase-3"
 
@@ -1892,8 +1889,8 @@ git checkout PREVIOUS_COMMIT
 Rebuild images:
 
 ```bash
-docker build -f deployment/phase-3-docker/Dockerfile.backend -t launchboard-backend:phase-3 .
-docker build -f deployment/phase-3-docker/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-3 .
+docker build -f deployment/phase-03-docker/Dockerfile.backend -t launchboard-backend:phase-3 .
+docker build -f deployment/phase-03-docker/Dockerfile.frontend --build-arg VITE_API_URL= -t launchboard-frontend:phase-3 .
 ```
 
 Run migrations:
@@ -1901,7 +1898,7 @@ Run migrations:
 ```bash
 docker run --rm \
   --network launchboard-net \
-  --env-file deployment/phase-3-docker/env/backend.docker.env \
+  --env-file deployment/phase-03-docker/env/backend.docker.env \
   "$DOCKERHUB_USERNAME/launchboard-backend:phase-3" \
   alembic upgrade head
 ```
@@ -1912,7 +1909,7 @@ Run containers again:
 docker run -d \
   --name launchboard-backend \
   --network launchboard-net \
-  --env-file deployment/phase-3-docker/env/backend.docker.env \
+  --env-file deployment/phase-03-docker/env/backend.docker.env \
   --restart unless-stopped \
   "$DOCKERHUB_USERNAME/launchboard-backend:phase-3"
 
@@ -2045,7 +2042,7 @@ Before calling Phase 3 complete:
 ```text
 /opt/devops-launchboard/app-source/.dockerignore
 
-/opt/devops-launchboard/app-source/deployment/phase-3-docker/
+/opt/devops-launchboard/app-source/deployment/phase-03-docker/
 +-- env/
 |   +-- backend.docker.env.example
 |   +-- backend.docker.env

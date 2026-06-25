@@ -109,7 +109,7 @@ The backend, database, and Kubernetes API should not be public.
 ## Files Included In This Phase
 
 ```text
-deployment/phase-7-cicd/
+deployment/phase-07-cicd-self-hosted/
 +-- .github/
 |   +-- workflows/
 |       +-- build-and-test.yml          (teaching copy: CI checks)
@@ -139,7 +139,7 @@ deployment/phase-7-cicd/
 +-- README.md
 ```
 
-Important: GitHub Actions only reads workflows from the root `.github/workflows/` folder of the repository. The copies inside `deployment/phase-7-cicd/.github/workflows/` are teaching copies so each phase folder is self-contained. You will create each workflow once and copy it to both locations.
+Important: GitHub Actions only reads workflows from the root `.github/workflows/` folder of the repository. The copies inside `deployment/phase-07-cicd-self-hosted/.github/workflows/` are teaching copies so each phase folder is self-contained. You will create each workflow once and copy it to both locations.
 
 ## Step 1: Create EC2 Server
 
@@ -371,8 +371,8 @@ Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-mkdir -p deployment/phase-7-cicd/.github/workflows
-mkdir -p deployment/phase-7-cicd/k8s
+mkdir -p deployment/phase-07-cicd-self-hosted/.github/workflows
+mkdir -p deployment/phase-07-cicd-self-hosted/k8s
 mkdir -p .github/workflows
 ```
 
@@ -484,7 +484,7 @@ __pycache__
 .ruff_cache
 .env
 .env.*
-deployment/phase-4-docker-compose/.env
+deployment/phase-04-docker-compose/.env
 ```
 
 Why this file exists:
@@ -493,12 +493,12 @@ Docker should not copy secrets, local virtual environments, dependency folders, 
 
 ## Step 12: Create Kind Config, Dockerfiles, And Nginx Config
 
-The original guide referenced these files without showing their content. Here is every file in full. They mirror the Phase 6 files with three differences: the Kind cluster is named `launchboard-cicd`, the Dockerfile paths point to `deployment/phase-7-cicd/`, and the image tags are set by the CI pipeline using the Git commit SHA.
+The original guide referenced these files without showing their content. Here is every file in full. They mirror the Phase 6 files with three differences: the Kind cluster is named `launchboard-cicd`, the Dockerfile paths point to `deployment/phase-07-cicd-self-hosted/`, and the image tags are set by the CI pipeline using the Git commit SHA.
 
 ### kind-config.yaml
 
 ```bash
-vim deployment/phase-7-cicd/kind-config.yaml
+vim deployment/phase-07-cicd-self-hosted/kind-config.yaml
 ```
 
 Paste:
@@ -541,7 +541,7 @@ Reference:
 ### Dockerfile.backend
 
 ```bash
-vim deployment/phase-7-cicd/Dockerfile.backend
+vim deployment/phase-07-cicd-self-hosted/Dockerfile.backend
 ```
 
 Paste:
@@ -604,7 +604,7 @@ Line explanation:
 - `ENV PYTHONUNBUFFERED=1` forces Python to write output directly to stdout so logs appear in real time in `kubectl logs` and in GitHub Actions logs.
 - `ENV VIRTUAL_ENV=/opt/venv` and `ENV PATH="/opt/venv/bin:${PATH}"` create and prioritize a virtual environment at a known path so it can be copied between stages and so `python`, `uvicorn`, and `alembic` resolve to the venv versions.
 - `COPY backend/pyproject.toml backend/alembic.ini ./` copies dependency definitions before source code. This is a Docker layer-caching trick that matters in CI: if dependencies have not changed between commits, the pipeline reuses the cached install layer and the build finishes much faster.
-- `RUN pip install --no-cache-dir ".[dev]"` installs the app with the dev extras group, which includes Alembic for migrations. `--no-cache-dir` keeps the layer small.
+- `RUN pip install --no-cache-dir ".[dev]"` installs the app together with the dev extras group (`ruff`, `pytest`, `pytest-asyncio`, `httpx`). Alembic itself is a base dependency, not a dev extra, so it would be installed either way; the dev extras are along for the ride here. `--no-cache-dir` keeps the layer small.
 - `FROM python:3.12-slim AS runtime` starts a fresh final stage containing only what is explicitly copied: the venv and the app code. No pip cache, no build leftovers.
 - `groupadd --system app` and `useradd --system ... app` create a non-login service user so the container does not run as root.
 - `HEALTHCHECK` polls `/health` so Docker itself can report container health.
@@ -618,7 +618,7 @@ Reference:
 ### Dockerfile.frontend
 
 ```bash
-vim deployment/phase-7-cicd/Dockerfile.frontend
+vim deployment/phase-07-cicd-self-hosted/Dockerfile.frontend
 ```
 
 Paste:
@@ -639,7 +639,7 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
-COPY deployment/phase-7-cicd/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deployment/phase-07-cicd-self-hosted/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
@@ -657,7 +657,7 @@ Line explanation:
 - `COPY frontend/package*.json ./` followed by `RUN npm ci` is the same layer-caching pattern as the backend: unchanged lockfile means a cached, instant dependency install on the next CI run. `npm ci` installs exact versions from `package-lock.json` for reproducible builds.
 - `RUN npm run build` produces static files in `/app/dist`.
 - `FROM nginxinc/nginx-unprivileged:1.27-alpine` is the official Nginx image designed to run as a non-root user on port 8080.
-- `COPY deployment/phase-7-cicd/nginx-frontend.conf ...` installs the custom config from the Phase 7 folder. This is the one line that differs from Phase 6, which copied from the phase-6 folder.
+- `COPY deployment/phase-07-cicd-self-hosted/nginx-frontend.conf ...` installs the custom config from the Phase 7 folder. This is the one line that differs from Phase 6, which copied from the phase-6 folder.
 - `COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html` copies the compiled app into the web root, owned by UID/GID 101, the nginx user in the unprivileged image.
 - `CMD ["nginx", "-g", "daemon off;"]` keeps Nginx in the foreground so the container stays alive.
 
@@ -669,7 +669,7 @@ Reference:
 ### nginx-frontend.conf
 
 ```bash
-vim deployment/phase-7-cicd/nginx-frontend.conf
+vim deployment/phase-07-cicd-self-hosted/nginx-frontend.conf
 ```
 
 Paste:
@@ -747,7 +747,7 @@ cd /opt/devops-launchboard/app-source
 ### namespace.yaml
 
 ```bash
-vim deployment/phase-7-cicd/k8s/namespace.yaml
+vim deployment/phase-07-cicd-self-hosted/k8s/namespace.yaml
 ```
 
 Paste:
@@ -769,7 +769,7 @@ Line explanation:
 ### configmap.yaml
 
 ```bash
-vim deployment/phase-7-cicd/k8s/configmap.yaml
+vim deployment/phase-07-cicd-self-hosted/k8s/configmap.yaml
 ```
 
 Paste:
@@ -801,7 +801,7 @@ Reference:
 ### secret.example.yaml
 
 ```bash
-vim deployment/phase-7-cicd/k8s/secret.example.yaml
+vim deployment/phase-07-cicd-self-hosted/k8s/secret.example.yaml
 ```
 
 Paste:
@@ -827,7 +827,7 @@ Reference:
 ### pvc.yaml
 
 ```bash
-vim deployment/phase-7-cicd/k8s/pvc.yaml
+vim deployment/phase-07-cicd-self-hosted/k8s/pvc.yaml
 ```
 
 Paste:
@@ -858,7 +858,7 @@ Reference:
 ### launchboard-postgres-deployment.yaml
 
 ```bash
-vim deployment/phase-7-cicd/k8s/launchboard-postgres-deployment.yaml
+vim deployment/phase-07-cicd-self-hosted/k8s/launchboard-postgres-deployment.yaml
 ```
 
 Paste:
@@ -957,7 +957,7 @@ Reference:
 ### launchboard-postgres-service.yaml
 
 ```bash
-vim deployment/phase-7-cicd/k8s/launchboard-postgres-service.yaml
+vim deployment/phase-07-cicd-self-hosted/k8s/launchboard-postgres-service.yaml
 ```
 
 Paste:
@@ -989,7 +989,7 @@ Reference:
 ### launchboard-migration-job.yaml
 
 ```bash
-vim deployment/phase-7-cicd/k8s/launchboard-migration-job.yaml
+vim deployment/phase-07-cicd-self-hosted/k8s/launchboard-migration-job.yaml
 ```
 
 Paste:
@@ -1049,7 +1049,7 @@ Reference:
 ### launchboard-backend-deployment.yaml
 
 ```bash
-vim deployment/phase-7-cicd/k8s/launchboard-backend-deployment.yaml
+vim deployment/phase-07-cicd-self-hosted/k8s/launchboard-backend-deployment.yaml
 ```
 
 Paste:
@@ -1128,7 +1128,7 @@ spec:
 Line explanation:
 
 - `image: launchboard-backend:IMAGE_TAG_PLACEHOLDER` is the rollback mechanism in disguise. Every deployment substitutes a unique commit SHA, so each deployment produces a new ReplicaSet referencing a specific image version. `kubectl rollout undo` then has a real previous version to go back to. If the tag never changed, rollback would point to the same image bytes and do nothing.
-- `runAsUser: 999` and `runAsGroup: 999` are required because the Dockerfile uses `USER app`, a name, and the kubelet can only verify numeric UIDs against `runAsNonRoot: true`. Without them the Pods fail with `CreateContainerConfigError` (`image has non-numeric user (app), cannot verify user is non-root`). UID 999 is what `useradd --system` assigned to the `app` user during the image build; confirm with `docker run --rm launchboard-backend:TAG id -u`.
+- `runAsUser: 10001` and `runAsGroup: 10001` are required because the Dockerfile uses `USER app`, a name, and the kubelet can only verify numeric UIDs against `runAsNonRoot: true`. Without them the Pods fail with `CreateContainerConfigError` (`image has non-numeric user (app), cannot verify user is non-root`). UID 10001 is pinned explicitly in the Dockerfile's `groupadd --gid 10001` / `useradd --uid 10001` instead of relying on whatever UID the system would otherwise auto-assign; confirm with `docker run --rm launchboard-backend:TAG id -u`.
 - `maxUnavailable: 0` keeps full capacity during the rolling update; `maxSurge: 1` allows one extra Pod temporarily.
 - `exec uvicorn ...` replaces the shell with Uvicorn so it receives termination signals directly, which makes graceful rollouts work.
 - Resources are sized down slightly from Phase 6 to fit a single t3.small.
@@ -1136,7 +1136,7 @@ Line explanation:
 ### launchboard-backend-service.yaml
 
 ```bash
-vim deployment/phase-7-cicd/k8s/launchboard-backend-service.yaml
+vim deployment/phase-07-cicd-self-hosted/k8s/launchboard-backend-service.yaml
 ```
 
 Paste:
@@ -1162,7 +1162,7 @@ spec:
 ### launchboard-frontend-deployment.yaml
 
 ```bash
-vim deployment/phase-7-cicd/k8s/launchboard-frontend-deployment.yaml
+vim deployment/phase-07-cicd-self-hosted/k8s/launchboard-frontend-deployment.yaml
 ```
 
 Paste:
@@ -1231,7 +1231,7 @@ spec:
 ### launchboard-frontend-service.yaml
 
 ```bash
-vim deployment/phase-7-cicd/k8s/launchboard-frontend-service.yaml
+vim deployment/phase-07-cicd-self-hosted/k8s/launchboard-frontend-service.yaml
 ```
 
 Paste:
@@ -1257,7 +1257,7 @@ spec:
 ### ingress.yaml
 
 ```bash
-vim deployment/phase-7-cicd/k8s/ingress.yaml
+vim deployment/phase-07-cicd-self-hosted/k8s/ingress.yaml
 ```
 
 Paste:
@@ -1290,7 +1290,7 @@ spec:
 ### hpa.yaml
 
 ```bash
-vim deployment/phase-7-cicd/k8s/hpa.yaml
+vim deployment/phase-07-cicd-self-hosted/k8s/hpa.yaml
 ```
 
 Paste:
@@ -1323,7 +1323,7 @@ spec:
 ### kustomization.yaml
 
 ```bash
-vim deployment/phase-7-cicd/k8s/kustomization.yaml
+vim deployment/phase-07-cicd-self-hosted/k8s/kustomization.yaml
 ```
 
 Paste:
@@ -1444,7 +1444,7 @@ jobs:
 Copy it to the teaching folder:
 
 ```bash
-cp .github/workflows/build-and-test.yml deployment/phase-7-cicd/.github/workflows/build-and-test.yml
+cp .github/workflows/build-and-test.yml deployment/phase-07-cicd-self-hosted/.github/workflows/build-and-test.yml
 ```
 
 Line explanation:
@@ -1510,9 +1510,9 @@ jobs:
       matrix:
         include:
           - component: backend
-            dockerfile: deployment/phase-7-cicd/Dockerfile.backend
+            dockerfile: deployment/phase-07-cicd-self-hosted/Dockerfile.backend
           - component: frontend
-            dockerfile: deployment/phase-7-cicd/Dockerfile.frontend
+            dockerfile: deployment/phase-07-cicd-self-hosted/Dockerfile.frontend
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -1564,7 +1564,7 @@ jobs:
 Copy it to the teaching folder:
 
 ```bash
-cp .github/workflows/docker-build-push.yml deployment/phase-7-cicd/.github/workflows/docker-build-push.yml
+cp .github/workflows/docker-build-push.yml deployment/phase-07-cicd-self-hosted/.github/workflows/docker-build-push.yml
 ```
 
 Line explanation:
@@ -1641,7 +1641,7 @@ jobs:
         run: |
           if ! kind get clusters | grep -q "^${KIND_CLUSTER}$"; then
             kind create cluster --name "${KIND_CLUSTER}" \
-              --config deployment/phase-7-cicd/kind-config.yaml
+              --config deployment/phase-07-cicd-self-hosted/kind-config.yaml
           else
             echo "Cluster ${KIND_CLUSTER} already exists, reusing it."
           fi
@@ -1668,9 +1668,9 @@ jobs:
 
       - name: Build images
         run: |
-          docker build -f deployment/phase-7-cicd/Dockerfile.backend \
+          docker build -f deployment/phase-07-cicd-self-hosted/Dockerfile.backend \
             -t "launchboard-backend:${IMAGE_TAG}" .
-          docker build -f deployment/phase-7-cicd/Dockerfile.frontend \
+          docker build -f deployment/phase-07-cicd-self-hosted/Dockerfile.frontend \
             -t "launchboard-frontend:${IMAGE_TAG}" .
 
       - name: Load images into Kind
@@ -1681,12 +1681,12 @@ jobs:
       - name: Stamp image tag into manifests
         run: |
           sed -i "s|IMAGE_TAG_PLACEHOLDER|${IMAGE_TAG}|g" \
-            deployment/phase-7-cicd/k8s/launchboard-backend-deployment.yaml \
-            deployment/phase-7-cicd/k8s/launchboard-frontend-deployment.yaml \
-            deployment/phase-7-cicd/k8s/launchboard-migration-job.yaml
+            deployment/phase-07-cicd-self-hosted/k8s/launchboard-backend-deployment.yaml \
+            deployment/phase-07-cicd-self-hosted/k8s/launchboard-frontend-deployment.yaml \
+            deployment/phase-07-cicd-self-hosted/k8s/launchboard-migration-job.yaml
 
       - name: Create namespace
-        run: kubectl apply -f deployment/phase-7-cicd/k8s/namespace.yaml
+        run: kubectl apply -f deployment/phase-07-cicd-self-hosted/k8s/namespace.yaml
 
       - name: Create or update application Secret
         run: |
@@ -1699,7 +1699,7 @@ jobs:
         run: kubectl -n "${NAMESPACE}" delete job launchboard-migrate --ignore-not-found
 
       - name: Apply Kubernetes manifests
-        run: kubectl apply -k deployment/phase-7-cicd/k8s
+        run: kubectl apply -k deployment/phase-07-cicd-self-hosted/k8s
 
       - name: Set CORS origin from GitHub variable
         run: |
@@ -1732,7 +1732,7 @@ jobs:
 Copy it to the teaching folder:
 
 ```bash
-cp .github/workflows/deploy-k8s.yml deployment/phase-7-cicd/.github/workflows/deploy-k8s.yml
+cp .github/workflows/deploy-k8s.yml deployment/phase-07-cicd-self-hosted/.github/workflows/deploy-k8s.yml
 ```
 
 Line explanation:
@@ -1783,8 +1783,9 @@ on:
   workflow_dispatch:
     inputs:
       deployment:
-        description: Deployment to roll back
+        description: Deployment to rollback
         required: true
+        default: launchboard-backend
         type: choice
         options:
           - launchboard-backend
@@ -1793,55 +1794,47 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: phase-7-deploy
-  cancel-in-progress: false
+env:
+  NAMESPACE: devops-launchboard
 
 jobs:
   rollback:
-    name: Roll back ${{ inputs.deployment }}
+    name: Rollback Kubernetes deployment
     runs-on: self-hosted
-    env:
-      NAMESPACE: devops-launchboard
     steps:
-      - name: Show rollout history before rollback
-        run: kubectl -n "${NAMESPACE}" rollout history deployment/${{ inputs.deployment }}
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Roll back to previous revision
-        run: kubectl -n "${NAMESPACE}" rollout undo deployment/${{ inputs.deployment }}
+      - name: Show rollout history
+        run: kubectl -n "${NAMESPACE}" rollout history deployment/${{ github.event.inputs.deployment }}
 
-      - name: Wait for rollback rollout
-        run: kubectl -n "${NAMESPACE}" rollout status deployment/${{ inputs.deployment }} --timeout=180s
+      - name: Rollback deployment
+        run: kubectl -n "${NAMESPACE}" rollout undo deployment/${{ github.event.inputs.deployment }}
 
-      - name: Show running image after rollback
-        run: |
-          kubectl -n "${NAMESPACE}" get deployment ${{ inputs.deployment }} \
-            -o jsonpath='{.spec.template.spec.containers[0].image}'
-          echo
+      - name: Wait for rollback
+        run: kubectl -n "${NAMESPACE}" rollout status deployment/${{ github.event.inputs.deployment }} --timeout=180s
 
       - name: Verify application
         run: |
           curl -fsS http://127.0.0.1/health
-          curl -fsS http://127.0.0.1/api/summary | head -c 200
-          echo
-          echo "Rollback verified."
+          curl -fsS http://127.0.0.1/ready
+          curl -fsS http://127.0.0.1/api/summary
 ```
 
 Copy it to the teaching folder:
 
 ```bash
-cp .github/workflows/rollback.yml deployment/phase-7-cicd/.github/workflows/rollback.yml
+cp .github/workflows/rollback.yml deployment/phase-07-cicd-self-hosted/.github/workflows/rollback.yml
 ```
 
 Line explanation:
 
-- `on: workflow_dispatch` with an `inputs` block makes this a manual-only workflow with a dropdown. `type: choice` with two `options` renders a select menu in the GitHub UI, so the operator picks backend or frontend instead of typing a name that could contain a typo.
-- It shares the `concurrency: group: phase-7-deploy` group with the deploy workflow, so a rollback never races a deployment in progress.
+- `on: workflow_dispatch` with an `inputs` block makes this a manual-only workflow with a dropdown. `default: launchboard-backend` pre-selects an option, and `type: choice` with two `options` renders a select menu in the GitHub UI, so the operator picks backend or frontend instead of typing a name that could contain a typo.
 - `runs-on: self-hosted` because only the EC2 runner can reach the Kind cluster.
+- `Checkout repository` is included even though this workflow doesn't read any source files, because `kubectl` commands below assume the runner's working directory is set up like a normal job checkout.
 - `rollout history` prints the revision list first, so the workflow log records what existed before the rollback. Each revision corresponds to a previous image SHA, which is exactly why the deploy workflow stamps unique SHA tags: without unique tags, every revision would point to the same image and `rollout undo` would change nothing.
 - `rollout undo` switches the Deployment back to the previous ReplicaSet. The previous SHA-tagged image is still loaded inside the Kind node from its original deployment, so the old Pods start instantly without any pull.
 - `rollout status` waits for the rollback to complete and fails the workflow on timeout.
-- The jsonpath step prints which image is now live, giving an unambiguous audit line in the workflow log.
 - The final curl checks confirm the app actually works on the rolled-back version, because a rollback that completes but serves errors is not a successful rollback.
 
 Note: there is no automatic rollback for the database. Alembic migrations applied by a newer version are still in the schema after rolling the backend back. For this app the migrations are additive so old code keeps working, but in real production, rolling back code that depends on a destructive migration requires a planned migration-down strategy.
@@ -1856,7 +1849,7 @@ Reference:
 The phase folder lists a `Jenkinsfile` so students can compare GitHub Actions with Jenkins, the most common self-hosted CI server. This is optional reading; nothing in this phase requires Jenkins to be installed.
 
 ```bash
-vim deployment/phase-7-cicd/Jenkinsfile
+vim deployment/phase-07-cicd-self-hosted/Jenkinsfile
 ```
 
 Paste:
@@ -1892,17 +1885,17 @@ pipeline {
         }
         stage('Build images') {
             steps {
-                sh 'docker build -f deployment/phase-7-cicd/Dockerfile.backend -t launchboard-backend:${IMAGE_TAG} .'
-                sh 'docker build -f deployment/phase-7-cicd/Dockerfile.frontend -t launchboard-frontend:${IMAGE_TAG} .'
+                sh 'docker build -f deployment/phase-07-cicd-self-hosted/Dockerfile.backend -t launchboard-backend:${IMAGE_TAG} .'
+                sh 'docker build -f deployment/phase-07-cicd-self-hosted/Dockerfile.frontend -t launchboard-frontend:${IMAGE_TAG} .'
             }
         }
         stage('Deploy to Kind') {
             steps {
                 sh 'kind load docker-image launchboard-backend:${IMAGE_TAG} --name ${KIND_CLUSTER}'
                 sh 'kind load docker-image launchboard-frontend:${IMAGE_TAG} --name ${KIND_CLUSTER}'
-                sh 'sed -i "s|IMAGE_TAG_PLACEHOLDER|${IMAGE_TAG}|g" deployment/phase-7-cicd/k8s/launchboard-backend-deployment.yaml deployment/phase-7-cicd/k8s/launchboard-frontend-deployment.yaml deployment/phase-7-cicd/k8s/launchboard-migration-job.yaml'
+                sh 'sed -i "s|IMAGE_TAG_PLACEHOLDER|${IMAGE_TAG}|g" deployment/phase-07-cicd-self-hosted/k8s/launchboard-backend-deployment.yaml deployment/phase-07-cicd-self-hosted/k8s/launchboard-frontend-deployment.yaml deployment/phase-07-cicd-self-hosted/k8s/launchboard-migration-job.yaml'
                 sh 'kubectl -n ${NAMESPACE} delete job launchboard-migrate --ignore-not-found'
-                sh 'kubectl apply -k deployment/phase-7-cicd/k8s'
+                sh 'kubectl apply -k deployment/phase-07-cicd-self-hosted/k8s'
                 sh 'kubectl -n ${NAMESPACE} rollout status deployment/launchboard-backend --timeout=180s'
                 sh 'kubectl -n ${NAMESPACE} rollout status deployment/launchboard-frontend --timeout=180s'
             }
@@ -1932,7 +1925,7 @@ Run from the EC2 clone (or your local development machine if you created the fil
 ```bash
 cd /opt/devops-launchboard/app-source
 git status
-git add .dockerignore .github/workflows deployment/phase-7-cicd
+git add .dockerignore .github/workflows deployment/phase-07-cicd-self-hosted
 git commit -m "Add phase 7 CI/CD deployment"
 git push origin main
 ```
@@ -2013,7 +2006,7 @@ http://YOUR_EC2_PUBLIC_IP
 Prove that a code change flows to production automatically. Make a visible change, for example edit the app name:
 
 ```bash
-vim deployment/phase-7-cicd/k8s/configmap.yaml
+vim deployment/phase-07-cicd-self-hosted/k8s/configmap.yaml
 ```
 
 Change:
@@ -2025,7 +2018,7 @@ Change:
 Commit and push:
 
 ```bash
-git add deployment/phase-7-cicd/k8s/configmap.yaml
+git add deployment/phase-07-cicd-self-hosted/k8s/configmap.yaml
 git commit -m "test ci/cd loop"
 git push origin main
 ```
@@ -2109,7 +2102,7 @@ Workflow was not pushed to GitHub.
 GitHub Actions is disabled for the repository.
 ```
 
-Remember: the copies in deployment/phase-7-cicd/.github/workflows are teaching copies. GitHub only reads the root .github/workflows folder.
+Remember: the copies in deployment/phase-07-cicd-self-hosted/.github/workflows are teaching copies. GitHub only reads the root .github/workflows folder.
 
 ### Problem 2: Deploy Job Waits For Runner Forever
 
@@ -2167,7 +2160,7 @@ This happens when applying manifests manually while an old Job exists. The workf
 
 ```bash
 kubectl -n devops-launchboard delete job launchboard-migrate --ignore-not-found
-kubectl apply -k deployment/phase-7-cicd/k8s
+kubectl apply -k deployment/phase-07-cicd-self-hosted/k8s
 ```
 
 ### Problem 6: Docker Permission Denied In Workflow Logs
@@ -2263,7 +2256,7 @@ AWS cleanup:
 [ ] PHASE7_PUBLIC_APP_URL variable created
 [ ] PHASE7_DB_PASSWORD secret created
 [ ] Root .github/workflows files created
-[ ] Teaching copies created in deployment/phase-7-cicd
+[ ] Teaching copies created in deployment/phase-07-cicd-self-hosted
 [ ] Phase 7 Dockerfiles created
 [ ] kind-config.yaml and nginx-frontend.conf created
 [ ] Phase 7 Kubernetes manifests created with IMAGE_TAG_PLACEHOLDER

@@ -105,7 +105,7 @@ main
 This phase includes helper examples outside the README so students can inspect the exact values before creating their local files.
 
 ```text
-deployment/phase-1-local-baseline/
+deployment/phase-01-local-baseline/
 +-- env/
 |   +-- backend.env.example
 |   +-- frontend.env.example

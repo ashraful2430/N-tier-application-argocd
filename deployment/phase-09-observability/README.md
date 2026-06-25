@@ -479,7 +479,7 @@ __pycache__
 .ruff_cache
 .env
 .env.*
-deployment/phase-4-docker-compose/.env
+deployment/phase-04-docker-compose/.env
 ```
 
 ### Dockerfiles and nginx config

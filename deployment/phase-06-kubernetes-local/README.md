@@ -55,7 +55,7 @@ Before you start, here is every file you will create in this scenario. Read this
 /opt/devops-launchboard/app-source/
 +-- .dockerignore                                          (root level, shared across all phases)
 +-- deployment/
-    +-- phase-6-kubernetes-local/
+    +-- phase-06-kubernetes-local/
         +-- kind-config.yaml                               (Kind cluster configuration)
         +-- Dockerfile.backend                             (multi-stage Docker build for FastAPI)
         +-- Dockerfile.frontend                            (multi-stage Docker build for React/Vite)
@@ -494,16 +494,16 @@ Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-mkdir -p deployment/phase-6-kubernetes-local/k8s
+mkdir -p deployment/phase-06-kubernetes-local/k8s
 ```
 
 Command explanation:
 
-- `mkdir -p deployment/phase-6-kubernetes-local/k8s` creates the full directory path in one command. `-p` creates all intermediate directories and does not error if they already exist. This creates both the scenario folder and the `k8s` subfolder for Kubernetes manifests.
+- `mkdir -p deployment/phase-06-kubernetes-local/k8s` creates the full directory path in one command. `-p` creates all intermediate directories and does not error if they already exist. This creates both the scenario folder and the `k8s` subfolder for Kubernetes manifests.
 
 Why this structure exists:
 
-Keeping all phase 6 files inside `deployment/phase-6-kubernetes-local/` means each phase has its own folder. The `k8s/` subfolder separates Kubernetes manifests from Dockerfiles and Nginx configs.
+Keeping all phase 6 files inside `deployment/phase-06-kubernetes-local/` means each phase has its own folder. The `k8s/` subfolder separates Kubernetes manifests from Dockerfiles and Nginx configs.
 
 ## Step 10: Create Root `.dockerignore`
 
@@ -531,9 +531,9 @@ __pycache__
 .ruff_cache
 .env
 .env.*
-deployment/phase-4-docker-compose/.env
-deployment/phase-5-docker-swarm/secrets/*
-deployment/phase-6-kubernetes-local/k8s/secret.yaml
+deployment/phase-04-docker-compose/.env
+deployment/phase-05-docker-swarm/secrets/*
+deployment/phase-06-kubernetes-local/k8s/secret.yaml
 ```
 
 Line explanation:
@@ -549,7 +549,7 @@ Line explanation:
 - `.pytest_cache` and `.ruff_cache` exclude test and linter cache directories.
 - `.env` and `.env.*` exclude all environment files. These contain secrets and must never go into an image.
 - The `deployment/...` lines exclude environment files and secrets from other phases.
-- `deployment/phase-6-kubernetes-local/k8s/secret.yaml` excludes the real secret file if a student accidentally creates it with that name.
+- `deployment/phase-06-kubernetes-local/k8s/secret.yaml` excludes the real secret file if a student accidentally creates it with that name.
 
 Why this file exists at the root:
 
@@ -565,7 +565,7 @@ Reference:
 Run:
 
 ```bash
-vim deployment/phase-6-kubernetes-local/kind-config.yaml
+vim deployment/phase-06-kubernetes-local/kind-config.yaml
 ```
 
 Paste:
@@ -615,7 +615,7 @@ Reference:
 Run:
 
 ```bash
-vim deployment/phase-6-kubernetes-local/Dockerfile.backend
+vim deployment/phase-06-kubernetes-local/Dockerfile.backend
 ```
 
 Paste:
@@ -637,7 +637,7 @@ COPY backend/app ./app
 COPY backend/alembic ./alembic
 
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir ".[dev]"
+    && pip install --no-cache-dir .
 
 FROM python:3.12-slim AS runtime
 
@@ -680,7 +680,7 @@ Line explanation:
 - `COPY backend/app ./app` copies the FastAPI application source code into `/app/app`.
 - `COPY backend/alembic ./alembic` copies the Alembic migration files into `/app/alembic`. The migration Job needs these files to apply database schema changes.
 - `RUN pip install --no-cache-dir --upgrade pip` upgrades pip to the latest version. `--no-cache-dir` prevents pip from storing downloaded packages in a cache directory, keeping the image smaller.
-- `RUN pip install --no-cache-dir ".[dev]"` installs the application and its dependencies. The `.` refers to the current directory where `pyproject.toml` lives. `[dev]` includes extra dependencies defined in the dev extras group, which includes Alembic and other tools needed for migrations.
+- `RUN pip install --no-cache-dir .` installs the application and its base dependencies. The `.` refers to the current directory where `pyproject.toml` lives. Alembic is one of those base dependencies (not a dev-only extra), so this single install is enough for the migration Job too.
 - `FROM python:3.12-slim AS runtime` starts a completely fresh second stage. This stage becomes the final image. It has no build tools, no pip cache, nothing from the builder stage except what you explicitly copy.
 - `RUN groupadd --system app` creates a system group named `app`. System groups have low GIDs and are meant for services, not real users.
 - `useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app` creates a system user named `app` in the `app` group. `--home-dir /app` sets the home directory. `--shell /usr/sbin/nologin` prevents anyone from logging in as this user directly, which is a security measure.
@@ -703,7 +703,7 @@ Reference:
 Run:
 
 ```bash
-vim deployment/phase-6-kubernetes-local/Dockerfile.frontend
+vim deployment/phase-06-kubernetes-local/Dockerfile.frontend
 ```
 
 Paste:
@@ -724,7 +724,7 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
-COPY deployment/phase-6-kubernetes-local/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deployment/phase-06-kubernetes-local/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
@@ -746,7 +746,7 @@ Line explanation:
 - `COPY frontend/ ./` copies all frontend source code into the container now that dependencies are installed.
 - `RUN npm run build` runs the Vite build command, which compiles React components into static HTML, CSS, and JavaScript files. Output goes to `/app/dist`.
 - `FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime` starts the final stage using the official unprivileged Nginx image. This image is designed to run Nginx without root privileges, using port 8080 instead of 80. The final image does not include Node.js at all.
-- `COPY deployment/phase-6-kubernetes-local/nginx-frontend.conf /etc/nginx/conf.d/default.conf` replaces the default Nginx config with the custom config you create in Step 14. The `/etc/nginx/conf.d/default.conf` path is where Nginx looks for its default site configuration.
+- `COPY deployment/phase-06-kubernetes-local/nginx-frontend.conf /etc/nginx/conf.d/default.conf` replaces the default Nginx config with the custom config you create in Step 14. The `/etc/nginx/conf.d/default.conf` path is where Nginx looks for its default site configuration.
 - `COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html` copies the compiled frontend files from the builder stage into the Nginx web root. `--chown=101:101` sets the owner to UID 101 and GID 101, which is the nginx user in the unprivileged image. Without this, Nginx cannot read the files.
 - `EXPOSE 8080` documents the port Nginx listens on. The unprivileged image uses 8080 because non-root users cannot bind to ports below 1024.
 - `HEALTHCHECK` runs `wget -qO- http://127.0.0.1:8080/healthz` to check if Nginx is serving. `-q` silences output, `-O-` prints the response to stdout.
@@ -763,7 +763,7 @@ Reference:
 Run:
 
 ```bash
-vim deployment/phase-6-kubernetes-local/nginx-frontend.conf
+vim deployment/phase-06-kubernetes-local/nginx-frontend.conf
 ```
 
 Paste:
@@ -847,7 +847,7 @@ Reference:
 
 ## Step 15: Create Kubernetes Manifests
 
-All manifests go inside `deployment/phase-6-kubernetes-local/k8s/`.
+All manifests go inside `deployment/phase-06-kubernetes-local/k8s/`.
 
 Move to the project root first:
 
@@ -860,7 +860,7 @@ cd /opt/devops-launchboard/app-source
 A Namespace is a logical boundary inside Kubernetes. Resources in one namespace are isolated from resources in other namespaces. All your application resources live inside the `devops-launchboard` namespace.
 
 ```bash
-vim deployment/phase-6-kubernetes-local/k8s/namespace.yaml
+vim deployment/phase-06-kubernetes-local/k8s/namespace.yaml
 ```
 
 Paste:
@@ -894,7 +894,7 @@ Reference:
 A ConfigMap stores non-sensitive configuration data as key-value pairs. Pods read these values as environment variables or mounted files. Storing config in a ConfigMap instead of hardcoding it in the image means you can change configuration without rebuilding the image.
 
 ```bash
-vim deployment/phase-6-kubernetes-local/k8s/configmap.yaml
+vim deployment/phase-06-kubernetes-local/k8s/configmap.yaml
 ```
 
 Paste:
@@ -940,7 +940,7 @@ Reference:
 A Secret stores sensitive data such as passwords and connection strings. Kubernetes Secrets are base64 encoded (not encrypted by default). This file is an example only. You never commit real credentials to Git.
 
 ```bash
-vim deployment/phase-6-kubernetes-local/k8s/secret.example.yaml
+vim deployment/phase-06-kubernetes-local/k8s/secret.example.yaml
 ```
 
 Paste:
@@ -980,7 +980,7 @@ Reference:
 A PersistentVolumeClaim asks Kubernetes for a piece of persistent storage. Without this, all data inside the PostgreSQL container is lost when the Pod restarts.
 
 ```bash
-vim deployment/phase-6-kubernetes-local/k8s/pvc.yaml
+vim deployment/phase-06-kubernetes-local/k8s/pvc.yaml
 ```
 
 Paste:
@@ -1020,7 +1020,7 @@ Reference:
 A Deployment manages a set of identical Pods. It ensures the desired number of replicas are running, handles restarts if a Pod crashes, and supports rolling updates.
 
 ```bash
-vim deployment/phase-6-kubernetes-local/k8s/launchboard-postgres-deployment.yaml
+vim deployment/phase-06-kubernetes-local/k8s/launchboard-postgres-deployment.yaml
 ```
 
 Paste:
@@ -1153,7 +1153,7 @@ Reference:
 A Service gives a set of Pods a stable DNS name and IP address inside the cluster. Pods come and go, but the Service name stays the same. Other Pods use the Service name to find and talk to the database.
 
 ```bash
-vim deployment/phase-6-kubernetes-local/k8s/launchboard-postgres-service.yaml
+vim deployment/phase-06-kubernetes-local/k8s/launchboard-postgres-service.yaml
 ```
 
 Paste:
@@ -1195,7 +1195,7 @@ Reference:
 A Job runs a one-time task to completion. Unlike a Deployment which keeps Pods running forever, a Job runs its Pod, waits for it to complete successfully, and then stops. The migration Job runs Alembic to apply database schema changes before the backend Pods start serving traffic.
 
 ```bash
-vim deployment/phase-6-kubernetes-local/k8s/launchboard-migration-job.yaml
+vim deployment/phase-06-kubernetes-local/k8s/launchboard-migration-job.yaml
 ```
 
 Paste:
@@ -1268,7 +1268,7 @@ Reference:
 ### 15.8 launchboard-backend-deployment.yaml
 
 ```bash
-vim deployment/phase-6-kubernetes-local/k8s/launchboard-backend-deployment.yaml
+vim deployment/phase-06-kubernetes-local/k8s/launchboard-backend-deployment.yaml
 ```
 
 Paste:
@@ -1376,7 +1376,7 @@ Reference:
 ### 15.9 launchboard-backend-service.yaml
 
 ```bash
-vim deployment/phase-6-kubernetes-local/k8s/launchboard-backend-service.yaml
+vim deployment/phase-06-kubernetes-local/k8s/launchboard-backend-service.yaml
 ```
 
 Paste:
@@ -1412,7 +1412,7 @@ Reference:
 ### 15.10 launchboard-frontend-deployment.yaml
 
 ```bash
-vim deployment/phase-6-kubernetes-local/k8s/launchboard-frontend-deployment.yaml
+vim deployment/phase-06-kubernetes-local/k8s/launchboard-frontend-deployment.yaml
 ```
 
 Paste:
@@ -1495,7 +1495,7 @@ Reference:
 ### 15.11 launchboard-frontend-service.yaml
 
 ```bash
-vim deployment/phase-6-kubernetes-local/k8s/launchboard-frontend-service.yaml
+vim deployment/phase-06-kubernetes-local/k8s/launchboard-frontend-service.yaml
 ```
 
 Paste:
@@ -1533,7 +1533,7 @@ Reference:
 An Ingress defines rules for routing external HTTP and HTTPS traffic to Services inside the cluster. It requires an Ingress Controller (Nginx Ingress in this scenario) to actually process the rules.
 
 ```bash
-vim deployment/phase-6-kubernetes-local/k8s/ingress.yaml
+vim deployment/phase-06-kubernetes-local/k8s/ingress.yaml
 ```
 
 Paste:
@@ -1587,7 +1587,7 @@ Reference:
 A HorizontalPodAutoscaler watches CPU or memory usage of a Deployment and automatically scales the number of Pods up or down. It requires Metrics Server to be installed.
 
 ```bash
-vim deployment/phase-6-kubernetes-local/k8s/hpa.yaml
+vim deployment/phase-06-kubernetes-local/k8s/hpa.yaml
 ```
 
 Paste:
@@ -1642,7 +1642,7 @@ Reference:
 Kustomize is built into kubectl. A `kustomization.yaml` file lists multiple Kubernetes manifests so you can apply them all with one command: `kubectl apply -k`. Without Kustomize you would need to run `kubectl apply -f` for every single file.
 
 ```bash
-vim deployment/phase-6-kubernetes-local/k8s/kustomization.yaml
+vim deployment/phase-06-kubernetes-local/k8s/kustomization.yaml
 ```
 
 Paste:
@@ -1682,7 +1682,7 @@ Reference:
 Run:
 
 ```bash
-cd /opt/devops-launchboard/app-source/deployment/phase-6-kubernetes-local
+cd /opt/devops-launchboard/app-source/deployment/phase-06-kubernetes-local
 kind create cluster --name launchboard-local --config kind-config.yaml
 ```
 
@@ -1752,9 +1752,9 @@ Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-docker build -f deployment/phase-6-kubernetes-local/Dockerfile.backend \
+docker build -f deployment/phase-06-kubernetes-local/Dockerfile.backend \
   -t launchboard-backend:phase-6 .
-docker build -f deployment/phase-6-kubernetes-local/Dockerfile.frontend \
+docker build -f deployment/phase-06-kubernetes-local/Dockerfile.frontend \
   --build-arg VITE_API_URL= \
   -t launchboard-frontend:phase-6 .
 kind load docker-image launchboard-backend:phase-6 --name launchboard-local
@@ -1786,7 +1786,7 @@ Apply the namespace first so the Secret has a namespace to live in:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-kubectl apply -f deployment/phase-6-kubernetes-local/k8s/namespace.yaml
+kubectl apply -f deployment/phase-06-kubernetes-local/k8s/namespace.yaml
 ```
 
 Create the real Secret using kubectl instead of applying a YAML file:
@@ -1824,7 +1824,7 @@ Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-kubectl apply -k deployment/phase-6-kubernetes-local/k8s
+kubectl apply -k deployment/phase-06-kubernetes-local/k8s
 ```
 
 Command explanation:
@@ -1897,7 +1897,7 @@ Build and load a new backend image:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-docker build -f deployment/phase-6-kubernetes-local/Dockerfile.backend \
+docker build -f deployment/phase-06-kubernetes-local/Dockerfile.backend \
   -t launchboard-backend:phase-6-v2 .
 kind load docker-image launchboard-backend:phase-6-v2 --name launchboard-local
 ```
@@ -1973,7 +1973,7 @@ Fix after correcting the issue:
 
 ```bash
 kubectl -n devops-launchboard delete job launchboard-migrate
-kubectl apply -f deployment/phase-6-kubernetes-local/k8s/launchboard-migration-job.yaml
+kubectl apply -f deployment/phase-06-kubernetes-local/k8s/launchboard-migration-job.yaml
 ```
 
 ### Ingress Does Not Work
@@ -3090,9 +3090,9 @@ To make this scenario self-contained, the Dockerfiles and Nginx config live in `
 
 ```bash
 cd /opt/devops-launchboard/app-source
-cp deployment/phase-6-kubernetes-local/Dockerfile.backend deployment/phase-6-kubeadm/
-cp deployment/phase-6-kubernetes-local/Dockerfile.frontend deployment/phase-6-kubeadm/
-cp deployment/phase-6-kubernetes-local/nginx-frontend.conf deployment/phase-6-kubeadm/
+cp deployment/phase-06-kubernetes-local/Dockerfile.backend deployment/phase-6-kubeadm/
+cp deployment/phase-06-kubernetes-local/Dockerfile.frontend deployment/phase-6-kubeadm/
+cp deployment/phase-06-kubernetes-local/nginx-frontend.conf deployment/phase-6-kubeadm/
 ```
 
 If it does not, create the three files inside `deployment/phase-6-kubeadm/` with `vim`, using the exact contents from Scenario 1 Steps 12, 13, and 14.
@@ -3106,7 +3106,7 @@ vim deployment/phase-6-kubeadm/Dockerfile.frontend
 Change:
 
 ```dockerfile
-COPY deployment/phase-6-kubernetes-local/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deployment/phase-06-kubernetes-local/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 ```
 
 To:

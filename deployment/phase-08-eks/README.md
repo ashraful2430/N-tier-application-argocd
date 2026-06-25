@@ -550,7 +550,7 @@ __pycache__
 .ruff_cache
 .env
 .env.*
-deployment/phase-4-docker-compose/.env
+deployment/phase-04-docker-compose/.env
 ```
 
 Why this file exists:
@@ -749,7 +749,7 @@ COPY backend/app ./app
 COPY backend/alembic ./alembic
 
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir ".[dev]"
+    && pip install --no-cache-dir .
 
 FROM python:3.12-slim AS runtime
 
@@ -759,8 +759,12 @@ ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV APP_ENV=production
 
-RUN groupadd --system app \
-    && useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app
+RUN groupadd --system --gid 10001 app \
+    && useradd --system \
+       --uid 10001 \
+       --gid 10001 \
+       --home-dir /app \
+       --shell /usr/sbin/nologin app
 
 WORKDIR /app
 
@@ -779,7 +783,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 ```
 
-This is identical to Phase 6. See Phase 6 Scenario 1 Step 12 for the full line-by-line explanation.
+This is mostly identical to Phase 6; see Phase 6 Scenario 1 Step 12 for the base line-by-line explanation. One change: `groupadd`/`useradd` now pin an explicit `--uid 10001 --gid 10001` instead of letting the system auto-assign one. A name-only `USER app` produces a non-numeric user that Kubernetes cannot verify against `runAsNonRoot`, and the auto-assigned UID can also shift if the base image changes. Pinning a fixed numeric UID/GID keeps the Dockerfile and the Kubernetes `securityContext` (below) deterministic and in sync.
 
 ### Dockerfile.frontend
 
@@ -1261,9 +1265,9 @@ spec:
         app: launchboard-backend
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 999
-        runAsGroup: 999
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -1308,7 +1312,7 @@ spec:
               memory: 512Mi
 ```
 
-- `runAsUser: 999` and `runAsGroup: 999` are required alongside `runAsNonRoot` because the Dockerfile uses `USER app` (a name). See Phase 6 Scenario 1 section 15.8 for the full explanation and the `CreateContainerConfigError` this prevents.
+- `runAsUser: 10001` and `runAsGroup: 10001` are required because the Dockerfile uses `USER app` (a name), and the kubelet can only verify numeric UIDs. They must match the `--uid 10001 --gid 10001` pinned in the Dockerfile, or the Pod fails with `CreateContainerConfigError`. See Phase 6 Scenario 1 section 15.8 for the background on this error.
 - `image` points to ECR. Replace the two placeholders.
 - Everything else is identical to Phase 6.
 

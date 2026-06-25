@@ -31,7 +31,7 @@ jobs:
         run: |
           if ! kind get clusters | grep -q "^${KIND_CLUSTER}$"; then
             kind create cluster --name "${KIND_CLUSTER}" \
-              --config deployment/phase-7-cicd/kind-config.yaml
+              --config deployment/phase-07-cicd-self-hosted/kind-config.yaml
           else
             echo "Cluster ${KIND_CLUSTER} already exists, reusing it."
           fi
@@ -58,9 +58,9 @@ jobs:
 
       - name: Build images
         run: |
-          docker build -f deployment/phase-7-cicd/Dockerfile.backend \
+          docker build -f deployment/phase-07-cicd-self-hosted/Dockerfile.backend \
             -t "launchboard-backend:${IMAGE_TAG}" .
-          docker build -f deployment/phase-7-cicd/Dockerfile.frontend \
+          docker build -f deployment/phase-07-cicd-self-hosted/Dockerfile.frontend \
             -t "launchboard-frontend:${IMAGE_TAG}" .
 
       - name: Load images into Kind
@@ -71,12 +71,12 @@ jobs:
       - name: Stamp image tag into manifests
         run: |
           sed -i "s|IMAGE_TAG_PLACEHOLDER|${IMAGE_TAG}|g" \
-            deployment/phase-7-cicd/k8s/launchboard-backend-deployment.yaml \
-            deployment/phase-7-cicd/k8s/launchboard-frontend-deployment.yaml \
-            deployment/phase-7-cicd/k8s/launchboard-migration-job.yaml
+            deployment/phase-07-cicd-self-hosted/k8s/launchboard-backend-deployment.yaml \
+            deployment/phase-07-cicd-self-hosted/k8s/launchboard-frontend-deployment.yaml \
+            deployment/phase-07-cicd-self-hosted/k8s/launchboard-migration-job.yaml
 
       - name: Create namespace
-        run: kubectl apply -f deployment/phase-7-cicd/k8s/namespace.yaml
+        run: kubectl apply -f deployment/phase-07-cicd-self-hosted/k8s/namespace.yaml
 
       - name: Create or update application Secret
         run: |
@@ -89,7 +89,7 @@ jobs:
         run: kubectl -n "${NAMESPACE}" delete job launchboard-migrate --ignore-not-found
 
       - name: Apply Kubernetes manifests
-        run: kubectl apply -k deployment/phase-7-cicd/k8s
+        run: kubectl apply -k deployment/phase-07-cicd-self-hosted/k8s
 
       - name: Set CORS origin from GitHub variable
         run: |

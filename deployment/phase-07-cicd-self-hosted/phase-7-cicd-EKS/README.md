@@ -86,7 +86,7 @@ Create an AWS Budget before starting: AWS Console > Billing > Budgets > Create b
 ## Files Included In This Phase
 
 ```text
-deployment/phase-7-cicd/
+deployment/phase-07-cicd-self-hosted/
 +-- eks/
 |   +-- eksctl-cluster.yaml              (EKS cluster definition)
 +-- eks-k8s/
@@ -267,8 +267,8 @@ cd app-source
 Create working folders:
 
 ```bash
-mkdir -p deployment/phase-7-cicd/eks
-mkdir -p deployment/phase-7-cicd/eks-k8s
+mkdir -p deployment/phase-07-cicd-self-hosted/eks
+mkdir -p deployment/phase-07-cicd-self-hosted/eks-k8s
 mkdir -p .github/workflows
 ```
 
@@ -295,7 +295,7 @@ __pycache__
 .ruff_cache
 .env
 .env.*
-deployment/phase-4-docker-compose/.env
+deployment/phase-04-docker-compose/.env
 ```
 
 ## Step 3: Create EKS Cluster
@@ -312,7 +312,7 @@ echo "Account: $ACCOUNT_ID  Region: $AWS_REGION  Cluster: $CLUSTER_NAME"
 Replace `YOUR_AWS_REGION` with your region (e.g. `ap-southeast-1`).
 
 ```bash
-vim deployment/phase-7-cicd/eks/eksctl-cluster.yaml
+vim deployment/phase-07-cicd-self-hosted/eks/eksctl-cluster.yaml
 ```
 
 Paste:
@@ -376,7 +376,7 @@ Replace `YOUR_AWS_REGION` in three places. For example, `ap-southeast-1`, `ap-so
 Create the cluster (20 to 40 minutes):
 
 ```bash
-eksctl create cluster -f deployment/phase-7-cicd/eks/eksctl-cluster.yaml
+eksctl create cluster -f deployment/phase-07-cicd-self-hosted/eks/eksctl-cluster.yaml
 kubectl get nodes
 ```
 
@@ -421,7 +421,7 @@ See Phase 8 Step 18 for the full IRSA explanation.
 ### Dockerfile.backend
 
 ```bash
-vim deployment/phase-7-cicd/Dockerfile.backend
+vim deployment/phase-07-cicd-self-hosted/Dockerfile.backend
 ```
 
 Paste:
@@ -480,7 +480,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-
 ### Dockerfile.frontend
 
 ```bash
-vim deployment/phase-7-cicd/Dockerfile.frontend
+vim deployment/phase-07-cicd-self-hosted/Dockerfile.frontend
 ```
 
 Paste:
@@ -501,7 +501,7 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
-COPY deployment/phase-7-cicd/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deployment/phase-07-cicd-self-hosted/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
@@ -515,7 +515,7 @@ CMD ["nginx", "-g", "daemon off;"]
 ### nginx-frontend.conf
 
 ```bash
-vim deployment/phase-7-cicd/nginx-frontend.conf
+vim deployment/phase-07-cicd-self-hosted/nginx-frontend.conf
 ```
 
 Paste:
@@ -588,10 +588,10 @@ Build and push:
 ```bash
 cd /opt/devops-launchboard/app-source
 
-docker build -f deployment/phase-7-cicd/Dockerfile.backend \
+docker build -f deployment/phase-07-cicd-self-hosted/Dockerfile.backend \
   -t YOUR_DOCKERHUB_USERNAME/launchboard-backend-k8s:initial .
 
-docker build -f deployment/phase-7-cicd/Dockerfile.frontend \
+docker build -f deployment/phase-07-cicd-self-hosted/Dockerfile.frontend \
   --build-arg VITE_API_URL= \
   -t YOUR_DOCKERHUB_USERNAME/launchboard-frontend-k8s:initial .
 
@@ -609,12 +609,12 @@ Make sure the Docker Hub repositories are set to **Public** (hub.docker.com > ea
 cd /opt/devops-launchboard/app-source
 ```
 
-Create every file below with `vim` in `deployment/phase-7-cicd/eks-k8s/`.
+Create every file below with `vim` in `deployment/phase-07-cicd-self-hosted/eks-k8s/`.
 
 ### namespace.yaml
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/namespace.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/namespace.yaml
 ```
 
 ```yaml
@@ -629,7 +629,7 @@ metadata:
 ### storageclass.yaml
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/storageclass.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/storageclass.yaml
 ```
 
 ```yaml
@@ -650,7 +650,7 @@ allowVolumeExpansion: true
 ### configmap.yaml
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/configmap.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/configmap.yaml
 ```
 
 ```yaml
@@ -671,7 +671,7 @@ data:
 ### secret.example.yaml
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/secret.example.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/secret.example.yaml
 ```
 
 ```yaml
@@ -689,7 +689,7 @@ stringData:
 ### pvc.yaml
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/pvc.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/pvc.yaml
 ```
 
 ```yaml
@@ -710,7 +710,7 @@ spec:
 ### launchboard-postgres-deployment.yaml
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/launchboard-postgres-deployment.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/launchboard-postgres-deployment.yaml
 ```
 
 ```yaml
@@ -785,7 +785,7 @@ spec:
 ### launchboard-postgres-service.yaml
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/launchboard-postgres-service.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/launchboard-postgres-service.yaml
 ```
 
 ```yaml
@@ -807,7 +807,7 @@ spec:
 ### launchboard-migration-job.yaml
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/launchboard-migration-job.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/launchboard-migration-job.yaml
 ```
 
 ```yaml
@@ -854,7 +854,7 @@ spec:
 ### launchboard-backend-deployment.yaml
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/launchboard-backend-deployment.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/launchboard-backend-deployment.yaml
 ```
 
 ```yaml
@@ -931,7 +931,7 @@ spec:
 ### launchboard-backend-service.yaml
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/launchboard-backend-service.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/launchboard-backend-service.yaml
 ```
 
 ```yaml
@@ -953,7 +953,7 @@ spec:
 ### launchboard-frontend-deployment.yaml
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/launchboard-frontend-deployment.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/launchboard-frontend-deployment.yaml
 ```
 
 ```yaml
@@ -1017,7 +1017,7 @@ spec:
 ### launchboard-frontend-service.yaml
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/launchboard-frontend-service.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/launchboard-frontend-service.yaml
 ```
 
 ```yaml
@@ -1039,7 +1039,7 @@ spec:
 ### ingress.yaml
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/ingress.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/ingress.yaml
 ```
 
 ```yaml
@@ -1078,7 +1078,7 @@ See Phase 8 Step 14 for the full ALB annotation explanation.
 ### hpa.yaml
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/hpa.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/hpa.yaml
 ```
 
 ```yaml
@@ -1106,7 +1106,7 @@ spec:
 ### kustomization.yaml
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/kustomization.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/kustomization.yaml
 ```
 
 ```yaml
@@ -1135,15 +1135,15 @@ cd /opt/devops-launchboard/app-source
 DOCKERHUB_USER=YOUR_DOCKERHUB_USERNAME
 
 sed -i "s|YOUR_DOCKERHUB_USERNAME|${DOCKERHUB_USER}|g" \
-  deployment/phase-7-cicd/eks-k8s/launchboard-backend-deployment.yaml \
-  deployment/phase-7-cicd/eks-k8s/launchboard-frontend-deployment.yaml \
-  deployment/phase-7-cicd/eks-k8s/launchboard-migration-job.yaml
+  deployment/phase-07-cicd-self-hosted/eks-k8s/launchboard-backend-deployment.yaml \
+  deployment/phase-07-cicd-self-hosted/eks-k8s/launchboard-frontend-deployment.yaml \
+  deployment/phase-07-cicd-self-hosted/eks-k8s/launchboard-migration-job.yaml
 ```
 
 Create namespace and Secret:
 
 ```bash
-kubectl apply -f deployment/phase-7-cicd/eks-k8s/namespace.yaml
+kubectl apply -f deployment/phase-07-cicd-self-hosted/eks-k8s/namespace.yaml
 
 kubectl create secret generic launchboard-secret \
   --namespace devops-launchboard \
@@ -1154,7 +1154,7 @@ kubectl create secret generic launchboard-secret \
 Apply:
 
 ```bash
-kubectl apply -k deployment/phase-7-cicd/eks-k8s
+kubectl apply -k deployment/phase-07-cicd-self-hosted/eks-k8s
 ```
 
 Wait:
@@ -1305,10 +1305,10 @@ jobs:
       matrix:
         include:
           - component: backend
-            dockerfile: deployment/phase-7-cicd/Dockerfile.backend
+            dockerfile: deployment/phase-07-cicd-self-hosted/Dockerfile.backend
             repo_suffix: launchboard-backend-k8s
           - component: frontend
-            dockerfile: deployment/phase-7-cicd/Dockerfile.frontend
+            dockerfile: deployment/phase-07-cicd-self-hosted/Dockerfile.frontend
             repo_suffix: launchboard-frontend-k8s
     steps:
       - uses: actions/checkout@v4
@@ -1528,7 +1528,7 @@ jobs:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-git add .dockerignore .github/workflows deployment/phase-7-cicd
+git add .dockerignore .github/workflows deployment/phase-07-cicd-self-hosted
 git commit -m "Add Phase 7 CI/CD with Docker Hub and EKS"
 git push origin main
 ```
@@ -1546,7 +1546,7 @@ Watch the Actions tab. Total time from push to verified deployment: about 5 to 8
 Make a visible change:
 
 ```bash
-vim deployment/phase-7-cicd/eks-k8s/configmap.yaml
+vim deployment/phase-07-cicd-self-hosted/eks-k8s/configmap.yaml
 ```
 
 Change `APP_NAME`:
@@ -1558,7 +1558,7 @@ Change `APP_NAME`:
 Commit and push:
 
 ```bash
-git add deployment/phase-7-cicd/eks-k8s/configmap.yaml
+git add deployment/phase-07-cicd-self-hosted/eks-k8s/configmap.yaml
 git commit -m "test CI/CD loop"
 git push origin main
 ```

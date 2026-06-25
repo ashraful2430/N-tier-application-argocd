@@ -19,7 +19,7 @@ services:
   launchboard-migrate:
     build:
       context: ../..
-      dockerfile: deployment/phase-4-docker-compose/Dockerfile.backend
+      dockerfile: deployment/phase-04-docker-compose/Dockerfile.backend
     image: ${BACKEND_IMAGE}
     container_name: launchboard-migrate
     env_file:
@@ -35,7 +35,7 @@ services:
   launchboard-backend:
     build:
       context: ../..
-      dockerfile: deployment/phase-4-docker-compose/Dockerfile.backend
+      dockerfile: deployment/phase-04-docker-compose/Dockerfile.backend
     image: ${BACKEND_IMAGE}
     container_name: launchboard-backend
     env_file:
@@ -58,7 +58,7 @@ services:
   launchboard-frontend:
     build:
       context: ../..
-      dockerfile: deployment/phase-4-docker-compose/Dockerfile.frontend
+      dockerfile: deployment/phase-04-docker-compose/Dockerfile.frontend
       args:
         VITE_API_URL: ${VITE_API_URL}
     image: ${FRONTEND_IMAGE}
