@@ -39,7 +39,7 @@ Start with `phase-0-setup`, then move phase by phase. Each phase has its own REA
 
 | Placeholder | Example | Meaning |
 | --- | --- | --- |
-| `YOUR_AWS_REGION` | `ap-southeast-1` | AWS Region |
+| `YOUR_AWS_REGION` | `us-east-1` | AWS Region |
 | `YOUR_ACCOUNT_ID` | `123456789012` | AWS account number |
 | `YOUR_ALB_DNS_NAME` | `launchboard-alb.example.aws` | Public load balancer URL |
 | `YOUR_EC2_PUBLIC_IP` | `13.229.100.25` | EC2 public IP address |

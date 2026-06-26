@@ -1,6 +1,6 @@
 prometheus:
   prometheusSpec:
-    retention: 7d
+    retention: 3d
     scrapeInterval: 30s
     evaluationInterval: 30s
     serviceMonitorSelectorNilUsesHelmValues: false

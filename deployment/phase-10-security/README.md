@@ -146,6 +146,7 @@ deployment/phase-10-security/
 |   +-- resource-quota.yaml                    (namespace resource caps)
 |   +-- limit-range.yaml                       (per-container defaults and maximums)
 |   +-- network-policy.yaml                    (Pod-to-Pod traffic rules)
+|   +-- kustomization.yaml                     (optional: groups the 5 files above for one-command apply)
 +-- secrets-management/
 |   +-- aws-secrets-manager-policy.json        (IAM policy for secret reads)
 |   +-- external-secret.example.yaml           (External Secrets Operator config)

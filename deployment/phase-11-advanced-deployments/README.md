@@ -74,7 +74,7 @@ Simple decision guide:
 
 | Item | Recommended Value |
 | --- | --- |
-| AWS Region | `ap-southeast-1` or the closest region |
+| AWS Region | `us-east-1` or the closest region |
 | Cluster Name | `devops-launchboard-phase-11` |
 | Kubernetes Version | `1.34` |
 | Node Type | `t3.medium` |
@@ -166,7 +166,7 @@ aws sts get-caller-identity
 Set helpful variables:
 
 ```bash
-export AWS_REGION=ap-southeast-1
+export AWS_REGION=us-east-1
 export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 ```
 

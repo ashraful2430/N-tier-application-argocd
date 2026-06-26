@@ -67,7 +67,7 @@ k6 version
 
 ```bash
 export PROJECT_NAME=devops-launchboard
-export AWS_REGION=ap-southeast-1
+export AWS_REGION=us-east-1
 export DOMAIN_NAME=launchboard.example.com
 export ADMIN_EMAIL=student@example.com
 ```

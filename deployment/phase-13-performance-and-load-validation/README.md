@@ -78,7 +78,7 @@ Performance testing is not only about high traffic. It is about proving what the
 
 | Item | Recommended Value |
 | --- | --- |
-| AWS Region | `ap-southeast-1` or closest region |
+| AWS Region | `us-east-1` or closest region |
 | Cluster Name | `devops-launchboard-phase-13` |
 | Kubernetes Version | `1.34` |
 | Node Type | `t3.medium` |
@@ -173,7 +173,7 @@ aws sts get-caller-identity
 Set variables:
 
 ```bash
-export AWS_REGION=ap-southeast-1
+export AWS_REGION=us-east-1
 export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 ```
 

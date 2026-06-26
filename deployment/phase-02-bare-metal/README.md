@@ -124,7 +124,7 @@ Reference:
 
 | Item | Recommended Value |
 | --- | --- |
-| AWS Region | `ap-southeast-1` or closest region |
+| AWS Region | `us-east-1` or closest region |
 | EC2 Name | `devops-launchboard-phase-2` |
 | AMI | Ubuntu Server 24.04 LTS |
 | Instance Type | `t3.micro` or `t3.small` |

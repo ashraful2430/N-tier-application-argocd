@@ -70,7 +70,7 @@ Backups are not useful until restore is tested. This phase focuses on both backu
 
 | Item | Recommended Value |
 | --- | --- |
-| AWS Region | `ap-southeast-1` or the closest region |
+| AWS Region | `us-east-1` or the closest region |
 | Cluster Name | `devops-launchboard-phase-12` |
 | Kubernetes Version | `1.34` |
 | Node Type | `t3.medium` |
@@ -166,7 +166,7 @@ aws sts get-caller-identity
 Set variables:
 
 ```bash
-export AWS_REGION=ap-southeast-1
+export AWS_REGION=us-east-1
 export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 export VELERO_BUCKET=devops-launchboard-velero-$AWS_ACCOUNT_ID-$AWS_REGION
 ```
@@ -382,6 +382,16 @@ Apply:
 aws ecr put-lifecycle-policy --repository-name launchboard-backend --lifecycle-policy-text file://deployment/phase-12-disaster-recovery/ecr/lifecycle-policy.json --region $AWS_REGION
 aws ecr put-lifecycle-policy --repository-name launchboard-frontend --lifecycle-policy-text file://deployment/phase-12-disaster-recovery/ecr/lifecycle-policy.json --region $AWS_REGION
 ```
+
+Create Dockerfiles:
+
+```bash
+vim deployment/phase-12-disaster-recovery/Dockerfile.backend
+vim deployment/phase-12-disaster-recovery/Dockerfile.frontend
+vim deployment/phase-12-disaster-recovery/nginx-frontend.conf
+```
+
+Use the production file contents from this phase folder.
 
 Build and push:
 

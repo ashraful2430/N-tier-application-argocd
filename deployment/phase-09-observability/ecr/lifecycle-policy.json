@@ -2,7 +2,7 @@
   "rules": [
     {
       "rulePriority": 1,
-      "description": "Keep the latest 10 phase 8 images",
+      "description": "Keep the latest 10 phase 9 images",
       "selection": {
         "tagStatus": "tagged",
         "tagPrefixList": ["phase-9"],

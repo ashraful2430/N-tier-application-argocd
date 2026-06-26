@@ -223,7 +223,7 @@ Configure AWS:
 aws configure
 ```
 
-Enter your Access Key ID, Secret Access Key, region (e.g. `ap-southeast-1`), and `json` for output format.
+Enter your Access Key ID, Secret Access Key, region (e.g. `us-east-1`), and `json` for output format.
 
 Verify all tools:
 
@@ -309,7 +309,7 @@ export CLUSTER_NAME=devops-launchboard-phase-7
 echo "Account: $ACCOUNT_ID  Region: $AWS_REGION  Cluster: $CLUSTER_NAME"
 ```
 
-Replace `YOUR_AWS_REGION` with your region (e.g. `ap-southeast-1`).
+Replace `YOUR_AWS_REGION` with your region (e.g. `us-east-1`).
 
 ```bash
 vim deployment/phase-07-cicd-self-hosted/eks/eksctl-cluster.yaml
@@ -371,7 +371,7 @@ addons:
       ebsCSIController: true
 ```
 
-Replace `YOUR_AWS_REGION` in three places. For example, `ap-southeast-1`, `ap-southeast-1a`, `ap-southeast-1b`.
+Replace `YOUR_AWS_REGION` in three places. For example, `us-east-1`, `us-east-1a`, `us-east-1b`.
 
 Create the cluster (20 to 40 minutes):
 
@@ -1206,7 +1206,7 @@ Add these **Secrets** (all six are required):
 | `AWS_ACCESS_KEY_ID` | Your IAM access key ID | IAM Console > Users > Security credentials |
 | `AWS_SECRET_ACCESS_KEY` | Your IAM secret access key | Shown once when creating the key |
 | `EKS_CLUSTER_NAME` | `devops-launchboard-phase-7` | The cluster name from Step 3 |
-| `AWS_REGION` | Your region (e.g. `ap-southeast-1`) | The region your EKS cluster runs in |
+| `AWS_REGION` | Your region (e.g. `us-east-1`) | The region your EKS cluster runs in |
 
 Add this **Variable** (under the Variables tab):
 

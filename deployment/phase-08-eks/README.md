@@ -141,7 +141,7 @@ Reference:
 
 | Item | Recommended Value |
 | --- | --- |
-| AWS Region | `ap-southeast-1` or your closest region |
+| AWS Region | `us-east-1` or your closest region |
 | EKS Cluster Name | `devops-launchboard-phase-8` |
 | Kubernetes Version | `1.32` |
 | Node Group | `launchboard-workers` |
@@ -154,7 +154,7 @@ Reference:
 ## Files Included In This Phase
 
 ```text
-deployment/phase-8-eks/
+deployment/phase-08-eks/
 +-- cluster/
 |   +-- eksctl-cluster.yaml              (EKS cluster definition for eksctl)
 +-- ecr/
@@ -199,8 +199,8 @@ What each file does and why it exists:
 | `ingress.yaml` | ALB Ingress with AWS annotations | AWS Load Balancer Controller reads this and creates a real ALB |
 | `hpa.yaml` | Autoscaling rules for the backend | Scales backend Pods based on CPU load |
 | `kustomization.yaml` | Groups all manifests | One command deploys everything |
-| `Dockerfile.backend` | Multi-stage build for FastAPI | Same as Phase 6, COPY path points to phase-8-eks |
-| `Dockerfile.frontend` | Multi-stage build for React | Same as Phase 6, COPY path points to phase-8-eks |
+| `Dockerfile.backend` | Multi-stage build for FastAPI | Same as Phase 6, COPY path points to phase-08-eks |
+| `Dockerfile.frontend` | Multi-stage build for React | Same as Phase 6, COPY path points to phase-08-eks |
 | `nginx-frontend.conf` | Nginx config for frontend | Same as Phase 6 |
 
 ## Step 1: Prepare AWS IAM User Or Role
@@ -361,7 +361,7 @@ Enter your credentials when prompted:
 ```text
 AWS Access Key ID:     YOUR_ACCESS_KEY_ID
 AWS Secret Access Key: YOUR_SECRET_ACCESS_KEY
-Default region name:   YOUR_AWS_REGION (e.g. ap-southeast-1)
+Default region name:   YOUR_AWS_REGION (e.g. us-east-1)
 Default output format: json
 ```
 
@@ -448,7 +448,7 @@ Run:
 cd ~
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
-ssh-keygen -t ed25519 -C "devops-launchboard-phase-8-eks" -f ~/.ssh/devops_launchboard_github_key
+ssh-keygen -t ed25519 -C "devops-launchboard-phase-08-eks" -f ~/.ssh/devops_launchboard_github_key
 cat ~/.ssh/devops_launchboard_github_key.pub
 ```
 
@@ -456,7 +456,7 @@ Add the public key to GitHub as a read-only deploy key:
 
 ```text
 GitHub repository > Settings > Deploy keys > Add deploy key
-Title: devops-launchboard-phase-8-eks
+Title: devops-launchboard-phase-08-eks
 Key: paste the public key
 Allow write access: unchecked
 ```
@@ -515,9 +515,9 @@ Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-mkdir -p deployment/phase-8-eks/cluster
-mkdir -p deployment/phase-8-eks/ecr
-mkdir -p deployment/phase-8-eks/k8s
+mkdir -p deployment/phase-08-eks/cluster
+mkdir -p deployment/phase-08-eks/ecr
+mkdir -p deployment/phase-08-eks/k8s
 ```
 
 Why this step exists:
@@ -562,7 +562,7 @@ Docker should not send secrets, dependency folders, virtual environments, caches
 This file is the blueprint for your entire EKS infrastructure. One `eksctl create cluster -f` command reads it and creates everything: the VPC, subnets, NAT gateway, security groups, IAM roles, the EKS control plane, the managed node group, the OIDC provider, CloudWatch logging, and the EBS CSI add-on.
 
 ```bash
-vim deployment/phase-8-eks/cluster/eksctl-cluster.yaml
+vim deployment/phase-08-eks/cluster/eksctl-cluster.yaml
 ```
 
 Paste:
@@ -622,14 +622,14 @@ addons:
       ebsCSIController: true
 ```
 
-Replace `YOUR_AWS_REGION` in three places: `metadata.region`, and both entries under `availabilityZones`. For example, if your region is `ap-southeast-1`:
+Replace `YOUR_AWS_REGION` in three places: `metadata.region`, and both entries under `availabilityZones`. For example, if your region is `us-east-1`:
 
 ```yaml
 metadata:
-  region: ap-southeast-1
+  region: us-east-1
 availabilityZones:
-  - ap-southeast-1a
-  - ap-southeast-1b
+  - us-east-1a
+  - us-east-1b
 ```
 
 Line explanation:
@@ -670,7 +670,7 @@ Reference:
 ECR stores your Docker images. Without a lifecycle policy, every image you push stays in the repository forever, and storage costs grow. This policy automatically expires old images.
 
 ```bash
-vim deployment/phase-8-eks/ecr/lifecycle-policy.json
+vim deployment/phase-08-eks/ecr/lifecycle-policy.json
 ```
 
 Paste:
@@ -722,12 +722,12 @@ Reference:
 
 ## Step 13: Create Dockerfiles And Nginx Config
 
-These are the same files from Phase 6, with one difference: the frontend Dockerfile's COPY path points to `deployment/phase-8-eks/nginx-frontend.conf`.
+These are the same files from Phase 6, with one difference: the frontend Dockerfile's COPY path points to `deployment/phase-08-eks/nginx-frontend.conf`.
 
 ### Dockerfile.backend
 
 ```bash
-vim deployment/phase-8-eks/Dockerfile.backend
+vim deployment/phase-08-eks/Dockerfile.backend
 ```
 
 Paste:
@@ -783,12 +783,38 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 ```
 
-This is mostly identical to Phase 6; see Phase 6 Scenario 1 Step 12 for the base line-by-line explanation. One change: `groupadd`/`useradd` now pin an explicit `--uid 10001 --gid 10001` instead of letting the system auto-assign one. A name-only `USER app` produces a non-numeric user that Kubernetes cannot verify against `runAsNonRoot`, and the auto-assigned UID can also shift if the base image changes. Pinning a fixed numeric UID/GID keeps the Dockerfile and the Kubernetes `securityContext` (below) deterministic and in sync.
+Line explanation:
+
+- `FROM python:3.12-slim AS builder` starts the first stage of a multi-stage build. `python:3.12-slim` is a Debian-based Python image with only the minimum packages needed to run Python. `AS builder` gives this stage a name so the second stage can copy files from it. Using a named stage means the builder stage is not included in the final image.
+- `ENV PYTHONDONTWRITEBYTECODE=1` tells Python not to write `.pyc` compiled bytecode files to disk, keeping the image smaller and avoiding stale cache files.
+- `ENV PYTHONUNBUFFERED=1` forces Python to write output directly to stdout and stderr without buffering, so logs appear in real time in `kubectl logs`.
+- `ENV VIRTUAL_ENV=/opt/venv` and `ENV PATH="/opt/venv/bin:${PATH}"` create and prioritize a virtual environment at a known path so it can be copied between stages and so `python`, `uvicorn`, and `alembic` resolve to the venv versions.
+- `WORKDIR /app` sets the working directory inside the container to `/app`. All subsequent `COPY` and `RUN` commands use this as the base path.
+- `RUN python -m venv /opt/venv` creates the virtual environment during the build, isolating the app's Python dependencies from the system Python.
+- `COPY backend/pyproject.toml backend/alembic.ini ./` copies the dependency definition and Alembic config files before the source code. This is a Docker layer-caching trick: if these files have not changed between commits, Docker reuses the cached install layer and skips reinstalling packages.
+- `COPY backend/app ./app` copies the FastAPI application source code into `/app/app`.
+- `COPY backend/alembic ./alembic` copies the Alembic migration files into `/app/alembic`. The migration Job needs these files to apply database schema changes.
+- `RUN pip install --no-cache-dir --upgrade pip` upgrades pip without keeping a download cache, which keeps the image smaller.
+- `RUN pip install --no-cache-dir .` installs the application and its base dependencies. Alembic is one of those base dependencies (not a dev-only extra), so this single install is enough for the migration Job too.
+- `FROM python:3.12-slim AS runtime` starts a completely fresh second stage. This stage becomes the final image: no build tools, no pip cache, nothing from the builder stage except what is explicitly copied.
+- `RUN groupadd --system --gid 10001 app` and `useradd --system --uid 10001 --gid 10001 ...` create a non-login service user, but unlike Phase 6, they pin an explicit `--uid 10001 --gid 10001` instead of letting the system auto-assign one. A name-only `USER app` produces a non-numeric user that the kubelet cannot verify against `runAsNonRoot`, and an auto-assigned UID can also shift if the base image changes. Pinning a fixed numeric UID/GID keeps the Dockerfile and the Kubernetes `securityContext` (below) deterministic and in sync — this is the "longer-term alternative" flagged in Phase 6 Scenario 1 Step 15.8's troubleshooting note, adopted here as the default.
+- `COPY --from=builder /opt/venv /opt/venv` copies the entire virtual environment from the builder stage, giving the runtime image all installed Python packages without needing pip or build tools.
+- `COPY --from=builder /app /app` copies the application code from the builder stage.
+- `RUN chown -R app:app /app /opt/venv` gives the non-root `app` user ownership of the app directory and virtual environment. Without this, the `app` user cannot read its own files.
+- `USER app` switches from root to the `app` user for all subsequent commands. The container runs as non-root from this point forward.
+- `EXPOSE 8000` documents that the container listens on port 8000. This is metadata for humans and tools, not an actual port-opening action.
+- `HEALTHCHECK` runs a Python request against `/health` every 30 seconds. If it fails 3 times in a row, the container is marked unhealthy.
+- `CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]` starts Uvicorn listening on all interfaces. `--proxy-headers` makes Uvicorn trust the `X-Forwarded-*` headers added by the ALB and the frontend Nginx in front of it.
+
+Reference:
+
+- Dockerfile reference: https://docs.docker.com/reference/dockerfile/
+- Multi-stage builds: https://docs.docker.com/build/building/multi-stage/
 
 ### Dockerfile.frontend
 
 ```bash
-vim deployment/phase-8-eks/Dockerfile.frontend
+vim deployment/phase-08-eks/Dockerfile.frontend
 ```
 
 Paste:
@@ -809,7 +835,7 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
-COPY deployment/phase-8-eks/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deployment/phase-08-eks/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
@@ -820,18 +846,31 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 CMD ["nginx", "-g", "daemon off;"]
 ```
 
-The only line that differs from Phase 6 is the COPY path for the nginx config:
+Line explanation:
 
-```dockerfile
-COPY deployment/phase-8-eks/nginx-frontend.conf /etc/nginx/conf.d/default.conf
-```
+- `FROM node:22-alpine AS builder` uses the official Node.js 22 image based on Alpine Linux to build the React app. This stage is not included in the final image.
+- `WORKDIR /app` sets the working directory inside the build container.
+- `ARG VITE_API_URL=""` declares a build argument with a default empty value, passed in at build time with `--build-arg`. Vite reads this during the build to know the API base URL.
+- `ENV VITE_API_URL=${VITE_API_URL}` transfers the build argument into an environment variable so Vite can embed it into the compiled JavaScript at build time. Left empty here because the frontend uses relative `/api` paths, which the Nginx config proxies.
+- `COPY frontend/package*.json ./` followed by `RUN npm ci` copies the lockfile before the source code, so an unchanged lockfile reuses the cached install layer. `npm ci` installs exact versions from `package-lock.json` for reproducible builds.
+- `COPY frontend/ ./` copies the rest of the frontend source code.
+- `RUN npm run build` compiles the React app into static files in `/app/dist`.
+- `FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime` starts the final stage using the official unprivileged Nginx image, which runs without root privileges on port 8080 instead of 80. Node.js does not appear in the final image at all.
+- `COPY deployment/phase-08-eks/nginx-frontend.conf /etc/nginx/conf.d/default.conf` installs the custom config from the Phase 8 folder. This is the one line that differs from Phase 6, which copied from the phase-6 folder; if you copy this Dockerfile from Phase 6, update this line or the build fails at the COPY step.
+- `COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html` copies the compiled frontend into the web root, owned by UID/GID 101, the nginx user in the unprivileged image. Without `--chown`, Nginx cannot read the files.
+- `EXPOSE 8080` documents the port. The unprivileged image uses 8080 because non-root users cannot bind to ports below 1024.
+- `HEALTHCHECK` runs `wget -qO- http://127.0.0.1:8080/healthz` to confirm Nginx is serving.
+- `CMD ["nginx", "-g", "daemon off;"]` keeps Nginx in the foreground so Docker does not think the process exited.
 
-This must point to the Phase 8 folder, not Phase 6. If you copy this Dockerfile from Phase 6, update this line or the build fails at the COPY step.
+Reference:
+
+- Vite environment variables: https://vite.dev/guide/env-and-mode
+- Nginx unprivileged image: https://hub.docker.com/r/nginxinc/nginx-unprivileged
 
 ### nginx-frontend.conf
 
 ```bash
-vim deployment/phase-8-eks/nginx-frontend.conf
+vim deployment/phase-08-eks/nginx-frontend.conf
 ```
 
 Paste:
@@ -885,19 +924,32 @@ server {
 }
 ```
 
-This is identical to Phase 6. See Phase 6 Scenario 1 Step 14 for the full line-by-line explanation.
+Line explanation:
+
+- `listen 8080` tells Nginx to listen on port 8080 inside the container. The unprivileged image cannot use port 80 because ports below 1024 require root.
+- `server_name _` is a catch-all that matches any hostname.
+- `root /usr/share/nginx/html` and `index index.html` point Nginx at the compiled React files and the default file to serve for directory requests.
+- `client_max_body_size 10M` allows request bodies up to 10 MB, in case the app allows file uploads through the API.
+- `location = /healthz` exact-matches the health check path, disables access logging for it, and returns a plain `200 ok` — this is what the ALB target group and the Kubernetes probes check.
+- `location /api/`, `location = /health`, and `location = /ready` proxy those paths to `http://launchboard-backend:8000/...`. `launchboard-backend` is the Kubernetes Service DNS name; inside the cluster, Kubernetes DNS resolves it to the backend Service's ClusterIP. The `proxy_set_header` lines forward the original Host, client IP, and protocol to the backend.
+- `location / { try_files $uri $uri/ /index.html; }` falls back to `index.html` for any path that does not match a real file. This is required for React Router: navigating directly to a route like `/dashboard` has no matching file, so Nginx serves `index.html` and React Router renders the right page client-side.
+
+Reference:
+
+- Nginx server block documentation: https://nginx.org/en/docs/http/ngx_http_core_module.html
+- Nginx proxy module: https://nginx.org/en/docs/http/ngx_http_proxy_module.html
 
 ## Step 14: Create Kubernetes Manifests
 
-All manifests go inside `deployment/phase-8-eks/k8s/`. These are similar to the Phase 6 kubeadm manifests with key differences for EKS: images come from ECR, storage uses the gp3 EBS StorageClass, and the Ingress uses ALB annotations instead of Nginx Ingress.
+All manifests go inside `deployment/phase-08-eks/k8s/`. These are similar to the Phase 6 kubeadm manifests with key differences for EKS: images come from ECR, storage uses the gp3 EBS StorageClass, and the Ingress uses ALB annotations instead of Nginx Ingress.
 
 Important: three placeholders appear throughout the manifests. Replace them before applying:
 
 | Placeholder | Where To Find The Real Value | Example |
 | --- | --- | --- |
 | `YOUR_ACCOUNT_ID` | `aws sts get-caller-identity --query Account --output text` | `123456789012` |
-| `YOUR_AWS_REGION` | The region you chose in Step 11 | `ap-southeast-1` |
-| `YOUR_ALB_DNS_NAME` | `kubectl get ingress` after applying (Step 22) | `k8s-devopsla-launchbo-abc123.ap-southeast-1.elb.amazonaws.com` |
+| `YOUR_AWS_REGION` | The region you chose in Step 11 | `us-east-1` |
+| `YOUR_ALB_DNS_NAME` | `kubectl get ingress` after applying (Step 22) | `k8s-devopsla-launchbo-abc123.us-east-1.elb.amazonaws.com` |
 
 Move to the project root:
 
@@ -908,7 +960,7 @@ cd /opt/devops-launchboard/app-source
 ### namespace.yaml
 
 ```bash
-vim deployment/phase-8-eks/k8s/namespace.yaml
+vim deployment/phase-08-eks/k8s/namespace.yaml
 ```
 
 Paste:
@@ -923,14 +975,22 @@ metadata:
     app.kubernetes.io/part-of: devops-launchboard
 ```
 
-Same as Phase 6. Isolates all application resources from system namespaces.
+Line explanation:
+
+- `apiVersion: v1` and `kind: Namespace` use the core Kubernetes API. Namespaces, Services, ConfigMaps, Secrets, and PersistentVolumeClaims all use `v1`.
+- `metadata.name: devops-launchboard` is the name of the namespace. Every other resource in this phase sets `namespace: devops-launchboard` to belong to it, isolating these resources from system namespaces like `kube-system`.
+- `app.kubernetes.io/name` and `app.kubernetes.io/part-of` are standardized Kubernetes labels that make these resources compatible with dashboards and monitoring tools that look for them.
+
+Reference:
+
+- Kubernetes Namespaces: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
 
 ### storageclass.yaml
 
 This file does not exist in Phase 6. It is EKS-specific.
 
 ```bash
-vim deployment/phase-8-eks/k8s/storageclass.yaml
+vim deployment/phase-08-eks/k8s/storageclass.yaml
 ```
 
 Paste:
@@ -976,7 +1036,7 @@ Reference:
 ### configmap.yaml
 
 ```bash
-vim deployment/phase-8-eks/k8s/configmap.yaml
+vim deployment/phase-08-eks/k8s/configmap.yaml
 ```
 
 Paste:
@@ -998,13 +1058,20 @@ data:
 
 Line explanation:
 
-- `CORS_ORIGINS` is set to a placeholder because you do not know the ALB DNS name until AWS creates the load balancer in Step 22. You will update this value after the ALB is created in Step 23.
-- All other fields are the same as Phase 6.
+- `CORS_ORIGINS` is set to a placeholder because you do not know the ALB DNS name until AWS creates the load balancer in Step 22. You will update this value after the ALB is created in Step 23. This tells the FastAPI backend which browser origin is allowed to call the API; if it does not match the URL you open in the browser, the browser blocks the API responses.
+- `APP_NAME` is the display name read by the backend.
+- `APP_ENV: production` affects logging behavior and error responses.
+- `SEED_DEMO_DATA: "true"` tells the backend to insert sample data on first run so the dashboard is not empty.
+- `POSTGRES_DB` and `POSTGRES_USER` are the database name and username the backend connects with; the password comes from the Secret, not the ConfigMap.
+
+Reference:
+
+- Kubernetes ConfigMaps: https://kubernetes.io/docs/concepts/configuration/configmap/
 
 ### secret.example.yaml
 
 ```bash
-vim deployment/phase-8-eks/k8s/secret.example.yaml
+vim deployment/phase-08-eks/k8s/secret.example.yaml
 ```
 
 Paste:
@@ -1021,12 +1088,22 @@ stringData:
   DATABASE_URL: postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard
 ```
 
-Example only. The real Secret is created with `kubectl create secret` in Step 19.
+Line explanation:
+
+- `type: Opaque` means this is a generic secret with no special structure, the right type for application credentials.
+- `stringData` lets you write plain text values; Kubernetes base64-encodes them automatically when storing.
+- `POSTGRES_PASSWORD` is the PostgreSQL superuser password. `DATABASE_URL` is the full async connection string the FastAPI backend uses; `launchboard-db` is the Service DNS name, and the password here must exactly match `POSTGRES_PASSWORD`.
+
+This file has placeholder values only. Never commit real credentials. The real Secret is created with `kubectl create secret` in Step 19.
+
+Reference:
+
+- Kubernetes Secrets: https://kubernetes.io/docs/concepts/configuration/secret/
 
 ### pvc.yaml
 
 ```bash
-vim deployment/phase-8-eks/k8s/pvc.yaml
+vim deployment/phase-08-eks/k8s/pvc.yaml
 ```
 
 Paste:
@@ -1064,7 +1141,7 @@ Reference:
 ### launchboard-postgres-deployment.yaml
 
 ```bash
-vim deployment/phase-8-eks/k8s/launchboard-postgres-deployment.yaml
+vim deployment/phase-08-eks/k8s/launchboard-postgres-deployment.yaml
 ```
 
 Paste:
@@ -1148,14 +1225,27 @@ spec:
             claimName: launchboard-postgres-pvc
 ```
 
-This is the same as Phase 6 kubeadm. The PostgreSQL image (`postgres:16-alpine`) comes from Docker Hub (public), not ECR, because it is an official upstream image you do not build. EKS worker nodes can pull public images through the NAT Gateway.
+Line explanation:
+
+- `spec.replicas: 1` runs a single PostgreSQL Pod. Running more than one replica of a single-writer database without a replication setup would cause data corruption, so this is intentionally not scaled like the backend or frontend.
+- `spec.strategy.type: Recreate` terminates the existing Pod completely before creating a new one. This is required for the database: `RollingUpdate` would briefly run two Pods against the same EBS volume, and EBS only supports `ReadWriteOnce`, so the second Pod could not even mount it.
+- `image: postgres:16-alpine` comes from Docker Hub (public), not ECR, because it is an official upstream image you do not build. EKS worker nodes can pull public images through the NAT Gateway.
+- `env` reads `POSTGRES_DB` and `POSTGRES_USER` from the ConfigMap and `POSTGRES_PASSWORD` from the Secret, which is how the official Postgres image's entrypoint script creates the database and user on first start.
+- `volumeMounts` mounts the `postgres-data` volume at `/var/lib/postgresql/data`, which is where PostgreSQL stores its files.
+- `readinessProbe`/`livenessProbe` both run `pg_isready` inside the container to check PostgreSQL is accepting connections, rather than an HTTP check.
+- `resources` gives the database more memory than the backend or frontend (`256Mi` request, `512Mi` limit), since PostgreSQL benefits from more memory for caching.
+- `volumes[0].persistentVolumeClaim.claimName: launchboard-postgres-pvc` binds this Pod to the PVC created earlier.
 
 The key difference from Phase 6 is invisible in this manifest: the PVC now creates a real EBS volume via the `gp3-encrypted` StorageClass. If the worker node running this Pod is terminated by the node group, AWS creates a new node, the EBS CSI driver re-attaches the same volume, and PostgreSQL starts with its data intact. This could not happen with local-path storage.
+
+Reference:
+
+- Kubernetes Deployments: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
 
 ### launchboard-postgres-service.yaml
 
 ```bash
-vim deployment/phase-8-eks/k8s/launchboard-postgres-service.yaml
+vim deployment/phase-08-eks/k8s/launchboard-postgres-service.yaml
 ```
 
 Paste:
@@ -1176,12 +1266,21 @@ spec:
       targetPort: 5432
 ```
 
-Identical to Phase 6. `launchboard-db` becomes the DNS name in the DATABASE_URL.
+Line explanation:
+
+- `metadata.name: launchboard-db` becomes the DNS entry inside the cluster. Any Pod in the `devops-launchboard` namespace can reach the database at `launchboard-db:5432`; the `DATABASE_URL` in the Secret uses this exact name.
+- `spec.type: ClusterIP` creates an internal-only Service with no external access, keeping the database private.
+- `spec.selector.app: launchboard-db` routes traffic to Pods carrying that label.
+- `ports[0].port` and `ports[0].targetPort` are both `5432` because PostgreSQL listens on 5432 inside the container.
+
+Reference:
+
+- Kubernetes Services: https://kubernetes.io/docs/concepts/services-networking/service/
 
 ### launchboard-migration-job.yaml
 
 ```bash
-vim deployment/phase-8-eks/k8s/launchboard-migration-job.yaml
+vim deployment/phase-08-eks/k8s/launchboard-migration-job.yaml
 ```
 
 Paste:
@@ -1229,14 +1328,24 @@ spec:
 
 Line explanation:
 
-- `image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-8` pulls from your private ECR repository. Replace both placeholders. Example: `123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/launchboard-backend:phase-8`.
+- `apiVersion: batch/v1` and `kind: Job` create a one-time task: unlike a Deployment, a Job runs its Pod to completion and then stops, instead of keeping it running forever.
+- `spec.backoffLimit: 3` retries the Job up to 3 times if it fails before Kubernetes marks it failed and stops retrying, preventing an infinite retry loop on a permanent migration error.
+- `spec.template.spec.restartPolicy: OnFailure` restarts the container only on failure, not on success — Jobs cannot use `Always`, which would restart even after a successful run.
+- `image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-8` pulls from your private ECR repository. Replace both placeholders. Example: `123456789012.dkr.ecr.us-east-1.amazonaws.com/launchboard-backend:phase-8`. The migration Job reuses the backend image because Alembic is already installed in it.
 - `imagePullPolicy: Always` tells the kubelet to pull the image from ECR on every Pod creation, even if a cached version exists. This is the correct setting for ECR because EKS worker nodes authenticate to ECR using temporary IAM credentials that the kubelet refreshes automatically (via the `ecr-credential-provider` built into the EKS-optimized AMI). No `imagePullSecret` is needed for ECR in the same account.
-- The rest (wait loop, `alembic upgrade head`, envFrom, resources) is identical to Phase 6.
+- `command` overrides the Dockerfile's `CMD` for this Job. The `until python -c "import socket; ..."` loop tries a TCP connection to `launchboard-db:5432` every 2 seconds until PostgreSQL accepts it, preventing Alembic from running before the database is ready.
+- `alembic upgrade head` applies all pending migrations up to the latest version.
+- `envFrom` loads every key from the ConfigMap and the Secret as environment variables; Alembic reads `DATABASE_URL` from the Secret to know which database to connect to.
+- `resources.requests`/`resources.limits` are smaller than the main backend because migrations run briefly and do not need much compute.
+
+Reference:
+
+- Kubernetes Jobs: https://kubernetes.io/docs/concepts/workloads/controllers/job/
 
 ### launchboard-backend-deployment.yaml
 
 ```bash
-vim deployment/phase-8-eks/k8s/launchboard-backend-deployment.yaml
+vim deployment/phase-08-eks/k8s/launchboard-backend-deployment.yaml
 ```
 
 Paste:
@@ -1312,14 +1421,26 @@ spec:
               memory: 512Mi
 ```
 
+- `spec.replicas: 2` runs two backend Pods so one keeps serving traffic while the other is restarted or updated.
+- `spec.strategy.type: RollingUpdate` with `maxSurge: 1` and `maxUnavailable: 0` updates Pods gradually with zero downtime: one extra Pod can exist during a rollout, but Kubernetes never removes an old Pod until its replacement is ready.
 - `runAsUser: 10001` and `runAsGroup: 10001` are required because the Dockerfile uses `USER app` (a name), and the kubelet can only verify numeric UIDs. They must match the `--uid 10001 --gid 10001` pinned in the Dockerfile, or the Pod fails with `CreateContainerConfigError`. See Phase 6 Scenario 1 section 15.8 for the background on this error.
-- `image` points to ECR. Replace the two placeholders.
-- Everything else is identical to Phase 6.
+- `fsGroup: 10001` sets the GID that owns any mounted volumes, so the `app` user can read and write them.
+- `seccompProfile.type: RuntimeDefault` applies the container runtime's default seccomp profile, blocking dangerous syscalls while allowing everything the app needs — a separate protection layer from the UID checks above.
+- `image` points to ECR. Replace the two placeholders. `imagePullPolicy: Always` forces a fresh pull from ECR on every Pod creation, which is correct here for the same IAM-credential-refresh reason as the migration Job.
+- `command` waits for PostgreSQL to accept connections, then uses `exec` to replace the shell with Uvicorn so it becomes PID 1 and receives termination signals directly — this is what makes `kubectl rollout` and graceful shutdowns work correctly.
+- `envFrom` loads the ConfigMap and Secret as environment variables.
+- `readinessProbe` checks `/ready` (typically database connectivity) before the Pod receives traffic; `livenessProbe` checks `/health` and restarts the container if it fails.
+- `resources.requests`/`resources.limits` cap the backend at modest CPU and memory, appropriate for a student lab on small worker nodes.
+
+Reference:
+
+- Kubernetes Deployments: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
+- Pod security context: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
 
 ### launchboard-backend-service.yaml
 
 ```bash
-vim deployment/phase-8-eks/k8s/launchboard-backend-service.yaml
+vim deployment/phase-08-eks/k8s/launchboard-backend-service.yaml
 ```
 
 Paste:
@@ -1340,12 +1461,21 @@ spec:
       targetPort: 8000
 ```
 
-Identical to Phase 6.
+Line explanation:
+
+- `metadata.name: launchboard-backend` becomes the DNS name the frontend Nginx config proxies to (`http://launchboard-backend:8000/api/`).
+- `spec.type: ClusterIP` keeps the backend internal; all public traffic goes through the frontend and the ALB.
+- `spec.selector.app: launchboard-backend` routes traffic only to healthy backend Pods.
+- `ports[0].port`/`targetPort` are both `8000`, matching the container port.
+
+Reference:
+
+- Kubernetes Services: https://kubernetes.io/docs/concepts/services-networking/service/
 
 ### launchboard-frontend-deployment.yaml
 
 ```bash
-vim deployment/phase-8-eks/k8s/launchboard-frontend-deployment.yaml
+vim deployment/phase-08-eks/k8s/launchboard-frontend-deployment.yaml
 ```
 
 Paste:
@@ -1408,13 +1538,21 @@ spec:
               memory: 256Mi
 ```
 
+- `spec.replicas: 2` runs two frontend Pods for the same availability reasons as the backend.
+- `securityContext.runAsNonRoot: true` plus `runAsUser: 101` and `runAsGroup: 101` set the process to the nginx user/group baked into the `nginxinc/nginx-unprivileged` image. `fsGroup: 101` gives that user ownership of any mounted volumes.
 - `image` points to ECR. Replace the two placeholders.
-- `runAsUser: 101` matches the nginx user in the unprivileged image, same as Phase 6.
+- `containerPort: 8080` documents that the unprivileged image listens on 8080, not 80, since non-root processes cannot bind to ports below 1024.
+- `readinessProbe`/`livenessProbe` both check `/healthz`, the static health endpoint defined in the Nginx config.
+- `resources.requests`/`resources.limits` are low because the frontend only serves static files.
+
+Reference:
+
+- Kubernetes Deployments: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
 
 ### launchboard-frontend-service.yaml
 
 ```bash
-vim deployment/phase-8-eks/k8s/launchboard-frontend-service.yaml
+vim deployment/phase-08-eks/k8s/launchboard-frontend-service.yaml
 ```
 
 Paste:
@@ -1435,14 +1573,22 @@ spec:
       targetPort: 8080
 ```
 
-Identical to Phase 6. Port 80 is what the Ingress targets; port 8080 is the Pod port.
+Line explanation:
+
+- `metadata.name: launchboard-frontend` becomes the DNS name the Ingress's backend Service reference uses.
+- `spec.type: ClusterIP` keeps the Service internal; the Ingress/ALB routes external traffic to it.
+- `ports[0].port: 80` is what the Ingress targets; `targetPort: 8080` is the actual Pod port. The Service translates between the two so external traffic can use the standard port 80 while the container keeps its non-root port.
+
+Reference:
+
+- Kubernetes Services: https://kubernetes.io/docs/concepts/services-networking/service/
 
 ### ingress.yaml
 
 This is the file that differs most from Phase 6. In Phase 6, the Ingress was handled by the Nginx Ingress Controller. Here, the AWS Load Balancer Controller reads the Ingress and creates a real AWS Application Load Balancer.
 
 ```bash
-vim deployment/phase-8-eks/k8s/ingress.yaml
+vim deployment/phase-08-eks/k8s/ingress.yaml
 ```
 
 Paste:
@@ -1498,7 +1644,7 @@ What happens when you apply this:
 1. The AWS Load Balancer Controller sees the new Ingress with `ingress.class: alb`.
 2. It calls the AWS APIs to create an Application Load Balancer, a target group, and a listener.
 3. It registers the frontend Pod IPs as targets in the target group (because `target-type: ip`).
-4. AWS assigns the ALB a DNS name like `k8s-devopsla-launchbo-abc123.ap-southeast-1.elb.amazonaws.com`.
+4. AWS assigns the ALB a DNS name like `k8s-devopsla-launchbo-abc123.us-east-1.elb.amazonaws.com`.
 5. The DNS name appears in `kubectl get ingress` under the `ADDRESS` column after 2 to 5 minutes.
 6. Browser traffic to that DNS name reaches the ALB, which forwards it to a healthy frontend Pod.
 
@@ -1510,7 +1656,7 @@ Reference:
 ### hpa.yaml
 
 ```bash
-vim deployment/phase-8-eks/k8s/hpa.yaml
+vim deployment/phase-08-eks/k8s/hpa.yaml
 ```
 
 Paste:
@@ -1537,12 +1683,23 @@ spec:
           averageUtilization: 70
 ```
 
-Identical to Phase 6. EKS includes the Metrics Server by default, so HPA works without any extra installation. See Phase 6 Scenario 8 for the full line-by-line explanation.
+Line explanation:
+
+- `apiVersion: autoscaling/v2` supports multiple metric types (CPU, memory, custom metrics); the older `v1` only supported CPU.
+- `spec.scaleTargetRef` points the HPA at the `launchboard-backend` Deployment.
+- `minReplicas: 2` / `maxReplicas: 5` bound the autoscaler: it never goes below 2 Pods or above 5, no matter how low or high CPU usage gets.
+- `metrics[0].resource.name: cpu` with `target.type: Utilization` and `averageUtilization: 70` means: if average CPU usage across backend Pods exceeds 70% of their requested CPU, scale up; if it drops well below that, scale down.
+
+EKS includes the Metrics Server by default, so unlike the kubeadm scenario in Phase 6 — where HPA had to wait until Metrics Server was installed separately — this HPA is applied and usable immediately, with no extra installation step.
+
+Reference:
+
+- Horizontal Pod Autoscaler: https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/
 
 ### kustomization.yaml
 
 ```bash
-vim deployment/phase-8-eks/k8s/kustomization.yaml
+vim deployment/phase-08-eks/k8s/kustomization.yaml
 ```
 
 Paste:
@@ -1592,12 +1749,12 @@ Apply the lifecycle policy to both:
 ```bash
 aws ecr put-lifecycle-policy \
   --repository-name launchboard-backend \
-  --lifecycle-policy-text file://deployment/phase-8-eks/ecr/lifecycle-policy.json \
+  --lifecycle-policy-text file://deployment/phase-08-eks/ecr/lifecycle-policy.json \
   --region "$AWS_REGION"
 
 aws ecr put-lifecycle-policy \
   --repository-name launchboard-frontend \
-  --lifecycle-policy-text file://deployment/phase-8-eks/ecr/lifecycle-policy.json \
+  --lifecycle-policy-text file://deployment/phase-08-eks/ecr/lifecycle-policy.json \
   --region "$AWS_REGION"
 ```
 
@@ -1643,10 +1800,10 @@ Build images:
 ```bash
 cd /opt/devops-launchboard/app-source
 
-docker build -f deployment/phase-8-eks/Dockerfile.backend \
+docker build -f deployment/phase-08-eks/Dockerfile.backend \
   -t launchboard-backend:phase-8 .
 
-docker build -f deployment/phase-8-eks/Dockerfile.frontend \
+docker build -f deployment/phase-08-eks/Dockerfile.frontend \
   --build-arg VITE_API_URL= \
   -t launchboard-frontend:phase-8 .
 ```
@@ -1695,7 +1852,7 @@ Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-eksctl create cluster -f deployment/phase-8-eks/cluster/eksctl-cluster.yaml
+eksctl create cluster -f deployment/phase-08-eks/cluster/eksctl-cluster.yaml
 ```
 
 What happens during this command (watch the output):
@@ -1828,7 +1985,7 @@ Reference:
 Apply the namespace first:
 
 ```bash
-kubectl apply -f deployment/phase-8-eks/k8s/namespace.yaml
+kubectl apply -f deployment/phase-08-eks/k8s/namespace.yaml
 ```
 
 Create the Secret:
@@ -1847,9 +2004,9 @@ Use the same password in both values. Choose a stronger password than the placeh
 Open these three files and replace `YOUR_ACCOUNT_ID` and `YOUR_AWS_REGION` with the real values:
 
 ```bash
-vim deployment/phase-8-eks/k8s/launchboard-backend-deployment.yaml
-vim deployment/phase-8-eks/k8s/launchboard-migration-job.yaml
-vim deployment/phase-8-eks/k8s/launchboard-frontend-deployment.yaml
+vim deployment/phase-08-eks/k8s/launchboard-backend-deployment.yaml
+vim deployment/phase-08-eks/k8s/launchboard-migration-job.yaml
+vim deployment/phase-08-eks/k8s/launchboard-frontend-deployment.yaml
 ```
 
 You can verify your values:
@@ -1861,8 +2018,8 @@ echo "Account: $ACCOUNT_ID  Region: $AWS_REGION"
 The image lines should look like (example):
 
 ```text
-image: 123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/launchboard-backend:phase-8
-image: 123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/launchboard-frontend:phase-8
+image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/launchboard-backend:phase-8
+image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/launchboard-frontend:phase-8
 ```
 
 Or, to replace all placeholders in one command (optional, if you prefer sed over vim):
@@ -1870,17 +2027,17 @@ Or, to replace all placeholders in one command (optional, if you prefer sed over
 ```bash
 cd /opt/devops-launchboard/app-source
 sed -i "s|YOUR_ACCOUNT_ID|${ACCOUNT_ID}|g; s|YOUR_AWS_REGION|${AWS_REGION}|g" \
-  deployment/phase-8-eks/k8s/launchboard-backend-deployment.yaml \
-  deployment/phase-8-eks/k8s/launchboard-migration-job.yaml \
-  deployment/phase-8-eks/k8s/launchboard-frontend-deployment.yaml
+  deployment/phase-08-eks/k8s/launchboard-backend-deployment.yaml \
+  deployment/phase-08-eks/k8s/launchboard-migration-job.yaml \
+  deployment/phase-08-eks/k8s/launchboard-frontend-deployment.yaml
 ```
 
 Verify the substitution:
 
 ```bash
-grep "image:" deployment/phase-8-eks/k8s/launchboard-backend-deployment.yaml
-grep "image:" deployment/phase-8-eks/k8s/launchboard-migration-job.yaml
-grep "image:" deployment/phase-8-eks/k8s/launchboard-frontend-deployment.yaml
+grep "image:" deployment/phase-08-eks/k8s/launchboard-backend-deployment.yaml
+grep "image:" deployment/phase-08-eks/k8s/launchboard-migration-job.yaml
+grep "image:" deployment/phase-08-eks/k8s/launchboard-frontend-deployment.yaml
 ```
 
 None of the output lines should contain `YOUR_ACCOUNT_ID` or `YOUR_AWS_REGION`.
@@ -1889,7 +2046,7 @@ None of the output lines should contain `YOUR_ACCOUNT_ID` or `YOUR_AWS_REGION`.
 
 ```bash
 cd /opt/devops-launchboard/app-source
-kubectl apply -k deployment/phase-8-eks/k8s
+kubectl apply -k deployment/phase-08-eks/k8s
 ```
 
 Wait for each component in order:
@@ -1924,7 +2081,7 @@ kubectl -n devops-launchboard get ingress launchboard-ingress
 It takes 2 to 5 minutes for AWS to provision the ALB and assign a DNS name. Re-run the command until the `ADDRESS` column shows a value like:
 
 ```text
-k8s-devopsla-launchbo-abc123def4-567890123.ap-southeast-1.elb.amazonaws.com
+k8s-devopsla-launchbo-abc123def4-567890123.us-east-1.elb.amazonaws.com
 ```
 
 Test from the workstation:
@@ -1950,7 +2107,7 @@ echo "ALB DNS: $ALB_DNS"
 Edit the ConfigMap:
 
 ```bash
-vim deployment/phase-8-eks/k8s/configmap.yaml
+vim deployment/phase-08-eks/k8s/configmap.yaml
 ```
 
 Replace the CORS_ORIGINS line:
@@ -1962,13 +2119,13 @@ Replace the CORS_ORIGINS line:
 with the actual ALB DNS name (include `http://`, no trailing slash):
 
 ```yaml
-  CORS_ORIGINS: http://k8s-devopsla-launchbo-abc123def4-567890123.ap-southeast-1.elb.amazonaws.com
+  CORS_ORIGINS: http://k8s-devopsla-launchbo-abc123def4-567890123.us-east-1.elb.amazonaws.com
 ```
 
 Apply and restart the backend so it re-reads the environment:
 
 ```bash
-kubectl apply -f deployment/phase-8-eks/k8s/configmap.yaml
+kubectl apply -f deployment/phase-08-eks/k8s/configmap.yaml
 kubectl -n devops-launchboard rollout restart deployment/launchboard-backend
 kubectl -n devops-launchboard rollout status deployment/launchboard-backend
 ```
@@ -2019,7 +2176,7 @@ Build and push a new backend image with a new tag:
 ```bash
 cd /opt/devops-launchboard/app-source
 
-docker build -f deployment/phase-8-eks/Dockerfile.backend \
+docker build -f deployment/phase-08-eks/Dockerfile.backend \
   -t launchboard-backend:phase-8-v2 .
 
 docker tag launchboard-backend:phase-8-v2 \
@@ -2239,7 +2396,7 @@ Terminate the workstation EC2 from the AWS Console.
 [ ] eksctl-cluster.yaml created with correct region
 [ ] ECR lifecycle-policy.json created
 [ ] Dockerfile.backend created
-[ ] Dockerfile.frontend created (COPY path points to phase-8-eks)
+[ ] Dockerfile.frontend created (COPY path points to phase-08-eks)
 [ ] nginx-frontend.conf created
 [ ] All k8s manifests created
 [ ] storageclass.yaml created for gp3-encrypted

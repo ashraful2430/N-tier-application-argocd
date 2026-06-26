@@ -129,7 +129,7 @@ Create an AWS Budget before starting: AWS Console > Billing > Budgets > Create b
 ## Files Included In This Phase
 
 ```text
-deployment/phase-9-observability/
+deployment/phase-09-observability/
 +-- cluster/
 |   +-- eksctl-cluster.yaml                    (EKS cluster definition)
 +-- ecr/
@@ -152,10 +152,20 @@ deployment/phase-9-observability/
 |   +-- kustomization.yaml                     (groups app manifests)
 +-- helm/
 |   +-- kube-prometheus-stack-values.yaml      (Prometheus + Grafana Helm values)
++-- grafana/                                   (optional: reference dashboards and datasource provisioning, not created in this walkthrough)
+|   +-- dashboards/application-metrics.json
+|   +-- dashboards/infrastructure-metrics.json
+|   +-- grafana.yml
+|   +-- provisioning/datasources/prometheus.yml
++-- prometheus/                                (optional: standalone Prometheus config for reference; this phase configures Prometheus through the Helm values above instead)
+|   +-- prometheus.yml
+|   +-- rules.yml
+|   +-- alert-rules.yaml
 +-- elk-stack/
 |   +-- elasticsearch.yaml                     (Elasticsearch StatefulSet + Service)
 |   +-- kibana.yaml                            (Kibana Deployment + Service)
 |   +-- fluent-bit.yaml                        (Fluent Bit DaemonSet + ConfigMap)
+|   +-- filebeat.yml                           (optional: alternative log shipper, not used; this phase uses Fluent Bit instead)
 +-- jaeger/
 |   +-- jaeger.yaml                            (Jaeger all-in-one Deployment + Service)
 +-- observability-namespace.yaml               (observability namespace)
@@ -335,12 +345,12 @@ cd app-source
 
 ```bash
 cd /opt/devops-launchboard/app-source
-mkdir -p deployment/phase-9-observability/cluster
-mkdir -p deployment/phase-9-observability/ecr
-mkdir -p deployment/phase-9-observability/app-k8s
-mkdir -p deployment/phase-9-observability/helm
-mkdir -p deployment/phase-9-observability/elk-stack
-mkdir -p deployment/phase-9-observability/jaeger
+mkdir -p deployment/phase-09-observability/cluster
+mkdir -p deployment/phase-09-observability/ecr
+mkdir -p deployment/phase-09-observability/app-k8s
+mkdir -p deployment/phase-09-observability/helm
+mkdir -p deployment/phase-09-observability/elk-stack
+mkdir -p deployment/phase-09-observability/jaeger
 ```
 
 Each folder owns one part of the phase: `cluster/` for the eksctl config, `ecr/` for image lifecycle policy, `app-k8s/` for the application manifests, `helm/` for Prometheus/Grafana values, `elk-stack/` for the logging pipeline, and `jaeger/` for tracing.
@@ -352,7 +362,7 @@ These files are functionally identical to Phase 8, with the cluster name changed
 ### eksctl-cluster.yaml
 
 ```bash
-vim deployment/phase-9-observability/cluster/eksctl-cluster.yaml
+vim deployment/phase-09-observability/cluster/eksctl-cluster.yaml
 ```
 
 Paste:
@@ -364,7 +374,7 @@ kind: ClusterConfig
 metadata:
   name: devops-launchboard-phase-9
   region: YOUR_AWS_REGION
-  version: "1.32"
+  version: "1.34"
 
 availabilityZones:
   - YOUR_AWS_REGIONa
@@ -395,6 +405,7 @@ managedNodeGroups:
     tags:
       Project: devops-launchboard
       Environment: phase-9
+      Owner: student
 
 cloudWatch:
   clusterLogging:
@@ -418,7 +429,7 @@ Note: `desiredCapacity: 2` starts with 2 nodes. If Elasticsearch runs out of mem
 ### ECR lifecycle policy
 
 ```bash
-vim deployment/phase-9-observability/ecr/lifecycle-policy.json
+vim deployment/phase-09-observability/ecr/lifecycle-policy.json
 ```
 
 Paste:
@@ -485,30 +496,30 @@ deployment/phase-04-docker-compose/.env
 ### Dockerfiles and nginx config
 
 ```bash
-vim deployment/phase-9-observability/Dockerfile.backend
+vim deployment/phase-09-observability/Dockerfile.backend
 ```
 
 Paste the exact same content as Phase 8 Step 13 `Dockerfile.backend`.
 
 ```bash
-vim deployment/phase-9-observability/Dockerfile.frontend
+vim deployment/phase-09-observability/Dockerfile.frontend
 ```
 
 Paste the same content as Phase 8 Step 13 `Dockerfile.frontend`, but change the COPY path:
 
 ```dockerfile
-COPY deployment/phase-9-observability/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deployment/phase-09-observability/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 ```
 
 ```bash
-vim deployment/phase-9-observability/nginx-frontend.conf
+vim deployment/phase-09-observability/nginx-frontend.conf
 ```
 
 Paste the exact same content as Phase 8 Step 13 `nginx-frontend.conf`.
 
 ### Application Kubernetes manifests
 
-Create every file under `deployment/phase-9-observability/app-k8s/` with the exact same content as Phase 8 Step 14. The files are:
+Create every file under `deployment/phase-09-observability/app-k8s/` with the exact same content as Phase 8 Step 14. The files are:
 
 ```text
 namespace.yaml
@@ -554,7 +565,7 @@ Create the cluster (20 to 40 minutes):
 
 ```bash
 cd /opt/devops-launchboard/app-source
-eksctl create cluster -f deployment/phase-9-observability/cluster/eksctl-cluster.yaml
+eksctl create cluster -f deployment/phase-09-observability/cluster/eksctl-cluster.yaml
 ```
 
 Verify:
@@ -574,18 +585,18 @@ aws ecr create-repository --repository-name launchboard-backend --region "$AWS_R
 aws ecr create-repository --repository-name launchboard-frontend --region "$AWS_REGION"
 
 aws ecr put-lifecycle-policy --repository-name launchboard-backend \
-  --lifecycle-policy-text file://deployment/phase-9-observability/ecr/lifecycle-policy.json --region "$AWS_REGION"
+  --lifecycle-policy-text file://deployment/phase-09-observability/ecr/lifecycle-policy.json --region "$AWS_REGION"
 aws ecr put-lifecycle-policy --repository-name launchboard-frontend \
-  --lifecycle-policy-text file://deployment/phase-9-observability/ecr/lifecycle-policy.json --region "$AWS_REGION"
+  --lifecycle-policy-text file://deployment/phase-09-observability/ecr/lifecycle-policy.json --region "$AWS_REGION"
 
 aws ecr get-login-password --region "$AWS_REGION" | \
   docker login --username AWS --password-stdin "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
 
 cd /opt/devops-launchboard/app-source
 
-docker build -f deployment/phase-9-observability/Dockerfile.backend \
+docker build -f deployment/phase-09-observability/Dockerfile.backend \
   -t launchboard-backend:phase-9 .
-docker build -f deployment/phase-9-observability/Dockerfile.frontend \
+docker build -f deployment/phase-09-observability/Dockerfile.frontend \
   --build-arg VITE_API_URL= -t launchboard-frontend:phase-9 .
 
 docker tag launchboard-backend:phase-9 \
@@ -643,15 +654,15 @@ Replace image placeholders in manifests:
 ```bash
 cd /opt/devops-launchboard/app-source
 sed -i "s|YOUR_ACCOUNT_ID|${ACCOUNT_ID}|g; s|YOUR_AWS_REGION|${AWS_REGION}|g" \
-  deployment/phase-9-observability/app-k8s/launchboard-backend-deployment.yaml \
-  deployment/phase-9-observability/app-k8s/launchboard-migration-job.yaml \
-  deployment/phase-9-observability/app-k8s/launchboard-frontend-deployment.yaml
+  deployment/phase-09-observability/app-k8s/launchboard-backend-deployment.yaml \
+  deployment/phase-09-observability/app-k8s/launchboard-migration-job.yaml \
+  deployment/phase-09-observability/app-k8s/launchboard-frontend-deployment.yaml
 ```
 
 Create namespace and Secret:
 
 ```bash
-kubectl apply -f deployment/phase-9-observability/app-k8s/namespace.yaml
+kubectl apply -f deployment/phase-09-observability/app-k8s/namespace.yaml
 
 kubectl create secret generic launchboard-secret \
   --namespace devops-launchboard \
@@ -662,7 +673,7 @@ kubectl create secret generic launchboard-secret \
 Apply:
 
 ```bash
-kubectl apply -k deployment/phase-9-observability/app-k8s
+kubectl apply -k deployment/phase-09-observability/app-k8s
 ```
 
 Wait:
@@ -687,13 +698,13 @@ ALB_DNS=$(kubectl -n devops-launchboard get ingress launchboard-ingress \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 echo "ALB DNS: $ALB_DNS"
 
-vim deployment/phase-9-observability/app-k8s/configmap.yaml
+vim deployment/phase-09-observability/app-k8s/configmap.yaml
 ```
 
 Set `CORS_ORIGINS` to `http://YOUR_ALB_DNS_NAME` with the real DNS, then:
 
 ```bash
-kubectl apply -f deployment/phase-9-observability/app-k8s/configmap.yaml
+kubectl apply -f deployment/phase-09-observability/app-k8s/configmap.yaml
 kubectl -n devops-launchboard rollout restart deployment/launchboard-backend
 ```
 
@@ -711,7 +722,7 @@ The application is now running. Everything from this point forward adds observab
 All observability tools live in a separate namespace to keep them isolated from the application.
 
 ```bash
-vim deployment/phase-9-observability/observability-namespace.yaml
+vim deployment/phase-09-observability/observability-namespace.yaml
 ```
 
 Paste:
@@ -728,7 +739,7 @@ metadata:
 Apply:
 
 ```bash
-kubectl apply -f deployment/phase-9-observability/observability-namespace.yaml
+kubectl apply -f deployment/phase-09-observability/observability-namespace.yaml
 ```
 
 Verify:
@@ -752,7 +763,7 @@ What each component does:
 ### Create Helm values
 
 ```bash
-vim deployment/phase-9-observability/helm/kube-prometheus-stack-values.yaml
+vim deployment/phase-09-observability/helm/kube-prometheus-stack-values.yaml
 ```
 
 Paste:
@@ -880,7 +891,7 @@ helm repo update
 
 helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
   --namespace observability \
-  --values deployment/phase-9-observability/helm/kube-prometheus-stack-values.yaml \
+  --values deployment/phase-09-observability/helm/kube-prometheus-stack-values.yaml \
   --timeout 10m
 ```
 
@@ -1000,7 +1011,7 @@ Kibana (Deployment) queries Elasticsearch and shows a search UI
 ### elasticsearch.yaml
 
 ```bash
-vim deployment/phase-9-observability/elk-stack/elasticsearch.yaml
+vim deployment/phase-09-observability/elk-stack/elasticsearch.yaml
 ```
 
 Paste:
@@ -1121,7 +1132,7 @@ Line explanation:
 ### kibana.yaml
 
 ```bash
-vim deployment/phase-9-observability/elk-stack/kibana.yaml
+vim deployment/phase-09-observability/elk-stack/kibana.yaml
 ```
 
 Paste:
@@ -1206,7 +1217,7 @@ Line explanation:
 Fluent Bit is the log collector. It runs as a DaemonSet (one Pod per node) and reads the container log files that kubelet writes to `/var/log/containers/`.
 
 ```bash
-vim deployment/phase-9-observability/elk-stack/fluent-bit.yaml
+vim deployment/phase-09-observability/elk-stack/fluent-bit.yaml
 ```
 
 Paste:
@@ -1373,9 +1384,9 @@ Line explanation for the DaemonSet:
 ### Apply the EFK stack
 
 ```bash
-kubectl apply -f deployment/phase-9-observability/elk-stack/elasticsearch.yaml
-kubectl apply -f deployment/phase-9-observability/elk-stack/kibana.yaml
-kubectl apply -f deployment/phase-9-observability/elk-stack/fluent-bit.yaml
+kubectl apply -f deployment/phase-09-observability/elk-stack/elasticsearch.yaml
+kubectl apply -f deployment/phase-09-observability/elk-stack/kibana.yaml
+kubectl apply -f deployment/phase-09-observability/elk-stack/fluent-bit.yaml
 ```
 
 Wait for each component:
@@ -1444,7 +1455,7 @@ In this lab, Jaeger runs in "all-in-one" mode: collector, query engine, UI, and 
 The app does not send traces to Jaeger yet. This step deploys the tracing platform and makes it ready to receive traces. Adding OpenTelemetry instrumentation to the FastAPI backend (which sends spans to Jaeger) is a natural next step that you can explore independently.
 
 ```bash
-vim deployment/phase-9-observability/jaeger/jaeger.yaml
+vim deployment/phase-09-observability/jaeger/jaeger.yaml
 ```
 
 Paste:
@@ -1547,7 +1558,7 @@ Line explanation:
 Apply:
 
 ```bash
-kubectl apply -f deployment/phase-9-observability/jaeger/jaeger.yaml
+kubectl apply -f deployment/phase-09-observability/jaeger/jaeger.yaml
 kubectl -n observability rollout status deployment/jaeger --timeout=180s
 ```
 
@@ -1712,10 +1723,10 @@ Delete observability tools:
 
 ```bash
 helm uninstall kube-prometheus-stack --namespace observability
-kubectl delete -f deployment/phase-9-observability/jaeger/jaeger.yaml
-kubectl delete -f deployment/phase-9-observability/elk-stack/fluent-bit.yaml
-kubectl delete -f deployment/phase-9-observability/elk-stack/kibana.yaml
-kubectl delete -f deployment/phase-9-observability/elk-stack/elasticsearch.yaml
+kubectl delete -f deployment/phase-09-observability/jaeger/jaeger.yaml
+kubectl delete -f deployment/phase-09-observability/elk-stack/fluent-bit.yaml
+kubectl delete -f deployment/phase-09-observability/elk-stack/kibana.yaml
+kubectl delete -f deployment/phase-09-observability/elk-stack/elasticsearch.yaml
 kubectl delete namespace observability
 ```
 
