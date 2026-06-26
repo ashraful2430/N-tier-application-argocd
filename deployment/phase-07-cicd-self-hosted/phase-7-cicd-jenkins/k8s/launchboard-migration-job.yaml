@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: launchboard-migrate
+  namespace: devops-launchboard
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: launchboard-migrate
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: launchboard-backend:IMAGE_TAG_PLACEHOLDER
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until python -c "import socket; s=socket.create_connection(('launchboard-db', 5432), timeout=3); s.close()"; do
+                echo "waiting for postgres"
+                sleep 2
+              done
+              alembic upgrade head
+          envFrom:
+            - configMapRef:
+                name: launchboard-config
+            - secretRef:
+                name: launchboard-secret
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi

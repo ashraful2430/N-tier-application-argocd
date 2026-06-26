@@ -999,27 +999,23 @@ Paste:
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: gp3-encrypted
+  name: gp3
 provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
 parameters:
   type: gp3
   encrypted: "true"
-  fsType: ext4
-reclaimPolicy: Delete
-volumeBindingMode: WaitForFirstConsumer
-allowVolumeExpansion: true
 ```
 
 Line explanation:
 
 - `apiVersion: storage.k8s.io/v1` uses the storage API group.
 - `kind: StorageClass` defines a class of storage that PVCs can request. Different classes can offer different performance, encryption, or cost characteristics.
-- `metadata.name: gp3-encrypted` names this class. The PVC references this name in its `storageClassName` field.
+- `metadata.name: gp3` names this class. The PVC references this name in its `storageClassName` field.
 - `provisioner: ebs.csi.aws.com` tells Kubernetes which CSI driver handles storage requests for this class. This is the AWS EBS CSI driver installed as an EKS add-on in Step 11.
 - `parameters.type: gp3` creates gp3 EBS volumes. gp3 is the current-generation general-purpose SSD type. It is cheaper than gp2 and provides a baseline of 3,000 IOPS and 125 MB/s throughput included in the price.
 - `parameters.encrypted: "true"` enables EBS encryption at rest using the default AWS KMS key. Every byte written to the volume is encrypted transparently. This is a production best practice and costs nothing extra.
-- `parameters.fsType: ext4` formats the volume with the ext4 filesystem when it is first attached to a Pod.
-- `reclaimPolicy: Delete` means when the PVC is deleted, the underlying EBS volume is also deleted. This prevents orphaned EBS volumes from accumulating cost. For production databases where you want to keep the data even after deleting the PVC, use `Retain`.
 - `volumeBindingMode: WaitForFirstConsumer` delays volume creation until a Pod using the PVC is scheduled. This ensures the EBS volume is created in the same Availability Zone as the Pod's node. Without this, the volume might be created in AZ-a while the Pod lands on a node in AZ-b, and the Pod would be stuck Pending because EBS volumes cannot cross AZs.
 - `allowVolumeExpansion: true` lets you increase the PVC size later without recreating it. You edit the PVC spec to request more storage, and the CSI driver expands the underlying EBS volume.
 
@@ -1050,7 +1046,7 @@ metadata:
 data:
   APP_NAME: DevOps LaunchBoard API
   APP_ENV: production
-  CORS_ORIGINS: http://PLACEHOLDER_UPDATED_AFTER_ALB_CREATED
+  CORS_ORIGINS: http://YOUR_ALB_DNS_NAME
   SEED_DEMO_DATA: "true"
   POSTGRES_DB: launchboard
   POSTGRES_USER: launchboard_user
@@ -1117,21 +1113,21 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: gp3-encrypted
+  storageClassName: gp3
   resources:
     requests:
-      storage: 5Gi
+      storage: 10Gi
 ```
 
 Line explanation:
 
-- `storageClassName: gp3-encrypted` references the StorageClass you created above. This is the line that connects the PVC to the EBS CSI driver. When a Pod using this PVC is scheduled, the driver creates a 5 GB gp3 encrypted EBS volume in the same AZ as the node, attaches it, formats it with ext4, and mounts it at the path specified in the Deployment.
+- `storageClassName: gp3` references the StorageClass you created above. This is the line that connects the PVC to the EBS CSI driver. When a Pod using this PVC is scheduled, the driver creates a 10 GB gp3 encrypted EBS volume in the same AZ as the node, attaches it, and mounts it at the path specified in the Deployment.
 - `accessModes: ReadWriteOnce` means one node can mount the volume for read-write. This is the only access mode EBS supports.
-- `storage: 5Gi` requests 5 gibibytes. The EBS volume is exactly this size. Unlike local-path storage where the limit is informational, EBS enforces the size at the block device level.
+- `storage: 10Gi` requests 10 gibibytes. The EBS volume is exactly this size. Unlike local-path storage where the limit is informational, EBS enforces the size at the block device level.
 
 How this differs from Phase 6:
 
-In Phase 6, the PVC had no `storageClassName` and relied on the cluster's default StorageClass. Here you name the class explicitly (`gp3-encrypted`) to make the intent clear and to ensure the encrypted gp3 type is used even if the cluster's default class changes.
+In Phase 6, the PVC had no `storageClassName` and relied on the cluster's default StorageClass. Here you name the class explicitly (`gp3`) to make the intent clear and to ensure the encrypted gp3 type is used even if the cluster's default class changes.
 
 Reference:
 
@@ -1217,8 +1213,8 @@ spec:
               cpu: 100m
               memory: 256Mi
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: 1000m
+              memory: 1Gi
       volumes:
         - name: postgres-data
           persistentVolumeClaim:
@@ -1236,7 +1232,7 @@ Line explanation:
 - `resources` gives the database more memory than the backend or frontend (`256Mi` request, `512Mi` limit), since PostgreSQL benefits from more memory for caching.
 - `volumes[0].persistentVolumeClaim.claimName: launchboard-postgres-pvc` binds this Pod to the PVC created earlier.
 
-The key difference from Phase 6 is invisible in this manifest: the PVC now creates a real EBS volume via the `gp3-encrypted` StorageClass. If the worker node running this Pod is terminated by the node group, AWS creates a new node, the EBS CSI driver re-attaches the same volume, and PostgreSQL starts with its data intact. This could not happen with local-path storage.
+The key difference from Phase 6 is invisible in this manifest: the PVC now creates a real EBS volume via the `gp3` StorageClass. If the worker node running this Pod is terminated by the node group, AWS creates a new node, the EBS CSI driver re-attaches the same volume, and PostgreSQL starts with its data intact. This could not happen with local-path storage.
 
 Reference:
 
@@ -1302,7 +1298,7 @@ spec:
       containers:
         - name: migrate
           image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-8
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
             - -c
@@ -1332,7 +1328,7 @@ Line explanation:
 - `spec.backoffLimit: 3` retries the Job up to 3 times if it fails before Kubernetes marks it failed and stops retrying, preventing an infinite retry loop on a permanent migration error.
 - `spec.template.spec.restartPolicy: OnFailure` restarts the container only on failure, not on success — Jobs cannot use `Always`, which would restart even after a successful run.
 - `image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-8` pulls from your private ECR repository. Replace both placeholders. Example: `123456789012.dkr.ecr.us-east-1.amazonaws.com/launchboard-backend:phase-8`. The migration Job reuses the backend image because Alembic is already installed in it.
-- `imagePullPolicy: Always` tells the kubelet to pull the image from ECR on every Pod creation, even if a cached version exists. This is the correct setting for ECR because EKS worker nodes authenticate to ECR using temporary IAM credentials that the kubelet refreshes automatically (via the `ecr-credential-provider` built into the EKS-optimized AMI). No `imagePullSecret` is needed for ECR in the same account.
+- `imagePullPolicy: IfNotPresent` skips re-pulling if the node already has this exact tag cached, fine here since this phase pushes one image per build with a static `phase-8` tag rather than a unique tag per push. EKS worker nodes authenticate to ECR using temporary IAM credentials that the kubelet refreshes automatically (via the `ecr-credential-provider` built into the EKS-optimized AMI), so no `imagePullSecret` is needed for ECR in the same account.
 - `command` overrides the Dockerfile's `CMD` for this Job. The `until python -c "import socket; ..."` loop tries a TCP connection to `launchboard-db:5432` every 2 seconds until PostgreSQL accepts it, preventing Alembic from running before the database is ready.
 - `alembic upgrade head` applies all pending migrations up to the latest version.
 - `envFrom` loads every key from the ConfigMap and the Secret as environment variables; Alembic reads `DATABASE_URL` from the Secret to know which database to connect to.
@@ -1382,7 +1378,7 @@ spec:
       containers:
         - name: backend
           image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-8
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
             - -c
@@ -1426,7 +1422,7 @@ spec:
 - `runAsUser: 10001` and `runAsGroup: 10001` are required because the Dockerfile uses `USER app` (a name), and the kubelet can only verify numeric UIDs. They must match the `--uid 10001 --gid 10001` pinned in the Dockerfile, or the Pod fails with `CreateContainerConfigError`. See Phase 6 Scenario 1 section 15.8 for the background on this error.
 - `fsGroup: 10001` sets the GID that owns any mounted volumes, so the `app` user can read and write them.
 - `seccompProfile.type: RuntimeDefault` applies the container runtime's default seccomp profile, blocking dangerous syscalls while allowing everything the app needs — a separate protection layer from the UID checks above.
-- `image` points to ECR. Replace the two placeholders. `imagePullPolicy: Always` forces a fresh pull from ECR on every Pod creation, which is correct here for the same IAM-credential-refresh reason as the migration Job.
+- `image` points to ECR. Replace the two placeholders. `imagePullPolicy: IfNotPresent` is fine here for the same static-tag reasoning as the migration Job.
 - `command` waits for PostgreSQL to accept connections, then uses `exec` to replace the shell with Uvicorn so it becomes PID 1 and receives termination signals directly — this is what makes `kubectl rollout` and graceful shutdowns work correctly.
 - `envFrom` loads the ConfigMap and Secret as environment variables.
 - `readinessProbe` checks `/ready` (typically database connectivity) before the Pod receives traffic; `livenessProbe` checks `/health` and restarts the container if it fails.
@@ -1513,7 +1509,7 @@ spec:
       containers:
         - name: frontend
           image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-frontend:phase-8
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8080
@@ -1600,18 +1596,13 @@ metadata:
   name: launchboard-ingress
   namespace: devops-launchboard
   annotations:
-    kubernetes.io/ingress.class: alb
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
-    alb.ingress.kubernetes.io/healthcheck-port: "8080"
-    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
-    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "5"
-    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
-    alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"
-    alb.ingress.kubernetes.io/tags: Project=devops-launchboard,Environment=phase-8
+    alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-8
 spec:
+  ingressClassName: alb
   rules:
     - http:
         paths:
@@ -1626,17 +1617,12 @@ spec:
 
 Line explanation:
 
-- `kubernetes.io/ingress.class: alb` tells the AWS Load Balancer Controller to handle this Ingress. This is equivalent to `ingressClassName: nginx` in Phase 6 — it determines which controller acts on the resource. The ALB controller ignores Ingresses without this annotation.
+- `spec.ingressClassName: alb` tells the AWS Load Balancer Controller to handle this Ingress. This is the modern equivalent of `ingressClassName: nginx` in Phase 6 — it determines which controller acts on the resource. The ALB controller ignores Ingresses that do not name it.
 - `alb.ingress.kubernetes.io/scheme: internet-facing` creates a public ALB. The alternative, `internal`, creates an ALB accessible only from within the VPC.
 - `alb.ingress.kubernetes.io/target-type: ip` tells the ALB to send traffic directly to the Pod IPs. This works because EKS uses the AWS VPC CNI plugin, which assigns real VPC IP addresses to each Pod (unlike Flannel in Phase 6, which assigns overlay IPs). The alternative, `instance`, sends traffic to the NodePort on each worker node, which adds an extra network hop. `ip` mode is more efficient and is the recommended setting for EKS.
-- `alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'` configures the ALB listener on port 80. To add HTTPS, you would add `{"HTTPS": 443}` and a certificate ARN annotation.
+- `alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'` configures the ALB listener on port 80. To add HTTPS, you would add `{"HTTPS":443}` and a certificate ARN annotation.
 - `alb.ingress.kubernetes.io/healthcheck-path: /healthz` tells the ALB which path to probe to determine if a target (Pod) is healthy. This is the ALB's own health check, separate from the Kubernetes readiness probe. The ALB sends HTTP requests to this path and expects a 200 response.
-- `alb.ingress.kubernetes.io/healthcheck-port: "8080"` directs the health check to the frontend container's actual port. The ALB target group needs to know the Pod's real port, not the Service port.
-- `alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"` checks every 15 seconds.
-- `alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "5"` waits 5 seconds for a response.
-- `alb.ingress.kubernetes.io/healthy-threshold-count: "2"` requires 2 consecutive healthy responses to mark a target healthy.
-- `alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"` requires 3 consecutive failures to mark a target unhealthy.
-- `alb.ingress.kubernetes.io/tags` adds AWS resource tags to the ALB for cost tracking.
+- `alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-8` gives the ALB a predictable name in the EC2 Console instead of an auto-generated one, useful when several phases' ALBs exist in the same account at once.
 - `spec.rules` routes all traffic to the frontend Service, same as Phase 6. The frontend's Nginx then proxies `/api`, `/health`, and `/ready` to the backend.
 
 What happens when you apply this:
@@ -1665,7 +1651,7 @@ Paste:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: launchboard-backend-hpa
+  name: launchboard-backend
   namespace: devops-launchboard
 spec:
   scaleTargetRef:
@@ -1723,7 +1709,7 @@ resources:
   - hpa.yaml
 ```
 
-- `storageclass.yaml` is listed because EKS does not ship with a gp3-encrypted StorageClass by default.
+- `storageclass.yaml` is listed because EKS does not ship with a gp3 StorageClass by default.
 - `secret.example.yaml` is not listed; the real Secret is created with `kubectl create secret`.
 - `hpa.yaml` is included because EKS has Metrics Server built in, unlike kubeadm.
 
@@ -1885,7 +1871,7 @@ ip-192-168-X-X.ec2.internal        Ready    <none>   5m    v1.32.x
 kubectl get storageclass
 ```
 
-You should see at least `gp2 (default)`. Your `gp3-encrypted` class will be created when you apply the manifests.
+You should see at least `gp2 (default)`. Your `gp3` class will be created when you apply the manifests.
 
 ```bash
 kubectl get pods -n kube-system | grep ebs
@@ -2068,7 +2054,7 @@ kubectl -n devops-launchboard get ingress
 
 Expected: PVC `Bound`, all Pods `Running`, migration Job `Completed`, Ingress shows an `ADDRESS` after 2 to 5 minutes.
 
-If the PVC is Pending: check that the EBS CSI driver is running (`kubectl get pods -n kube-system | grep ebs`), and that the StorageClass was created (`kubectl get sc gp3-encrypted`).
+If the PVC is Pending: check that the EBS CSI driver is running (`kubectl get pods -n kube-system | grep ebs`), and that the StorageClass was created (`kubectl get sc gp3`).
 
 If Pods show ImagePullBackOff: check that the image URLs in the manifests match exactly what you pushed to ECR (`aws ecr describe-images --repository-name launchboard-backend --region $AWS_REGION`).
 
@@ -2282,7 +2268,7 @@ kubectl get storageclass
 kubectl get pods -n kube-system | grep ebs
 ```
 
-Common causes: the EBS CSI driver is not installed (the add-on section in `eksctl-cluster.yaml` was removed or the add-on failed), the StorageClass `gp3-encrypted` was not created (check `kubectl get sc`), or the IRSA role for the CSI driver is missing (the driver Pod logs will show `AccessDenied`).
+Common causes: the EBS CSI driver is not installed (the add-on section in `eksctl-cluster.yaml` was removed or the add-on failed), the StorageClass `gp3` was not created (check `kubectl get sc`), or the IRSA role for the CSI driver is missing (the driver Pod logs will show `AccessDenied`).
 
 ### Problem 5: ALB Returns 502 Bad Gateway
 
@@ -2399,7 +2385,7 @@ Terminate the workstation EC2 from the AWS Console.
 [ ] Dockerfile.frontend created (COPY path points to phase-08-eks)
 [ ] nginx-frontend.conf created
 [ ] All k8s manifests created
-[ ] storageclass.yaml created for gp3-encrypted
+[ ] storageclass.yaml created for gp3
 [ ] ECR repositories created
 [ ] ECR lifecycle policies applied
 [ ] Docker images built

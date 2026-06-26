@@ -1244,7 +1244,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: gp3-encrypted
+  storageClassName: gp3
   resources:
     requests:
       storage: 20Gi
@@ -1591,11 +1591,11 @@ server:
   dataStorage:
     enabled: true
     size: 10Gi
-    storageClass: gp3-encrypted
+    storageClass: gp3
   auditStorage:
     enabled: true
     size: 5Gi
-    storageClass: gp3-encrypted
+    storageClass: gp3
   resources:
     requests:
       cpu: 250m
@@ -1614,7 +1614,7 @@ Line explanation:
 
 - `ha.enabled: true` with `replicas: 3` runs Vault in high-availability mode using the integrated Raft storage backend. Three Vault Pods form a consensus cluster; if one fails, the other two continue serving.
 - `raft.enabled: true` uses Raft for internal storage instead of requiring an external backend like Consul.
-- `dataStorage` and `auditStorage` use `gp3-encrypted` EBS volumes to persist Vault's encrypted data and audit logs.
+- `dataStorage` and `auditStorage` use the `gp3` encrypted EBS StorageClass created earlier in this phase to persist Vault's encrypted data and audit logs.
 - `injector.enabled: true` installs the Vault Agent Injector, which can automatically inject secrets into Pod containers via annotations.
 
 Create the application-scoped policy:

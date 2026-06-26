@@ -1,0 +1,52 @@
+pipeline {
+  agent any
+
+  parameters {
+    choice(name: 'DEPLOYMENT', choices: ['launchboard-backend', 'launchboard-frontend'], description: 'Which Deployment to roll back')
+  }
+
+  environment {
+    NAMESPACE = 'devops-launchboard'
+  }
+
+  stages {
+    stage('Show Rollout History') {
+      steps {
+        sh 'kubectl -n "${NAMESPACE}" rollout history deployment/${DEPLOYMENT}'
+      }
+    }
+
+    stage('Roll Back To Previous Revision') {
+      steps {
+        sh 'kubectl -n "${NAMESPACE}" rollout undo deployment/${DEPLOYMENT}'
+      }
+    }
+
+    stage('Wait For Rollback') {
+      steps {
+        sh 'kubectl -n "${NAMESPACE}" rollout status deployment/${DEPLOYMENT} --timeout=180s'
+      }
+    }
+
+    stage('Show Running Image') {
+      steps {
+        sh '''
+          kubectl -n "${NAMESPACE}" get deployment ${DEPLOYMENT} \
+            -o jsonpath='{.spec.template.spec.containers[0].image}'
+          echo ""
+        '''
+      }
+    }
+
+    stage('Verify Application') {
+      steps {
+        sh '''
+          curl -fsS http://127.0.0.1/healthz
+          curl -fsS http://127.0.0.1/health
+          curl -fsS http://127.0.0.1/ready
+          echo "Rollback of ${DEPLOYMENT} verified."
+        '''
+      }
+    }
+  }
+}

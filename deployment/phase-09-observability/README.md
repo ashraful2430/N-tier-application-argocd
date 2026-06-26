@@ -291,7 +291,20 @@ eksctl version
 helm version
 ```
 
-See Phase 8 Steps 6-7 for detailed command explanations.
+Command explanation:
+
+- `curl ... -o "awscliv2.zip"` downloads the AWS CLI v2 installer for Linux x86_64. `unzip` extracts it, `sudo ./aws/install` installs it to `/usr/local/bin/aws`, and the `rm -rf` cleans up the installer files.
+- `aws configure` prompts for your Access Key ID, Secret Access Key, default region, and output format. Get keys from IAM Console > Users > your user > Security credentials > Create access key, using the "Command Line Interface (CLI)" use case for a student lab. Save both values immediately — the secret key is shown only once.
+- `aws sts get-caller-identity` confirms the credentials work by printing your account ID, user ARN, and user ID. If it fails with "Unable to locate credentials," re-run `aws configure`.
+- `kubectl` is the Kubernetes CLI you use to inspect and manage cluster resources. `eksctl` configures kubectl to connect to the cluster automatically once it creates one.
+- `eksctl` is the official CLI for creating and managing EKS clusters. It wraps CloudFormation under the hood: one `eksctl create cluster` command generates and runs the CloudFormation stacks that create the VPC, subnets, security groups, IAM roles, the EKS control plane, and the node group.
+- `helm` is the Kubernetes package manager. You use it to install the AWS Load Balancer Controller and the kube-prometheus-stack chart later in this phase, both distributed as Helm charts — a bundle of Kubernetes manifests with configurable values, similar to how `apt install` installs a package with its dependencies.
+
+Reference:
+
+- Install AWS CLI: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+- eksctl install: https://eksctl.io/installation/
+- Helm install: https://helm.sh/docs/intro/install/
 
 ## Step 5: Clone Repository
 
@@ -357,7 +370,7 @@ Each folder owns one part of the phase: `cluster/` for the eksctl config, `ecr/`
 
 ## Step 7: Create EKS Cluster Config And Dockerfiles
 
-These files are functionally identical to Phase 8, with the cluster name changed to `devops-launchboard-phase-9` and image tags changed to `phase-9`. See Phase 8 for full line-by-line explanations.
+This file is the blueprint for the entire EKS infrastructure. One `eksctl create cluster -f` command reads it and creates everything: the VPC, subnets, NAT gateway, security groups, IAM roles, the EKS control plane, the managed node group, the OIDC provider, CloudWatch logging, and the EBS CSI add-on.
 
 ### eksctl-cluster.yaml
 
@@ -422,7 +435,37 @@ addons:
       ebsCSIController: true
 ```
 
-Replace `YOUR_AWS_REGION` in three places. See Phase 8 Step 11 for the full explanation of every field.
+Replace `YOUR_AWS_REGION` in three places: `metadata.region`, and both entries under `availabilityZones`. For example, if your region is `us-east-1`:
+
+```yaml
+metadata:
+  region: us-east-1
+availabilityZones:
+  - us-east-1a
+  - us-east-1b
+```
+
+Line explanation:
+
+- `metadata.name: devops-launchboard-phase-9` names the EKS cluster. eksctl creates CloudFormation stacks named `eksctl-devops-launchboard-phase-9-cluster` and `eksctl-devops-launchboard-phase-9-nodegroup-launchboard-workers`.
+- `metadata.version: "1.34"` pins the Kubernetes version, quoted as a string because YAML would otherwise interpret `1.34` as a number.
+- `availabilityZones` spreads the VPC subnets across two AZs for high availability; EKS requires at least two.
+- `iam.withOIDC: true` creates an OIDC provider for the cluster — the foundation of IAM Roles for Service Accounts (IRSA), which lets Kubernetes ServiceAccounts assume IAM roles without storing AWS credentials in the cluster. The EBS CSI driver and the AWS Load Balancer Controller you install later both need this.
+- `vpc.clusterEndpoints.publicAccess: true` lets your workstation run `kubectl` against the API server over the internet; `privateAccess: true` lets worker nodes reach the API server over the private network.
+- `vpc.nat.gateway: Single` creates one shared NAT Gateway instead of one per AZ (`HighlyAvailable`), at roughly half the cost (~$33/month instead of ~$66/month) — an acceptable tradeoff for a student lab.
+- `managedNodeGroups` defines the worker nodes; AWS handles their lifecycle (launching, health-checking, replacing unhealthy instances).
+- `instanceType: t3.medium` gives 4 GB RAM per node, more than `t3.small`'s 2 GB. This phase needs the extra headroom for Elasticsearch and the kube-prometheus-stack on top of the app itself.
+- `desiredCapacity: 2`, `minSize: 2`, `maxSize: 4` set the starting and autoscaling boundaries for the node group.
+- `privateNetworking: true` keeps worker nodes in private subnets with no public IPs; all inbound traffic goes through the ALB and outbound traffic through the NAT Gateway.
+- `amiFamily: AmazonLinux2023` is the EKS-optimized AMI with containerd, kubelet, and the AWS VPC CNI plugin pre-installed.
+- `cloudWatch.clusterLogging.enableTypes` ships control plane logs (API server requests, audit events, authenticator, controller manager, scheduler decisions) to CloudWatch Logs for debugging.
+- `addons[0].name: aws-ebs-csi-driver` installs the EBS CSI driver as an EKS managed add-on — without it, PVCs requesting storage stay `Pending` forever. `wellKnownPolicies.ebsCSIController: true` has eksctl create and attach the IAM role this driver needs via IRSA.
+
+Reference:
+
+- eksctl ClusterConfig schema: https://eksctl.io/usage/schema/
+- EKS OIDC: https://docs.aws.amazon.com/eks/latest/userguide/enable-iam-roles-for-service-accounts.html
+- EBS CSI driver: https://docs.aws.amazon.com/eks/latest/userguide/ebs-csi.html
 
 Note: `desiredCapacity: 2` starts with 2 nodes. If Elasticsearch runs out of memory alongside the application, increase to 3 nodes: edit this file and run `eksctl scale nodegroup --cluster devops-launchboard-phase-9 --name launchboard-workers --nodes 3 --region $AWS_REGION`.
 
@@ -493,62 +536,765 @@ __pycache__
 deployment/phase-04-docker-compose/.env
 ```
 
-### Dockerfiles and nginx config
+### Dockerfile.backend
 
 ```bash
 vim deployment/phase-09-observability/Dockerfile.backend
 ```
 
-Paste the exact same content as Phase 8 Step 13 `Dockerfile.backend`.
+Paste:
+
+```dockerfile
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
+WORKDIR /app
+
+RUN python -m venv /opt/venv
+
+COPY backend/pyproject.toml backend/alembic.ini ./
+COPY backend/app ./app
+COPY backend/alembic ./alembic
+
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir .
+
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+ENV APP_ENV=production
+
+RUN groupadd --system --gid 10001 app \
+    && useradd --system \
+       --uid 10001 \
+       --gid 10001 \
+       --home-dir /app \
+       --shell /usr/sbin/nologin app
+
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /app /app
+
+RUN chown -R app:app /app /opt/venv
+
+USER app
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()" || exit 1
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+```
+
+Line explanation:
+
+- `FROM python:3.12-slim AS builder` starts the first stage of a multi-stage build; the builder stage is not included in the final image.
+- `ENV VIRTUAL_ENV=/opt/venv` and `ENV PATH="/opt/venv/bin:${PATH}"` create and prioritize a virtual environment at a known path so it can be copied between stages.
+- `COPY backend/pyproject.toml backend/alembic.ini ./` copies dependency definitions before source code, a Docker layer-caching trick: unchanged dependencies mean a cached, faster rebuild.
+- `RUN pip install --no-cache-dir .` installs the app and its base dependencies. Alembic is a base dependency, not a dev-only extra, so this single install is enough for the migration Job too.
+- `groupadd --system --gid 10001 app` / `useradd --system --uid 10001 --gid 10001 ...` pin an explicit numeric UID/GID instead of letting the system auto-assign one. A name-only `USER app` produces a non-numeric user the kubelet cannot verify against `runAsNonRoot`; pinning a fixed UID/GID keeps this Dockerfile and the Kubernetes `securityContext` deterministic and in sync.
+- `USER app` switches to the non-root user for the rest of the image.
+- `CMD [...]` starts Uvicorn with `--proxy-headers` so it trusts the `X-Forwarded-*` headers added by the ALB and the frontend Nginx in front of it.
+
+### Dockerfile.frontend
 
 ```bash
 vim deployment/phase-09-observability/Dockerfile.frontend
 ```
 
-Paste the same content as Phase 8 Step 13 `Dockerfile.frontend`, but change the COPY path:
+Paste:
 
 ```dockerfile
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+ARG VITE_API_URL=""
+ENV VITE_API_URL=${VITE_API_URL}
+
+COPY frontend/package*.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
+
 COPY deployment/phase-09-observability/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]
 ```
+
+Line explanation:
+
+- `FROM node:22-alpine AS builder` uses a minimal Node.js image only to compile the React app; Node.js does not appear in the final image.
+- `RUN npm ci` installs exact versions from `package-lock.json` for reproducible builds.
+- `FROM nginxinc/nginx-unprivileged:1.27-alpine` is the official Nginx image designed to run as a non-root user on port 8080.
+- `COPY deployment/phase-09-observability/nginx-frontend.conf ...` installs this phase's own config — the one line that differs from Phase 8.
+- `COPY --from=builder --chown=101:101 ...` copies the compiled app into the web root, owned by UID/GID 101, the nginx user baked into the unprivileged image.
+
+### nginx-frontend.conf
 
 ```bash
 vim deployment/phase-09-observability/nginx-frontend.conf
 ```
 
-Paste the exact same content as Phase 8 Step 13 `nginx-frontend.conf`.
+Paste:
+
+```nginx
+server {
+    listen 8080;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    client_max_body_size 10M;
+
+    location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "ok";
+    }
+
+    location /api/ {
+        proxy_pass http://launchboard-backend:8000/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /health {
+        proxy_pass http://launchboard-backend:8000/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /ready {
+        proxy_pass http://launchboard-backend:8000/ready;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+Line explanation:
+
+- `listen 8080` matches the unprivileged image's non-root port.
+- `location = /healthz` returns a plain `200 ok` without hitting the backend — what the ALB target group and Kubernetes probes check.
+- `location /api/`, `location = /health`, and `location = /ready` proxy those paths to `http://launchboard-backend:8000/...`, the backend's Kubernetes Service DNS name.
+- `location / { try_files $uri $uri/ /index.html; }` falls back to `index.html` for any unmatched path, required for React Router to handle direct navigation to client-side routes.
+
+Reference:
+
+- Dockerfile reference: https://docs.docker.com/reference/dockerfile/
+- Nginx unprivileged image: https://hub.docker.com/r/nginxinc/nginx-unprivileged
 
 ### Application Kubernetes manifests
 
-Create every file under `deployment/phase-09-observability/app-k8s/` with the exact same content as Phase 8 Step 14. The files are:
+All manifests go inside `deployment/phase-09-observability/app-k8s/`. Three placeholders appear throughout: replace `YOUR_ACCOUNT_ID` (from `aws sts get-caller-identity --query Account --output text`), `YOUR_AWS_REGION` (the region you chose in Step 7), and `YOUR_ALB_DNS_NAME` (available only after applying the Ingress in Step 11).
 
-```text
-namespace.yaml
-storageclass.yaml
-configmap.yaml
-secret.example.yaml
-pvc.yaml
-launchboard-postgres-deployment.yaml
-launchboard-postgres-service.yaml
-launchboard-migration-job.yaml
-launchboard-backend-deployment.yaml
-launchboard-backend-service.yaml
-launchboard-frontend-deployment.yaml
-launchboard-frontend-service.yaml
-ingress.yaml
-hpa.yaml
-kustomization.yaml
+#### namespace.yaml
+
+```bash
+vim deployment/phase-09-observability/app-k8s/namespace.yaml
 ```
 
-The only difference from Phase 8: the image tags in the three ECR image references are `phase-9` instead of `phase-8`:
-
-```text
-image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-9
-image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-frontend:phase-9
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devops-launchboard
+  labels:
+    app.kubernetes.io/name: devops-launchboard
+    app.kubernetes.io/part-of: devops-launchboard
 ```
 
-This applies to `launchboard-migration-job.yaml`, `launchboard-backend-deployment.yaml`, and `launchboard-frontend-deployment.yaml`.
+A Namespace is a logical boundary inside Kubernetes; every other resource below sets `namespace: devops-launchboard` to belong to it.
 
-See Phase 8 Step 14 for the full content and line-by-line explanations of every manifest.
+#### storageclass.yaml
+
+```bash
+vim deployment/phase-09-observability/app-k8s/storageclass.yaml
+```
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  type: gp3
+  encrypted: "true"
+```
+
+- `provisioner: ebs.csi.aws.com` is the AWS EBS CSI driver installed as an EKS add-on in Step 7.
+- `parameters.type: gp3` is the current-generation general-purpose SSD type — cheaper than gp2 with a 3,000 IOPS / 125 MB/s baseline included.
+- `parameters.encrypted: "true"` enables EBS encryption at rest with the default AWS KMS key, at no extra cost.
+- `volumeBindingMode: WaitForFirstConsumer` delays volume creation until a Pod is scheduled, so the EBS volume is created in the same Availability Zone as the Pod's node — without this, the volume might land in a different AZ than the Pod and the Pod would be stuck `Pending` (EBS volumes cannot cross AZs).
+- An EBS volume survives node replacement: if a worker node is terminated and replaced, the volume re-attaches to the new node with the data intact, unlike local-disk storage.
+
+Reference:
+
+- StorageClass: https://kubernetes.io/docs/concepts/storage/storage-classes/
+
+#### configmap.yaml
+
+```bash
+vim deployment/phase-09-observability/app-k8s/configmap.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: launchboard-config
+  namespace: devops-launchboard
+data:
+  APP_NAME: DevOps LaunchBoard API
+  APP_ENV: production
+  CORS_ORIGINS: http://YOUR_ALB_DNS_NAME
+  SEED_DEMO_DATA: "true"
+  POSTGRES_DB: launchboard
+  POSTGRES_USER: launchboard_user
+```
+
+`CORS_ORIGINS` is a placeholder because the ALB DNS name does not exist until AWS creates the load balancer; you update it after applying the Ingress in Step 11. `APP_ENV: production` affects logging and error responses; `SEED_DEMO_DATA: "true"` seeds sample data on first run; `POSTGRES_DB`/`POSTGRES_USER` are the database name and username the backend connects with (the password comes from the Secret, not this ConfigMap).
+
+#### secret.example.yaml
+
+```bash
+vim deployment/phase-09-observability/app-k8s/secret.example.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: launchboard-secret
+  namespace: devops-launchboard
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: CHANGE_ME_STRONG_PASSWORD
+  DATABASE_URL: postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard
+```
+
+Example only — the real Secret is created with `kubectl create secret` in Step 11. Never commit real credentials.
+
+#### pvc.yaml
+
+```bash
+vim deployment/phase-09-observability/app-k8s/pvc.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: launchboard-postgres-pvc
+  namespace: devops-launchboard
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 10Gi
+```
+
+`storageClassName: gp3` connects this PVC to the EBS CSI driver: when the PostgreSQL Pod is scheduled, the driver creates a 10 GB encrypted gp3 EBS volume in the same AZ, attaches it, and mounts it where the Deployment specifies — more headroom than the 5 GB used in Phase 8. `ReadWriteOnce` is the only access mode EBS supports.
+
+#### launchboard-postgres-deployment.yaml
+
+```bash
+vim deployment/phase-09-observability/app-k8s/launchboard-postgres-deployment.yaml
+```
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: launchboard-db
+  namespace: devops-launchboard
+  labels:
+    app: launchboard-db
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: launchboard-db
+  template:
+    metadata:
+      labels:
+        app: launchboard-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: launchboard-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: launchboard-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: launchboard-secret
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - launchboard_user
+                - -d
+                - launchboard
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - launchboard_user
+                - -d
+                - launchboard
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: launchboard-postgres-pvc
+```
+
+- `strategy.type: Recreate` terminates the existing Pod before creating a new one — required for a single-writer database holding an exclusive lock on its EBS volume; `RollingUpdate` would briefly run two Pods against the same `ReadWriteOnce` volume.
+- `image: postgres:16-alpine` comes from Docker Hub (public), not ECR, because it is an official upstream image you do not build. Worker nodes reach it through the NAT Gateway.
+- `env` reads `POSTGRES_DB`/`POSTGRES_USER` from the ConfigMap and `POSTGRES_PASSWORD` from the Secret — what the official Postgres image's entrypoint needs to create the database on first start.
+- `readinessProbe`/`livenessProbe` run `pg_isready` rather than an HTTP check, since PostgreSQL is not an HTTP service.
+
+#### launchboard-postgres-service.yaml
+
+```bash
+vim deployment/phase-09-observability/app-k8s/launchboard-postgres-service.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: launchboard-db
+  namespace: devops-launchboard
+spec:
+  type: ClusterIP
+  selector:
+    app: launchboard-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+```
+
+`launchboard-db` becomes the DNS name in `DATABASE_URL`; `ClusterIP` keeps the database unreachable from outside the cluster.
+
+#### launchboard-migration-job.yaml
+
+```bash
+vim deployment/phase-09-observability/app-k8s/launchboard-migration-job.yaml
+```
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: launchboard-migrate
+  namespace: devops-launchboard
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: launchboard-migrate
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-9
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until python -c "import socket; s=socket.create_connection(('launchboard-db', 5432), timeout=3); s.close()"; do
+                echo "waiting for postgres"
+                sleep 2
+              done
+              alembic upgrade head
+          envFrom:
+            - configMapRef:
+                name: launchboard-config
+            - secretRef:
+                name: launchboard-secret
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+```
+
+- A Job runs its Pod once to completion and stops, unlike a Deployment. `restartPolicy: OnFailure` retries only on failure, not after success; `backoffLimit: 3` stops retrying after 3 failures.
+- `image` pulls from your private ECR repository — replace both placeholders, e.g. `123456789012.dkr.ecr.us-east-1.amazonaws.com/launchboard-backend:phase-9`.
+- `imagePullPolicy: IfNotPresent` skips re-pulling if the node already has this exact tag cached, which is fine since this phase pushes one image with a static `phase-9` tag rather than a unique tag per push. EKS worker nodes authenticate to ECR with temporary IAM credentials the kubelet refreshes automatically (via the `ecr-credential-provider` built into the EKS-optimized AMI), so no `imagePullSecret` is needed either way.
+- The `until python -c "import socket; ..."` loop blocks until PostgreSQL accepts connections, preventing `alembic upgrade head` from running too early.
+
+#### launchboard-backend-deployment.yaml
+
+```bash
+vim deployment/phase-09-observability/app-k8s/launchboard-backend-deployment.yaml
+```
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: launchboard-backend
+  namespace: devops-launchboard
+  labels:
+    app: launchboard-backend
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: launchboard-backend
+  template:
+    metadata:
+      labels:
+        app: launchboard-backend
+    spec:
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-9
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until python -c "import socket; s=socket.create_connection(('launchboard-db', 5432), timeout=3); s.close()"; do
+                echo "waiting for postgres"
+                sleep 2
+              done
+              exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: launchboard-config
+            - secretRef:
+                name: launchboard-secret
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+```
+
+- `spec.replicas: 2` with `RollingUpdate`/`maxSurge: 1`/`maxUnavailable: 0` updates Pods with zero downtime.
+- `runAsUser: 10001` and `runAsGroup: 10001` must match the `--uid 10001 --gid 10001` pinned in the Dockerfile, or the Pod fails with `CreateContainerConfigError` because the kubelet cannot verify a name-based `USER app` against `runAsNonRoot`.
+- `image` points to ECR — replace the two placeholders.
+- `command` waits for PostgreSQL, then `exec`s into Uvicorn so it becomes PID 1 and receives termination signals directly.
+
+#### launchboard-backend-service.yaml
+
+```bash
+vim deployment/phase-09-observability/app-k8s/launchboard-backend-service.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: launchboard-backend
+  namespace: devops-launchboard
+spec:
+  type: ClusterIP
+  selector:
+    app: launchboard-backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+```
+
+`launchboard-backend` becomes the DNS name the frontend's Nginx config proxies `/api`, `/health`, and `/ready` to.
+
+#### launchboard-frontend-deployment.yaml
+
+```bash
+vim deployment/phase-09-observability/app-k8s/launchboard-frontend-deployment.yaml
+```
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: launchboard-frontend
+  namespace: devops-launchboard
+  labels:
+    app: launchboard-frontend
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: launchboard-frontend
+  template:
+    metadata:
+      labels:
+        app: launchboard-frontend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: frontend
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-frontend:phase-9
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+```
+
+`runAsUser: 101` matches the nginx user baked into the `nginxinc/nginx-unprivileged` image — the same pattern as the backend's pinned UID 10001, for a different base image's built-in user. `image` points to ECR — replace the two placeholders.
+
+#### launchboard-frontend-service.yaml
+
+```bash
+vim deployment/phase-09-observability/app-k8s/launchboard-frontend-service.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: launchboard-frontend
+  namespace: devops-launchboard
+spec:
+  type: ClusterIP
+  selector:
+    app: launchboard-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+```
+
+Port 80 is what the Ingress targets; port 8080 is the Pod's actual non-root port.
+
+#### ingress.yaml
+
+```bash
+vim deployment/phase-09-observability/app-k8s/ingress.yaml
+```
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: launchboard-ingress
+  namespace: devops-launchboard
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-9
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: launchboard-frontend
+                port:
+                  number: 80
+```
+
+- `spec.ingressClassName: alb` tells the AWS Load Balancer Controller (installed in Step 10) to handle this Ingress and create a real Application Load Balancer.
+- `alb.ingress.kubernetes.io/target-type: ip` sends ALB traffic directly to Pod IPs via the AWS VPC CNI, more efficient than routing through a NodePort.
+- `alb.ingress.kubernetes.io/healthcheck-path` points the ALB's own health check at the frontend's `/healthz` endpoint.
+- `alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-9` gives the ALB a predictable name in the EC2 Console instead of an auto-generated one.
+- `spec.rules` routes all traffic to the frontend Service; the frontend's own Nginx then proxies `/api`, `/health`, and `/ready` to the backend.
+
+#### hpa.yaml
+
+```bash
+vim deployment/phase-09-observability/app-k8s/hpa.yaml
+```
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: launchboard-backend
+  namespace: devops-launchboard
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: launchboard-backend
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+`minReplicas: 2` / `maxReplicas: 5` bound the autoscaler; if average backend CPU usage exceeds 70% of requested CPU, the HPA scales up. EKS includes the Metrics Server by default, so this HPA is usable immediately with no extra installation, unlike a kubeadm cluster.
+
+#### kustomization.yaml
+
+```bash
+vim deployment/phase-09-observability/app-k8s/kustomization.yaml
+```
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - storageclass.yaml
+  - configmap.yaml
+  - pvc.yaml
+  - launchboard-postgres-deployment.yaml
+  - launchboard-postgres-service.yaml
+  - launchboard-migration-job.yaml
+  - launchboard-backend-deployment.yaml
+  - launchboard-backend-service.yaml
+  - launchboard-frontend-deployment.yaml
+  - launchboard-frontend-service.yaml
+  - ingress.yaml
+  - hpa.yaml
+```
+
+Lists every manifest so one `kubectl apply -k` applies them all in order. `secret.example.yaml` is deliberately not listed — the real Secret is created separately with `kubectl create secret`.
+
+Reference:
+
+- Kubernetes Deployments: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
+- Kustomize documentation: https://kustomize.io/
 
 ## Step 8: Create EKS Cluster
 
@@ -576,7 +1322,11 @@ kubectl get pods -A
 kubectl get pods -n kube-system | grep ebs
 ```
 
-Expected: 2 nodes Ready, EBS CSI driver Pods running. See Phase 8 Step 17 for the full explanation of what eksctl creates.
+Expected: 2 nodes Ready, EBS CSI driver Pods running.
+
+What this command creates: `eksctl create cluster -f` reads the config from Step 7 and runs a series of CloudFormation stacks that create, in order, the VPC and subnets (~5 min), the EKS control plane (~10-15 min), the OIDC provider, the managed node group (~5-10 min), and finally the EBS CSI driver add-on. The whole process takes 20 to 40 minutes; watch the terminal output to see each phase progress. `eksctl` also writes the cluster's kubeconfig to `~/.kube/config` automatically, which is why `kubectl` works immediately afterward with no separate configuration step.
+
+If cluster creation fails, run `eksctl utils describe-stacks --region $AWS_REGION --cluster devops-launchboard-phase-9` and read the CloudFormation events — they show the real cause, usually a missing IAM permission, a region typo, or an EC2 instance quota that is too low.
 
 ## Step 9: Create ECR Repositories And Push Images
 
@@ -608,7 +1358,17 @@ docker push "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:p
 docker push "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-frontend:phase-9"
 ```
 
-See Phase 8 Steps 15-16 for full explanations.
+Command explanation:
+
+- `aws ecr create-repository` creates a private repository per service; the full image URL becomes `ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/REPO_NAME:TAG`.
+- `aws ecr put-lifecycle-policy` attaches the policy created in Step 6, which auto-expires old and untagged images so storage cost does not grow unbounded.
+- `aws ecr get-login-password | docker login` authenticates Docker with ECR using a temporary token generated from your IAM credentials; the username for ECR is always the literal string `AWS`.
+- `docker build` compiles both images locally; `docker tag` adds the full ECR registry URL as an additional name for the same image, which `docker push` then needs to know where to upload to.
+- Because EKS worker nodes authenticate to ECR automatically via IAM (no `imagePullSecret` needed) and images never leave your AWS account, pulls are fast and free of Docker Hub's rate limits.
+
+Reference:
+
+- Push images to ECR: https://docs.aws.amazon.com/AmazonECR/latest/userguide/docker-push-ecr-image.html
 
 ## Step 10: Install AWS Load Balancer Controller
 
@@ -645,7 +1405,16 @@ Verify:
 kubectl -n kube-system rollout status deployment/aws-load-balancer-controller
 ```
 
-See Phase 8 Step 18 for the full IRSA and Helm explanation.
+Command explanation:
+
+- The AWS Load Balancer Controller is a Kubernetes controller that watches for Ingress resources with the `alb` class and creates real Application Load Balancers. Without it, the Ingress you apply in Step 11 does nothing.
+- `eksctl create iamserviceaccount` creates three things at once: an IAM role with the downloaded policy attached, a Kubernetes ServiceAccount in `kube-system`, and a trust relationship between them via the cluster's OIDC provider. This is IRSA (IAM Roles for Service Accounts) — when the controller Pod runs with this ServiceAccount, the AWS SDK inside it automatically receives temporary credentials for the IAM role, with no access keys stored in the cluster.
+- `helm install` deploys the controller from the official EKS Helm chart repository. `--set serviceAccount.create=false` tells Helm not to create its own ServiceAccount, because `eksctl create iamserviceaccount` already created one with the IAM role attached; `--set serviceAccount.name=...` tells the controller to use that existing one.
+
+Reference:
+
+- AWS Load Balancer Controller installation: https://kubernetes-sigs.github.io/aws-load-balancer-controller/latest/deploy/installation/
+- IRSA: https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html
 
 ## Step 11: Deploy The Application
 
@@ -828,7 +1597,7 @@ prometheus:
     storageSpec:
       volumeClaimTemplate:
         spec:
-          storageClassName: gp3-encrypted
+          storageClassName: gp3
           accessModes: ["ReadWriteOnce"]
           resources:
             requests:
@@ -1088,7 +1857,7 @@ spec:
         name: elasticsearch-data
       spec:
         accessModes: ["ReadWriteOnce"]
-        storageClassName: gp3-encrypted
+        storageClassName: gp3
         resources:
           requests:
             storage: 10Gi
@@ -1675,7 +2444,7 @@ kubectl -n observability logs elasticsearch-0
 kubectl -n observability get pvc
 ```
 
-Common causes: PVC not bound (EBS CSI driver missing or StorageClass not created), not enough memory (Elasticsearch needs at least 1 GB), or the init container failed to fix permissions on the data directory. If the PVC is Pending, check `kubectl get sc` for `gp3-encrypted` and `kubectl get pods -n kube-system | grep ebs` for the CSI driver.
+Common causes: PVC not bound (EBS CSI driver missing or StorageClass not created), not enough memory (Elasticsearch needs at least 1 GB), or the init container failed to fix permissions on the data directory. If the PVC is Pending, check `kubectl get sc` for `gp3` and `kubectl get pods -n kube-system | grep ebs` for the CSI driver.
 
 ### Problem 3: Fluent Bit Pods In CrashLoopBackOff
 

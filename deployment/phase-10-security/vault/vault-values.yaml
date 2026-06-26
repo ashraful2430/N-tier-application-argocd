@@ -8,11 +8,11 @@ server:
   dataStorage:
     enabled: true
     size: 10Gi
-    storageClass: gp3-encrypted
+    storageClass: gp3
   auditStorage:
     enabled: true
     size: 5Gi
-    storageClass: gp3-encrypted
+    storageClass: gp3
   resources:
     requests:
       cpu: 250m

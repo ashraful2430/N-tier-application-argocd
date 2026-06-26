@@ -2300,6 +2300,24 @@ AWS cleanup:
 | Metrics Server | https://github.com/kubernetes-sigs/metrics-server |
 | Jenkins pipeline | https://www.jenkins.io/doc/book/pipeline/ |
 
+## Optional: Other CI Tools And Targets
+
+This phase folder also contains two optional, fully self-contained bonus guides that are not required to move on to Phase 8:
+
+```text
+deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/README.md
+```
+
+Builds the exact same CI/CD pipeline as this guide, but with a self-hosted Jenkins server installed from scratch instead of GitHub Actions — useful if your organization already standardizes on Jenkins, or if you want to compare the two CI systems hands-on.
+
+```text
+deployment/phase-07-cicd-self-hosted/phase-7-cicd-EKS/README.md
+```
+
+Builds a CI/CD pipeline with GitHub-hosted runners, Docker Hub, and Amazon EKS instead of a self-hosted runner and a local Kind cluster — a preview of the cloud target Phase 8 covers in depth.
+
+Both guides start from a fresh server and do not require completing the main walkthrough above first.
+
 ## What To Do Next
 
 Move to:
