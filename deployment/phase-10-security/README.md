@@ -234,7 +234,19 @@ aws sts get-caller-identity
 docker --version && kubectl version --client && eksctl version && helm version
 ```
 
-See Phase 8 Steps 2–7 for detailed explanations of each tool installation.
+Command explanation:
+
+- `curl ... -o "awscliv2.zip"` downloads the AWS CLI v2 installer; `unzip` extracts it; `sudo ./aws/install` installs it to `/usr/local/bin/aws`; the cleanup removes the installer files.
+- `aws configure` prompts for your Access Key ID, Secret Access Key, default region, and output format. Get keys from IAM Console > Users > your user > Security credentials > Create access key, using the "Command Line Interface (CLI)" use case. Save both values immediately — the secret key is shown only once.
+- `aws sts get-caller-identity` confirms the credentials work by printing your account ID, user ARN, and user ID.
+- `kubectl` is the Kubernetes CLI; `eksctl` is the official CLI for creating and managing EKS clusters, wrapping CloudFormation so one `eksctl create cluster` command provisions the VPC, IAM roles, control plane, and node group together.
+- `helm` is the Kubernetes package manager, used later in this phase to install the AWS Load Balancer Controller and, optionally, External Secrets Operator and Vault — each distributed as a Helm chart.
+
+Reference:
+
+- Install AWS CLI: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+- eksctl install: https://eksctl.io/installation/
+- Helm install: https://helm.sh/docs/intro/install/
 
 ## Step 2: Clone Repository
 
@@ -289,7 +301,7 @@ kind: ClusterConfig
 metadata:
   name: devops-launchboard-phase-10
   region: YOUR_AWS_REGION
-  version: "1.32"
+  version: "1.34"
 
 availabilityZones:
   - YOUR_AWS_REGIONa
@@ -320,6 +332,7 @@ managedNodeGroups:
     tags:
       Project: devops-launchboard
       Environment: phase-10
+      Owner: student
 
 cloudWatch:
   clusterLogging:
@@ -336,7 +349,30 @@ addons:
       ebsCSIController: true
 ```
 
-Replace `YOUR_AWS_REGION` in three places. See Phase 8 Step 11 for the full line-by-line explanation.
+Replace `YOUR_AWS_REGION` in three places: `metadata.region`, and both entries under `availabilityZones`. For example, if your region is `us-east-1`:
+
+```yaml
+metadata:
+  region: us-east-1
+availabilityZones:
+  - us-east-1a
+  - us-east-1b
+```
+
+Line explanation:
+
+- `metadata.name: devops-launchboard-phase-10` names the cluster; eksctl creates CloudFormation stacks named after it.
+- `metadata.version: "1.34"` pins the Kubernetes version, quoted because YAML would otherwise read `1.34` as a number.
+- `iam.withOIDC: true` creates an OIDC provider — the foundation of IAM Roles for Service Accounts (IRSA), which lets Kubernetes ServiceAccounts assume IAM roles without storing AWS credentials in the cluster. The EBS CSI driver and the AWS Load Balancer Controller both need this.
+- `vpc.nat.gateway: Single` creates one shared NAT Gateway instead of one per AZ, at roughly half the cost.
+- `managedNodeGroups[0].privateNetworking: true` keeps worker nodes in private subnets with no public IPs; all inbound traffic goes through the ALB.
+- `cloudWatch.clusterLogging.enableTypes` ships control plane logs (API server, audit, authenticator, controller manager, scheduler) to CloudWatch Logs — particularly relevant in a security-focused phase, since the audit log records every API request made against the cluster.
+- `addons[0].name: aws-ebs-csi-driver` installs the EBS CSI driver as an EKS managed add-on; without it, PVCs requesting storage stay `Pending` forever.
+
+Reference:
+
+- eksctl ClusterConfig schema: https://eksctl.io/usage/schema/
+- EKS audit logging: https://docs.aws.amazon.com/eks/latest/userguide/logging-monitoring.html
 
 Set variables and create the cluster (20–40 minutes):
 
@@ -401,11 +437,22 @@ Paste:
 Apply:
 
 ```bash
-aws ecr put-lifecycle-policy --repository-name launchboard-backend \
-  --lifecycle-policy-text file://deployment/phase-10-security/ecr/lifecycle-policy.json --region "$AWS_REGION"
-aws ecr put-lifecycle-policy --repository-name launchboard-frontend \
-  --lifecycle-policy-text file://deployment/phase-10-security/ecr/lifecycle-policy.json --region "$AWS_REGION"
+aws ecr put-lifecycle-policy \
+  --repository-name launchboard-backend \
+  --lifecycle-policy-text file://deployment/phase-10-security/ecr/lifecycle-policy.json \
+  --region "$AWS_REGION"
+
+aws ecr put-lifecycle-policy \
+  --repository-name launchboard-frontend \
+  --lifecycle-policy-text file://deployment/phase-10-security/ecr/lifecycle-policy.json \
+  --region "$AWS_REGION"
 ```
+
+Line explanation:
+
+- `rulePriority: 1` keeps only the 10 most recent images tagged with the `phase-10` prefix — older ones beyond the 10 most recent are expired automatically.
+- `rulePriority: 2` deletes untagged images (orphaned layers left behind when a tag is moved or overwritten) after 7 days.
+- `put-lifecycle-policy` attaches this same policy to both repositories, so neither one accumulates old release images forever.
 
 ## Step 6: Create Dockerfiles And Nginx Config
 
@@ -468,7 +515,19 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 ```
 
-Note: Alembic is a base dependency (not a dev extra), so the plain `pip install .` is enough for the migration Job. `groupadd`/`useradd` pin an explicit `--uid 10001 --gid 10001` so the numeric UID is deterministic and matches the Kubernetes `securityContext` instead of relying on whatever UID the system auto-assigns. See Phase 6 Scenario 1 Step 12 for the full line-by-line explanation.
+Line explanation:
+
+- `FROM python:3.12-slim AS builder` starts the first stage of a multi-stage build; the builder stage is not included in the final image.
+- `ENV VIRTUAL_ENV=/opt/venv` and `ENV PATH="/opt/venv/bin:${PATH}"` create and prioritize a virtual environment at a known path so it can be copied between stages.
+- `COPY backend/pyproject.toml backend/alembic.ini ./` copies dependency definitions before source code — a Docker layer-caching trick: unchanged dependencies mean a cached, faster rebuild.
+- `RUN pip install --no-cache-dir .` installs the app and its base dependencies. Alembic is a base dependency, not a dev extra, so this plain install is enough for the migration Job too.
+- `groupadd --system --gid 10001 app` / `useradd --system --uid 10001 --gid 10001 ...` pin an explicit numeric UID/GID instead of letting the system auto-assign one. A name-only `USER app` produces a non-numeric user the kubelet cannot verify against `runAsNonRoot`; pinning a fixed UID/GID keeps this Dockerfile and the Kubernetes `securityContext` deterministic and in sync — important in a security-hardening phase where Pod Security Admission (Step 10) enforces `restricted` and rejects any Pod it cannot verify as non-root.
+- `USER app` switches to the non-root user for the rest of the image.
+- `CMD [...]` starts Uvicorn with `--proxy-headers` so it trusts the `X-Forwarded-*` headers added by the ALB and the frontend Nginx in front of it.
+
+Reference:
+
+- Dockerfile reference: https://docs.docker.com/reference/dockerfile/
 
 ### Dockerfile.frontend
 
@@ -505,7 +564,12 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 CMD ["nginx", "-g", "daemon off;"]
 ```
 
-This uses the `nginxinc/nginx-unprivileged` image (UID 101) consistent with all other phases. The COPY path points to `deployment/phase-10-security/nginx-frontend.conf`.
+Line explanation:
+
+- `FROM node:22-alpine AS builder` uses a minimal Node.js image only to compile the React app; Node.js does not appear in the final image.
+- `RUN npm ci` installs exact versions from `package-lock.json` for reproducible builds.
+- `FROM nginxinc/nginx-unprivileged:1.27-alpine` is the official Nginx image designed to run as a non-root user on port 8080 — UID 101, consistent with all other phases.
+- `COPY --from=builder --chown=101:101 ...` copies the compiled app into the web root, owned by that same UID/GID.
 
 ### nginx-frontend.conf
 
@@ -513,7 +577,67 @@ This uses the `nginxinc/nginx-unprivileged` image (UID 101) consistent with all 
 vim deployment/phase-10-security/nginx-frontend.conf
 ```
 
-Paste the same content as Phase 8 Step 13 `nginx-frontend.conf`. See Phase 6 Scenario 1 Step 14 for the full line-by-line explanation.
+Paste:
+
+```nginx
+server {
+    listen 8080;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    client_max_body_size 10M;
+
+    location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "ok";
+    }
+
+    location /api/ {
+        proxy_pass http://launchboard-backend:8000/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /health {
+        proxy_pass http://launchboard-backend:8000/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /ready {
+        proxy_pass http://launchboard-backend:8000/ready;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+Line explanation:
+
+- `listen 8080` matches the unprivileged image's non-root port.
+- `location = /healthz` returns a plain `200 ok` without hitting the backend — what Kubernetes probes check.
+- `location /api/`, `location = /health`, and `location = /ready` proxy those paths to `http://launchboard-backend:8000/...`, the backend's Kubernetes Service DNS name.
+- `location / { try_files $uri $uri/ /index.html; }` falls back to `index.html` for any unmatched path, required for React Router to handle direct navigation to client-side routes.
+
+Reference:
+
+- Nginx server block documentation: https://nginx.org/en/docs/http/ngx_http_core_module.html
 
 ### Root .dockerignore
 
@@ -543,12 +667,16 @@ deployment/phase-04-docker-compose/.env
 
 ## Step 7: Build, Scan, And Push Images
 
-Log in to ECR:
+Set a short variable for the registry URL so the commands below stay readable, then log in:
 
 ```bash
-aws ecr get-login-password --region "$AWS_REGION" | \
-  docker login --username AWS --password-stdin "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+ECR_REGISTRY=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+aws ecr get-login-password --region "$AWS_REGION" \
+  | docker login --username AWS --password-stdin $ECR_REGISTRY
 ```
+
+`ECR_REGISTRY=...` builds the registry hostname once so every later command can reference `$ECR_REGISTRY` instead of repeating the full account ID and region. `aws ecr get-login-password` asks AWS for a short-lived authentication token; `--username AWS` is always the literal string `AWS` for ECR, not your IAM username.
 
 Build:
 
@@ -595,14 +723,14 @@ If Trivy finds vulnerabilities: read the table it prints. Each row shows the pac
 Tag and push:
 
 ```bash
-docker tag launchboard-backend:phase-10 \
-  "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-10"
-docker tag launchboard-frontend:phase-10 \
-  "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-frontend:phase-10"
+docker tag launchboard-backend:phase-10 $ECR_REGISTRY/launchboard-backend:phase-10
+docker tag launchboard-frontend:phase-10 $ECR_REGISTRY/launchboard-frontend:phase-10
 
-docker push "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-10"
-docker push "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-frontend:phase-10"
+docker push $ECR_REGISTRY/launchboard-backend:phase-10
+docker push $ECR_REGISTRY/launchboard-frontend:phase-10
 ```
+
+`docker tag <local-name> <new-name>` does not copy or rebuild anything — it adds a second name pointing at the same image bytes already on disk, this time including the ECR registry hostname `docker push` needs to know where to upload to.
 
 Reference:
 
@@ -644,16 +772,608 @@ Verify:
 kubectl -n kube-system rollout status deployment/aws-load-balancer-controller
 ```
 
-This uses the official least-privilege IAM policy from the controller repository, not `ElasticLoadBalancingFullAccess`. In a security-focused phase, using the broadest possible AWS managed policy would contradict the principle of least privilege. See Phase 8 Step 18 for the full IRSA explanation.
+This uses the official least-privilege IAM policy from the controller repository, not `ElasticLoadBalancingFullAccess`. In a security-focused phase, using the broadest possible AWS managed policy would contradict the principle of least privilege.
+
+Command explanation:
+
+- `eksctl create iamserviceaccount` creates three things at once: an IAM role with the downloaded policy attached, a Kubernetes ServiceAccount in `kube-system`, and a trust relationship between them via the cluster's OIDC provider. This is IRSA (IAM Roles for Service Accounts) — when the controller Pod runs with this ServiceAccount, the AWS SDK inside it automatically receives temporary credentials for the IAM role, with no access keys stored in the cluster.
+- `helm install` deploys the controller from the official EKS Helm chart repository. `--set serviceAccount.create=false` tells Helm not to create its own ServiceAccount, because `eksctl create iamserviceaccount` already created one with the IAM role attached; `--set serviceAccount.name=...` tells the controller to use that existing one.
+- Without this controller running, the Ingress applied in the next step would sit idle with no `ADDRESS` and no ALB would ever be created.
+
+Reference:
+
+- AWS Load Balancer Controller installation: https://kubernetes-sigs.github.io/aws-load-balancer-controller/latest/deploy/installation/
+- IRSA: https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html
 
 ## Step 9: Deploy The Application
 
-The app k8s manifests are identical to Phase 8 Step 14 with `phase-10` image tags. Create every file under `deployment/phase-10-security/app-k8s/` using the content from Phase 8 Step 14, changing only:
+All manifests go inside `deployment/phase-10-security/app-k8s/`. Unlike Phase 8, every container here already sets `allowPrivilegeEscalation: false` and drops all Linux capabilities — these manifests are written to already satisfy the `restricted` Pod Security Admission level you apply in Step 10, instead of needing to be patched afterward.
 
-- Image tags from `phase-8` to `phase-10` in the three ECR image references.
-- The cluster name context if referenced anywhere.
+#### namespace.yaml
 
-See Phase 8 Step 14 for the full content and line-by-line explanation of every manifest (namespace, storageclass, configmap, secret.example, pvc, postgres deployment/service, migration job, backend deployment/service, frontend deployment/service, ingress, hpa, kustomization).
+```bash
+vim deployment/phase-10-security/app-k8s/namespace.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devops-launchboard
+  labels:
+    app.kubernetes.io/name: devops-launchboard
+    app.kubernetes.io/part-of: devops-launchboard
+```
+
+A Namespace is a logical boundary inside Kubernetes; every other resource below sets `namespace: devops-launchboard` to belong to it. The Pod Security Admission labels you add in Step 10 attach to this same Namespace object.
+
+#### storageclass.yaml
+
+```bash
+vim deployment/phase-10-security/app-k8s/storageclass.yaml
+```
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  type: gp3
+  encrypted: "true"
+```
+
+`parameters.encrypted: "true"` enables EBS encryption at rest with the default AWS KMS key, at no extra cost — directly relevant to a security-hardening phase. `volumeBindingMode: WaitForFirstConsumer` delays volume creation until a Pod is scheduled, so the EBS volume lands in the same AZ as the Pod's node.
+
+#### configmap.yaml
+
+```bash
+vim deployment/phase-10-security/app-k8s/configmap.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: launchboard-config
+  namespace: devops-launchboard
+data:
+  APP_NAME: DevOps LaunchBoard API
+  APP_ENV: production
+  CORS_ORIGINS: http://YOUR_ALB_DNS_NAME
+  SEED_DEMO_DATA: "true"
+  POSTGRES_DB: launchboard
+  POSTGRES_USER: launchboard_user
+```
+
+`CORS_ORIGINS` is a placeholder because the ALB DNS name does not exist until AWS creates the load balancer; you update it later in this step once the Ingress is applied.
+
+#### secret.example.yaml
+
+```bash
+vim deployment/phase-10-security/app-k8s/secret.example.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: launchboard-secret
+  namespace: devops-launchboard
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: CHANGE_ME_STRONG_PASSWORD
+  DATABASE_URL: postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard
+```
+
+Example only — the real Secret is created with `kubectl create secret` later in this step. Step 16 of this phase replaces this pattern entirely with AWS Secrets Manager.
+
+#### pvc.yaml
+
+```bash
+vim deployment/phase-10-security/app-k8s/pvc.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: launchboard-postgres-pvc
+  namespace: devops-launchboard
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 10Gi
+```
+
+`storageClassName: gp3` connects this PVC to the EBS CSI driver, which creates a 10 GB encrypted volume in the same AZ as the Pod that mounts it.
+
+#### launchboard-postgres-deployment.yaml
+
+```bash
+vim deployment/phase-10-security/app-k8s/launchboard-postgres-deployment.yaml
+```
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: launchboard-db
+  namespace: devops-launchboard
+  labels:
+    app: launchboard-db
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: launchboard-db
+  template:
+    metadata:
+      labels:
+        app: launchboard-db
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: launchboard-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: launchboard-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: launchboard-secret
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - launchboard_user
+                - -d
+                - launchboard
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - launchboard_user
+                - -d
+                - launchboard
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: launchboard-postgres-pvc
+```
+
+This is the first phase where the PostgreSQL Pod itself gets a full `securityContext`. Earlier phases left PostgreSQL running as whatever user the official image defaults to; here it explicitly runs as UID 999 (the `postgres` image's own built-in user — confirm with `docker run --rm postgres:16-alpine id -u`), drops every Linux capability, and blocks privilege escalation. This is required for the Pod Security Admission `restricted` level applied in Step 10: without these fields, the namespace would reject this Deployment outright once the labels are in place. `strategy.type: Recreate` is unchanged from earlier phases — a single-writer database cannot run two Pods against the same `ReadWriteOnce` volume.
+
+#### launchboard-postgres-service.yaml
+
+```bash
+vim deployment/phase-10-security/app-k8s/launchboard-postgres-service.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: launchboard-db
+  namespace: devops-launchboard
+spec:
+  type: ClusterIP
+  selector:
+    app: launchboard-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+```
+
+`launchboard-db` becomes the DNS name in `DATABASE_URL`; `ClusterIP` keeps the database unreachable from outside the cluster, which the NetworkPolicy in Step 13 reinforces at the network layer.
+
+#### launchboard-migration-job.yaml
+
+```bash
+vim deployment/phase-10-security/app-k8s/launchboard-migration-job.yaml
+```
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: launchboard-migrate
+  namespace: devops-launchboard
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: launchboard-migrate
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-10
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until python -c "import socket; s=socket.create_connection(('launchboard-db', 5432), timeout=3); s.close()"; do
+                echo "waiting for postgres"
+                sleep 2
+              done
+              alembic upgrade head
+          envFrom:
+            - configMapRef:
+                name: launchboard-config
+            - secretRef:
+                name: launchboard-secret
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+```
+
+`image` pulls from your private ECR repository — replace both placeholders, e.g. `123456789012.dkr.ecr.us-east-1.amazonaws.com/launchboard-backend:phase-10`. The Pod-level `securityContext.runAsNonRoot: true` here relies on the image's own `USER app` (which the Dockerfile pins to numeric UID 10001), and the container-level `allowPrivilegeEscalation: false` / `capabilities.drop: [ALL]` are the same restricted-profile fields every container in this phase needs.
+
+#### launchboard-backend-deployment.yaml
+
+```bash
+vim deployment/phase-10-security/app-k8s/launchboard-backend-deployment.yaml
+```
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: launchboard-backend
+  namespace: devops-launchboard
+  labels:
+    app: launchboard-backend
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: launchboard-backend
+  template:
+    metadata:
+      labels:
+        app: launchboard-backend
+    spec:
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-10
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until python -c "import socket; s=socket.create_connection(('launchboard-db', 5432), timeout=3); s.close()"; do
+                echo "waiting for postgres"
+                sleep 2
+              done
+              exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: launchboard-config
+            - secretRef:
+                name: launchboard-secret
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+```
+
+`runAsUser: 10001` and `runAsGroup: 10001` must match the `--uid 10001 --gid 10001` pinned in the Dockerfile, or the Pod fails with `CreateContainerConfigError` because the kubelet cannot verify a name-based `USER app` against `runAsNonRoot`. `allowPrivilegeEscalation: false` blocks a process from gaining more privileges than its parent (for example, via a setuid binary); `capabilities.drop: [ALL]` removes every Linux capability the container would otherwise inherit (such as `NET_RAW` or `SYS_ADMIN`), leaving only what an unprivileged process needs. Together these two container-level fields plus the Pod-level `securityContext` above are exactly what the `restricted` Pod Security Standard checks for.
+
+#### launchboard-backend-service.yaml
+
+```bash
+vim deployment/phase-10-security/app-k8s/launchboard-backend-service.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: launchboard-backend
+  namespace: devops-launchboard
+spec:
+  type: ClusterIP
+  selector:
+    app: launchboard-backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+```
+
+`launchboard-backend` becomes the DNS name the frontend's Nginx config proxies `/api`, `/health`, and `/ready` to.
+
+#### launchboard-frontend-deployment.yaml
+
+```bash
+vim deployment/phase-10-security/app-k8s/launchboard-frontend-deployment.yaml
+```
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: launchboard-frontend
+  namespace: devops-launchboard
+  labels:
+    app: launchboard-frontend
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: launchboard-frontend
+  template:
+    metadata:
+      labels:
+        app: launchboard-frontend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: frontend
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-frontend:phase-10
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+```
+
+`runAsUser: 101` matches the nginx user baked into the `nginxinc/nginx-unprivileged` image, the same pattern as the backend's pinned UID 10001 but for a different base image's built-in user. The same `allowPrivilegeEscalation: false` / `capabilities.drop: [ALL]` pair applies here too.
+
+#### launchboard-frontend-service.yaml
+
+```bash
+vim deployment/phase-10-security/app-k8s/launchboard-frontend-service.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: launchboard-frontend
+  namespace: devops-launchboard
+spec:
+  type: ClusterIP
+  selector:
+    app: launchboard-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+```
+
+Port 80 is what the Ingress targets; port 8080 is the Pod's actual non-root port.
+
+#### ingress.yaml
+
+```bash
+vim deployment/phase-10-security/app-k8s/ingress.yaml
+```
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: launchboard-ingress
+  namespace: devops-launchboard
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-10
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: launchboard-frontend
+                port:
+                  number: 80
+```
+
+`spec.ingressClassName: alb` tells the AWS Load Balancer Controller installed in Step 8 to handle this Ingress. `alb.ingress.kubernetes.io/target-type: ip` sends ALB traffic directly to Pod IPs via the AWS VPC CNI. `load-balancer-name` gives the ALB a predictable name in the EC2 Console.
+
+#### hpa.yaml
+
+```bash
+vim deployment/phase-10-security/app-k8s/hpa.yaml
+```
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: launchboard-backend
+  namespace: devops-launchboard
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: launchboard-backend
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+If average backend CPU usage exceeds 70% of requested CPU, the HPA scales up to a maximum of 5 Pods; it never scales below 2. EKS includes the Metrics Server by default, so this works immediately with no extra installation. The ResourceQuota you create in Step 12 caps how many Pods can exist in this namespace overall — the HPA's `maxReplicas` should stay comfortably under that cap.
+
+#### kustomization.yaml
+
+```bash
+vim deployment/phase-10-security/app-k8s/kustomization.yaml
+```
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - storageclass.yaml
+  - configmap.yaml
+  - pvc.yaml
+  - launchboard-postgres-deployment.yaml
+  - launchboard-postgres-service.yaml
+  - launchboard-migration-job.yaml
+  - launchboard-backend-deployment.yaml
+  - launchboard-backend-service.yaml
+  - launchboard-frontend-deployment.yaml
+  - launchboard-frontend-service.yaml
+  - ingress.yaml
+  - hpa.yaml
+```
+
+Lists every manifest so one `kubectl apply -k` applies them all in order. `secret.example.yaml` is deliberately not listed — the real Secret is created separately with `kubectl create secret`.
+
+Reference:
+
+- Kubernetes Deployments: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
+- Pod security context: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
+- Kustomize documentation: https://kustomize.io/
 
 Replace image placeholders:
 
@@ -1316,11 +2036,20 @@ spec:
       targetPort: 9000
 ```
 
+Line explanation:
+
+- `kind: Namespace` creates a separate `security` namespace — SonarQube is a platform tool, not part of the application, so it does not belong in `devops-launchboard`.
+- `storageClassName: gp3` with `storage: 20Gi` gives SonarQube's database and search index a real EBS volume; without persistence, every analysis history and configuration setting would be lost on Pod restart.
+- `securityContext.fsGroup: 1000` sets the group that owns the mounted volume, matching the UID the SonarQube image runs its process as.
+- `initContainers` runs `chown -R 1000:1000` on the data directory as root (`runAsUser: 0`, scoped only to this init container) before the main container starts as a non-root user. This exists because a fresh EBS volume is owned by `root` by default, and the SonarQube process — running as UID 1000 — cannot write to it otherwise. This is one of the few legitimate reasons to run any container as root in this phase.
+- `resources.requests.memory: 2Gi` / `limits.memory: 4Gi` reflect SonarQube's real footprint: it runs an embedded Elasticsearch instance for its search index, which alone typically needs 1+ GB.
+
 Apply and access:
 
 ```bash
 kubectl apply -f deployment/phase-10-security/sast/sonarqube.yaml
 kubectl -n security rollout status deployment/sonarqube --timeout=300s
+
 kubectl -n security port-forward svc/sonarqube 9000:9000 --address 0.0.0.0 &
 ```
 
@@ -1526,18 +2255,30 @@ Install the controller:
 ```bash
 helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets
 helm repo update
+
 helm install sealed-secrets sealed-secrets/sealed-secrets --namespace kube-system
 ```
+
+This installs the Sealed Secrets controller into the cluster. The controller holds a private key (generated automatically on first install) and is the only thing that can decrypt a `SealedSecret` back into a normal Kubernetes `Secret` — encryption happens client-side with the matching public key, so the plaintext never has to leave your workstation unencrypted except in the temporary file created below.
 
 Install the `kubeseal` CLI on the workstation:
 
 ```bash
-KUBESEAL_VERSION=$(curl -s https://api.github.com/repos/bitnami-labs/sealed-secrets/releases/latest | jq -r .tag_name | sed 's/v//')
+KUBESEAL_VERSION=$(curl -s https://api.github.com/repos/bitnami-labs/sealed-secrets/releases/latest \
+  | jq -r .tag_name | sed 's/v//')
+
 curl -OL "https://github.com/bitnami-labs/sealed-secrets/releases/download/v${KUBESEAL_VERSION}/kubeseal-${KUBESEAL_VERSION}-linux-amd64.tar.gz"
+
 tar -xzf kubeseal-*.tar.gz kubeseal
 sudo mv kubeseal /usr/local/bin/kubeseal
 rm kubeseal-*.tar.gz
 ```
+
+Line explanation:
+
+- `curl -s .../releases/latest` queries the GitHub API for the latest Sealed Secrets release; `jq -r .tag_name` extracts just the tag (for example `v0.27.0`); `sed 's/v//'` strips the leading `v` so the variable holds a bare version number usable in a filename.
+- The second `curl` downloads the matching `kubeseal` CLI binary release archive — `kubeseal` is the client-side tool that talks to the controller's public key endpoint; it is a separate binary from the controller itself, run on your workstation rather than in the cluster.
+- `tar -xzf ... kubeseal` extracts only the `kubeseal` binary from the archive, `sudo mv` puts it on the PATH, and `rm` cleans up the downloaded archive.
 
 Create a normal Secret YAML locally (never commit this file):
 
@@ -1548,21 +2289,26 @@ kubectl -n devops-launchboard create secret generic launchboard-secret \
   --dry-run=client -o yaml > /tmp/launchboard-secret.yaml
 ```
 
+`--dry-run=client -o yaml` builds the Secret object and prints its YAML without ever sending it to the cluster — the plaintext only ever touches your workstation's `/tmp`, which is removed below.
+
 Seal it:
 
 ```bash
 kubeseal --format yaml < /tmp/launchboard-secret.yaml \
   > deployment/phase-10-security/secrets-management/sealed-secret.yaml
+
 rm /tmp/launchboard-secret.yaml
 ```
 
-The output file `sealed-secret.yaml` contains encrypted values that are safe to commit to Git. Apply it:
+`kubeseal` fetches the controller's public key over the Kubernetes API, encrypts each value in the Secret with it, and writes out a `SealedSecret` resource. Because only the controller's private key (which never leaves the cluster) can decrypt it, the resulting `sealed-secret.yaml` file is safe to commit to Git even though it is derived from real credentials.
+
+Apply it:
 
 ```bash
 kubectl apply -f deployment/phase-10-security/secrets-management/sealed-secret.yaml
 ```
 
-The controller decrypts it and creates a normal Kubernetes Secret.
+The controller watches for `SealedSecret` resources, decrypts the one you just applied with its private key, and creates a normal Kubernetes `Secret` from the result — `launchboard-secret` ends up identical to the one you would have created directly in Step 9, just without ever committing plaintext to version control.
 
 Reference:
 
@@ -1656,6 +2402,8 @@ Note: Vault starts sealed and requires initialization and unsealing before use. 
 kubectl -n vault exec vault-0 -- vault operator init -key-shares=1 -key-threshold=1
 ```
 
+`vault operator init` generates Vault's master encryption key and splits it into the given number of key shares using Shamir's Secret Sharing — `-key-shares=1 -key-threshold=1` is a lab simplification that produces a single unseal key requiring no quorum; a real production Vault would use multiple shares (for example 5) held by different people, with a threshold (for example 3) of them required together to unseal. The command also prints a root token, which is the initial all-powerful credential for logging into Vault.
+
 Save the unseal key and root token from the output. Then unseal each replica:
 
 ```bash
@@ -1663,6 +2411,8 @@ kubectl -n vault exec vault-0 -- vault operator unseal YOUR_UNSEAL_KEY
 kubectl -n vault exec vault-1 -- vault operator unseal YOUR_UNSEAL_KEY
 kubectl -n vault exec vault-2 -- vault operator unseal YOUR_UNSEAL_KEY
 ```
+
+Every Vault replica starts sealed independently and holds its data encrypted on disk until it receives the unseal key directly — unsealing one Pod does not unseal the others, which is why all three need this command run against them individually, even though they share the same Raft-replicated data.
 
 Access the UI:
 
@@ -1807,8 +2557,13 @@ aws secretsmanager delete-secret \
 Delete IAM policies:
 
 ```bash
-aws iam delete-policy --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/devops-launchboard-phase-10-secrets-read" 2>/dev/null
-aws iam delete-policy --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicyPhase10" 2>/dev/null
+aws iam delete-policy \
+  --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/devops-launchboard-phase-10-secrets-read" \
+  2>/dev/null
+
+aws iam delete-policy \
+  --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicyPhase10" \
+  2>/dev/null
 ```
 
 Check the AWS Console for leftover resources:

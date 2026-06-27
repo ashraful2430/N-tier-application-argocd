@@ -350,9 +350,20 @@ eksctl create cluster -f deployment/phase-11-advanced-deployments/cluster/eksctl
 kubectl get nodes
 ```
 
-Why this file exists:
+Line explanation:
+
+- `metadata.version: "1.34"` pins the Kubernetes version, quoted because YAML would otherwise read `1.34` as a number.
+- `iam.withOIDC: true` creates an OIDC provider — the foundation of IAM Roles for Service Accounts (IRSA), which lets Kubernetes ServiceAccounts assume IAM roles without storing AWS credentials in the cluster. The EBS CSI driver and the AWS Load Balancer Controller both need this.
+- `vpc.nat.gateway: Single` creates one shared NAT Gateway instead of one per AZ, at roughly half the cost.
+- `managedNodeGroups[0].privateNetworking: true` keeps worker nodes in private subnets with no public IPs; all inbound traffic goes through the ALB.
+- `cloudWatch.clusterLogging.enableTypes` ships control plane logs (API server, audit, authenticator, controller manager, scheduler) to CloudWatch Logs, useful when debugging why a blue-green or canary rollout did not behave as expected.
+- `addons[0].name: aws-ebs-csi-driver` installs the EBS CSI driver as an EKS managed add-on; without it, PVCs requesting storage stay `Pending` forever.
 
 This file creates the Kubernetes platform for the phase. Private worker networking, OIDC, EBS CSI, and control plane logs are production-minded settings that support safer deployments and debugging.
+
+Reference:
+
+- eksctl ClusterConfig schema: https://eksctl.io/usage/schema/
 
 ## Step 7: Create ECR Repositories
 
@@ -407,9 +418,22 @@ Paste:
 Apply:
 
 ```bash
-aws ecr put-lifecycle-policy --repository-name launchboard-backend --lifecycle-policy-text file://deployment/phase-11-advanced-deployments/ecr/lifecycle-policy.json --region $AWS_REGION
-aws ecr put-lifecycle-policy --repository-name launchboard-frontend --lifecycle-policy-text file://deployment/phase-11-advanced-deployments/ecr/lifecycle-policy.json --region $AWS_REGION
+aws ecr put-lifecycle-policy \
+  --repository-name launchboard-backend \
+  --lifecycle-policy-text file://deployment/phase-11-advanced-deployments/ecr/lifecycle-policy.json \
+  --region $AWS_REGION
+
+aws ecr put-lifecycle-policy \
+  --repository-name launchboard-frontend \
+  --lifecycle-policy-text file://deployment/phase-11-advanced-deployments/ecr/lifecycle-policy.json \
+  --region $AWS_REGION
 ```
+
+Line explanation:
+
+- `rulePriority: 1` keeps only the 10 most recent images tagged with the `phase-11` prefix (which also matches `phase-11-blue`, `phase-11-green`, and `phase-11-canary` since ECR prefix matching is a string prefix, not an exact match) — older ones beyond the 10 most recent are expired automatically.
+- `rulePriority: 2` deletes untagged images (orphaned layers left behind when a tag is moved or overwritten) after 7 days.
+- `put-lifecycle-policy` attaches this same policy to both repositories, so neither one accumulates old release images forever.
 
 Why this step exists:
 
@@ -476,7 +500,14 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 ```
 
-`groupadd`/`useradd` pin an explicit `--uid 10001 --gid 10001` so the numeric UID is deterministic and matches the Kubernetes `securityContext`, instead of relying on whatever UID the system auto-assigns to a name-only `USER app`.
+Line explanation:
+
+- `FROM python:3.12-slim AS builder` starts the first stage of a multi-stage build; the builder stage is not included in the final image.
+- `COPY backend/pyproject.toml backend/alembic.ini ./` copies dependency definitions before source code — a Docker layer-caching trick: unchanged dependencies mean a cached, faster rebuild.
+- `RUN pip install --no-cache-dir .` installs the app and its base dependencies; Alembic is a base dependency, not a dev extra, so this is enough for the migration Job too.
+- `groupadd`/`useradd` pin an explicit `--uid 10001 --gid 10001` so the numeric UID is deterministic and matches the Kubernetes `securityContext`, instead of relying on whatever UID the system auto-assigns to a name-only `USER app`.
+- `USER app` switches to the non-root user for the rest of the image.
+- `CMD [...]` starts Uvicorn with `--proxy-headers` so it trusts the `X-Forwarded-*` headers added by the ALB and the frontend Nginx in front of it.
 
 Create:
 
@@ -572,44 +603,86 @@ server {
 }
 ```
 
+Line explanation:
+
+- `listen 8080` matches the unprivileged image's non-root port.
+- `location = /healthz` returns a plain `200 ok` without hitting the backend — what Kubernetes probes and the ALB health check both look at.
+- `location /api/`, `location = /health`, and `location = /ready` proxy those paths to `http://launchboard-backend:8000/...`, the backend's Kubernetes Service DNS name.
+- `location / { try_files $uri $uri/ /index.html; }` falls back to `index.html` for any unmatched path, required for React Router to handle direct navigation to client-side routes.
+
 Why these files exist:
 
 The backend and frontend images are built the same way every time. Multi-stage builds keep runtime images smaller, non-root users reduce container risk, and health checks let Kubernetes verify each release.
 
 ## Step 9: Build And Push Images
 
-Login:
+Set a short variable for the registry URL so the commands below stay readable:
 
 ```bash
-aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+ECR_REGISTRY=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 ```
+
+Log in to ECR:
+
+```bash
+aws ecr get-login-password --region $AWS_REGION \
+  | docker login --username AWS --password-stdin $ECR_REGISTRY
+```
+
+Line explanation:
+
+- `ECR_REGISTRY=...` builds the registry hostname once (`123456789012.dkr.ecr.us-east-1.amazonaws.com`) so every later command can reference `$ECR_REGISTRY` instead of repeating the full account ID and region.
+- `aws ecr get-login-password --region $AWS_REGION` asks AWS for a short-lived authentication token tied to your IAM credentials.
+- The `|` pipes that token into `docker login`. `--username AWS` is always the literal string `AWS` for ECR — it is not your IAM username. `--password-stdin` reads the token from the pipe instead of putting it on the command line, where it could end up in shell history.
 
 Build images:
 
 ```bash
-docker build -f deployment/phase-11-advanced-deployments/Dockerfile.backend -t launchboard-backend:phase-11 .
-docker build -f deployment/phase-11-advanced-deployments/Dockerfile.frontend --build-arg VITE_API_URL=/api -t launchboard-frontend:phase-11 .
+docker build -f deployment/phase-11-advanced-deployments/Dockerfile.backend \
+  -t launchboard-backend:phase-11 .
+
+docker build -f deployment/phase-11-advanced-deployments/Dockerfile.frontend \
+  --build-arg VITE_API_URL=/api \
+  -t launchboard-frontend:phase-11 .
 ```
 
-Create release tags:
+Line explanation:
+
+- `-f deployment/phase-11-advanced-deployments/Dockerfile.backend` points Docker at this phase's own Dockerfile rather than the default `./Dockerfile`.
+- The trailing `.` on each command is the build context — the directory Docker reads `COPY` instructions relative to. It must be the repository root, because the Dockerfiles `COPY backend/...` and `COPY frontend/...`.
+- `-t launchboard-backend:phase-11` tags the image locally with a name and tag before it has any relationship to ECR at all; the registry hostname is added separately in the tagging step below.
+- `--build-arg VITE_API_URL=/api` on the frontend build embeds a relative API path into the compiled JavaScript at build time, so the frontend calls `/api/...` and lets Nginx proxy it to the backend rather than hardcoding a hostname.
+
+Create release tags. This phase needs five different tags on the same two images: one plain release tag per image, plus `-blue`, `-green`, and `-canary` variants of the backend image so each release-strategy step in this phase has its own image to point at:
 
 ```bash
-docker tag launchboard-backend:phase-11 $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-11
-docker tag launchboard-backend:phase-11 $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-11-blue
-docker tag launchboard-backend:phase-11 $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-11-green
-docker tag launchboard-backend:phase-11 $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-11-canary
-docker tag launchboard-frontend:phase-11 $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-frontend:phase-11
+docker tag launchboard-backend:phase-11 $ECR_REGISTRY/launchboard-backend:phase-11
+docker tag launchboard-backend:phase-11 $ECR_REGISTRY/launchboard-backend:phase-11-blue
+docker tag launchboard-backend:phase-11 $ECR_REGISTRY/launchboard-backend:phase-11-green
+docker tag launchboard-backend:phase-11 $ECR_REGISTRY/launchboard-backend:phase-11-canary
+docker tag launchboard-frontend:phase-11 $ECR_REGISTRY/launchboard-frontend:phase-11
 ```
 
-Push:
+Line explanation:
+
+- `docker tag <local-name> <new-name>` does not copy or rebuild anything — it just adds a second name pointing at the same image bytes already on disk. That is why all four backend lines are instant: they are four labels on one image.
+- `$ECR_REGISTRY/launchboard-backend:phase-11` is the full name `docker push` needs: registry hostname, repository name, and tag, in that order.
+- The `-blue`, `-green`, and `-canary` tags exist only so Step 12 and Step 13 have distinct image references to deploy under each release strategy. In this lab they point at identical image bytes; in real production, you would build `-green` or `-canary` from a newer commit so the new version is actually different code.
+
+Push every tag to ECR:
 
 ```bash
-docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-11
-docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-11-blue
-docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-11-green
-docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-11-canary
-docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-frontend:phase-11
+docker push $ECR_REGISTRY/launchboard-backend:phase-11
+docker push $ECR_REGISTRY/launchboard-backend:phase-11-blue
+docker push $ECR_REGISTRY/launchboard-backend:phase-11-green
+docker push $ECR_REGISTRY/launchboard-backend:phase-11-canary
+docker push $ECR_REGISTRY/launchboard-frontend:phase-11
 ```
+
+Line explanation:
+
+- Each `docker push` uploads one tag to its ECR repository. Because all four backend tags reference the same underlying image layers, Docker uploads the actual layer data once and the remaining pushes only need to register the new tag name — they finish almost instantly after the first.
+- After this step, `aws ecr describe-images --repository-name launchboard-backend --region $AWS_REGION` would list four tags (`phase-11`, `phase-11-blue`, `phase-11-green`, `phase-11-canary`) all pointing at the same image digest.
 
 Why this step exists:
 
@@ -617,57 +690,627 @@ Blue-green and canary releases compare versions. For a lab, these tags may point
 
 ## Step 10: Deploy The Base Application
 
-Create the app files in:
+All manifests go inside `deployment/phase-11-advanced-deployments/app-k8s/`. Every container here already sets `allowPrivilegeEscalation: false` and drops all Linux capabilities, the same hardened baseline introduced in Phase 10, so that the safer-release techniques in this phase build on top of an already security-conscious deployment.
 
-```text
-deployment/phase-11-advanced-deployments/app-k8s
-```
-
-Use the files in this phase folder:
-
-```text
-namespace.yaml
-storageclass.yaml
-configmap.yaml
-secret.example.yaml
-pvc.yaml
-launchboard-postgres-deployment.yaml
-launchboard-postgres-service.yaml
-launchboard-migration-job.yaml
-launchboard-backend-deployment.yaml
-launchboard-backend-service.yaml
-launchboard-frontend-deployment.yaml
-launchboard-frontend-service.yaml
-ingress.yaml
-hpa.yaml
-kustomization.yaml
-```
-
-Prepare secret:
+#### namespace.yaml
 
 ```bash
-cd deployment/phase-11-advanced-deployments/app-k8s
-cp secret.example.yaml secret.yaml
-vim secret.yaml
+vim deployment/phase-11-advanced-deployments/app-k8s/namespace.yaml
 ```
 
-Replace:
-
-```text
-CHANGE_ME_STRONG_PASSWORD
-YOUR_ACCOUNT_ID
-YOUR_AWS_REGION
-YOUR_ALB_DNS_NAME
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devops-launchboard
+  labels:
+    app.kubernetes.io/name: devops-launchboard
+    app.kubernetes.io/part-of: devops-launchboard
 ```
 
-Apply:
+A Namespace is a logical boundary inside Kubernetes; every other resource below sets `namespace: devops-launchboard` to belong to it.
+
+#### storageclass.yaml
+
+```bash
+vim deployment/phase-11-advanced-deployments/app-k8s/storageclass.yaml
+```
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  type: gp3
+  encrypted: "true"
+```
+
+`parameters.encrypted: "true"` enables EBS encryption at rest at no extra cost. `volumeBindingMode: WaitForFirstConsumer` delays volume creation until a Pod is scheduled, so the EBS volume lands in the same AZ as the Pod's node.
+
+#### configmap.yaml
+
+```bash
+vim deployment/phase-11-advanced-deployments/app-k8s/configmap.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: launchboard-config
+  namespace: devops-launchboard
+data:
+  APP_NAME: DevOps LaunchBoard API
+  APP_ENV: production
+  CORS_ORIGINS: http://YOUR_ALB_DNS_NAME
+  SEED_DEMO_DATA: "true"
+  POSTGRES_DB: launchboard
+  POSTGRES_USER: launchboard_user
+```
+
+`CORS_ORIGINS` is a placeholder because the ALB DNS name does not exist until AWS creates the load balancer; you update it once the Ingress is applied later in this step.
+
+#### secret.example.yaml
+
+```bash
+vim deployment/phase-11-advanced-deployments/app-k8s/secret.example.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: launchboard-secret
+  namespace: devops-launchboard
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: CHANGE_ME_STRONG_PASSWORD
+  DATABASE_URL: postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard
+```
+
+Example only — copy it to a real Secret and replace the placeholder password.
+
+#### pvc.yaml
+
+```bash
+vim deployment/phase-11-advanced-deployments/app-k8s/pvc.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: launchboard-postgres-pvc
+  namespace: devops-launchboard
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 10Gi
+```
+
+`storageClassName: gp3` connects this PVC to the EBS CSI driver, which creates a 10 GB encrypted volume in the same AZ as the Pod that mounts it.
+
+#### launchboard-postgres-deployment.yaml
+
+```bash
+vim deployment/phase-11-advanced-deployments/app-k8s/launchboard-postgres-deployment.yaml
+```
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: launchboard-db
+  namespace: devops-launchboard
+  labels:
+    app: launchboard-db
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: launchboard-db
+  template:
+    metadata:
+      labels:
+        app: launchboard-db
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: launchboard-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: launchboard-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: launchboard-secret
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - launchboard_user
+                - -d
+                - launchboard
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - launchboard_user
+                - -d
+                - launchboard
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: launchboard-postgres-pvc
+```
+
+`runAsUser: 999` is the `postgres:16-alpine` image's own built-in user (confirm with `docker run --rm postgres:16-alpine id -u`). `strategy.type: Recreate` is required because a single-writer database cannot run two Pods against the same `ReadWriteOnce` volume.
+
+#### launchboard-postgres-service.yaml
+
+```bash
+vim deployment/phase-11-advanced-deployments/app-k8s/launchboard-postgres-service.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: launchboard-db
+  namespace: devops-launchboard
+spec:
+  type: ClusterIP
+  selector:
+    app: launchboard-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+```
+
+`launchboard-db` becomes the DNS name in `DATABASE_URL`; `ClusterIP` keeps the database unreachable from outside the cluster.
+
+#### launchboard-migration-job.yaml
+
+```bash
+vim deployment/phase-11-advanced-deployments/app-k8s/launchboard-migration-job.yaml
+```
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: launchboard-migrate
+  namespace: devops-launchboard
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: launchboard-migrate
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-11
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until python -c "import socket; s=socket.create_connection(('launchboard-db', 5432), timeout=3); s.close()"; do
+                echo "waiting for postgres"
+                sleep 2
+              done
+              alembic upgrade head
+          envFrom:
+            - configMapRef:
+                name: launchboard-config
+            - secretRef:
+                name: launchboard-secret
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+```
+
+`image` pulls from your private ECR repository — replace both placeholders, e.g. `123456789012.dkr.ecr.us-east-1.amazonaws.com/launchboard-backend:phase-11`. A Job runs its Pod once to completion and stops, unlike a Deployment; `restartPolicy: OnFailure` retries only on failure.
+
+#### launchboard-backend-deployment.yaml
+
+```bash
+vim deployment/phase-11-advanced-deployments/app-k8s/launchboard-backend-deployment.yaml
+```
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: launchboard-backend
+  namespace: devops-launchboard
+  labels:
+    app: launchboard-backend
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: launchboard-backend
+  template:
+    metadata:
+      labels:
+        app: launchboard-backend
+    spec:
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-11
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until python -c "import socket; s=socket.create_connection(('launchboard-db', 5432), timeout=3); s.close()"; do
+                echo "waiting for postgres"
+                sleep 2
+              done
+              exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: launchboard-config
+            - secretRef:
+                name: launchboard-secret
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+```
+
+This is the Deployment you practice blue-green and canary releases against in Steps 12-13. `runAsUser: 10001` must match the `--uid 10001 --gid 10001` pinned in the Dockerfile, or the Pod fails with `CreateContainerConfigError`. `rollingUpdate.maxSurge: 1` / `maxUnavailable: 0` updates Pods with zero downtime under a normal rolling update — the baseline this phase's safer-release strategies improve on.
+
+#### launchboard-backend-service.yaml
+
+```bash
+vim deployment/phase-11-advanced-deployments/app-k8s/launchboard-backend-service.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: launchboard-backend
+  namespace: devops-launchboard
+spec:
+  type: ClusterIP
+  selector:
+    app: launchboard-backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+```
+
+`launchboard-backend` becomes the DNS name the frontend's Nginx config proxies `/api`, `/health`, and `/ready` to. The blue-green and canary steps later in this phase add their own Services and re-point traffic between them; this one stays as the steady baseline.
+
+#### launchboard-frontend-deployment.yaml
+
+```bash
+vim deployment/phase-11-advanced-deployments/app-k8s/launchboard-frontend-deployment.yaml
+```
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: launchboard-frontend
+  namespace: devops-launchboard
+  labels:
+    app: launchboard-frontend
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: launchboard-frontend
+  template:
+    metadata:
+      labels:
+        app: launchboard-frontend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: frontend
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-frontend:phase-11
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+```
+
+`runAsUser: 101` matches the nginx user baked into the `nginxinc/nginx-unprivileged` image.
+
+#### launchboard-frontend-service.yaml
+
+```bash
+vim deployment/phase-11-advanced-deployments/app-k8s/launchboard-frontend-service.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: launchboard-frontend
+  namespace: devops-launchboard
+spec:
+  type: ClusterIP
+  selector:
+    app: launchboard-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+```
+
+Port 80 is what the Ingress targets; port 8080 is the Pod's actual non-root port.
+
+#### ingress.yaml
+
+```bash
+vim deployment/phase-11-advanced-deployments/app-k8s/ingress.yaml
+```
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: launchboard-ingress
+  namespace: devops-launchboard
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-11
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: launchboard-frontend
+                port:
+                  number: 80
+```
+
+`spec.ingressClassName: alb` tells the AWS Load Balancer Controller installed in Step 11 to handle this Ingress and create a real Application Load Balancer.
+
+#### hpa.yaml
+
+```bash
+vim deployment/phase-11-advanced-deployments/app-k8s/hpa.yaml
+```
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: launchboard-backend
+  namespace: devops-launchboard
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: launchboard-backend
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+If average backend CPU usage exceeds 70% of requested CPU, the HPA scales up to a maximum of 5 Pods. EKS includes the Metrics Server by default, so this works immediately.
+
+#### kustomization.yaml
+
+```bash
+vim deployment/phase-11-advanced-deployments/app-k8s/kustomization.yaml
+```
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - storageclass.yaml
+  - configmap.yaml
+  - pvc.yaml
+  - launchboard-postgres-deployment.yaml
+  - launchboard-postgres-service.yaml
+  - launchboard-migration-job.yaml
+  - launchboard-backend-deployment.yaml
+  - launchboard-backend-service.yaml
+  - launchboard-frontend-deployment.yaml
+  - launchboard-frontend-service.yaml
+  - ingress.yaml
+  - hpa.yaml
+```
+
+Lists every manifest so one `kubectl apply -k` applies them all in order. `secret.example.yaml` is deliberately not listed — the real Secret is created separately.
+
+Reference:
+
+- Kubernetes Deployments: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
+- Kustomize documentation: https://kustomize.io/
+
+Replace placeholders and create the real Secret:
 
 ```bash
 cd /opt/devops-launchboard/app-source
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+sed -i "s|YOUR_ACCOUNT_ID|${ACCOUNT_ID}|g; s|YOUR_AWS_REGION|${AWS_REGION}|g" \
+  deployment/phase-11-advanced-deployments/app-k8s/launchboard-backend-deployment.yaml \
+  deployment/phase-11-advanced-deployments/app-k8s/launchboard-migration-job.yaml \
+  deployment/phase-11-advanced-deployments/app-k8s/launchboard-frontend-deployment.yaml
+
+cp deployment/phase-11-advanced-deployments/app-k8s/secret.example.yaml \
+   deployment/phase-11-advanced-deployments/app-k8s/secret.yaml
+vim deployment/phase-11-advanced-deployments/app-k8s/secret.yaml
+```
+
+Line explanation:
+
+- `sed -i "s|YOUR_ACCOUNT_ID|${ACCOUNT_ID}|g; ..."` edits the three manifests in place, replacing every occurrence of the two placeholder strings with your real account ID and region — these are the manifests that contain ECR image references.
+- `cp secret.example.yaml secret.yaml` makes a working copy of the example so the placeholder file itself stays untouched in Git; `secret.yaml` is the one you actually edit and apply.
+
+Replace `CHANGE_ME_STRONG_PASSWORD` in `secret.yaml` with a real password (both occurrences), then apply:
+
+```bash
 kubectl apply -f deployment/phase-11-advanced-deployments/app-k8s/secret.yaml
 kubectl apply -k deployment/phase-11-advanced-deployments/app-k8s
 kubectl -n devops-launchboard get pods
 ```
+
+Line explanation:
+
+- `kubectl apply -f .../secret.yaml` creates the Secret first, separately from the kustomization, since `secret.yaml` is intentionally not listed in `kustomization.yaml`.
+- `kubectl apply -k .../app-k8s` then applies every manifest in `kustomization.yaml` together — namespace, storage class, ConfigMap, PVC, both Deployments and Services, the migration Job, the Ingress, and the HPA — in the order listed.
+- `kubectl -n devops-launchboard get pods` confirms Pods are being created; expect to see `launchboard-db`, `launchboard-migrate` (briefly, until it completes), `launchboard-backend`, and `launchboard-frontend`.
 
 Why this step exists:
 
@@ -710,13 +1353,20 @@ Verify:
 kubectl -n devops-launchboard get ingress
 ```
 
+Command explanation:
+
+- `eksctl create iamserviceaccount` creates an IAM role, a Kubernetes ServiceAccount in `kube-system`, and a trust relationship between them via the cluster's OIDC provider (IRSA) — the controller Pod automatically receives temporary credentials for the role, with no access keys stored in the cluster.
+- `--attach-policy-arn arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess` uses a broad AWS managed policy for simplicity in this phase, since the focus here is release strategy, not IAM hardening. Phase 10 walks through downloading the controller's official least-privilege policy instead and attaching a custom policy scoped to only what the controller needs — worth doing here too if you want stricter IAM alongside blue-green and canary practice.
+- `helm upgrade --install` deploys the controller from the official EKS Helm chart repository; `--set serviceAccount.create=false` tells Helm to use the ServiceAccount `eksctl` already created instead of making its own.
+
 Why this step exists:
 
-The Ingress file asks for public traffic routing. The AWS Load Balancer Controller creates the real ALB in AWS.
+The Ingress file asks for public traffic routing. The AWS Load Balancer Controller creates the real ALB in AWS — without it running, the Ingress sits idle with no `ADDRESS`.
 
 Reference:
 
 - AWS Load Balancer Controller: https://kubernetes-sigs.github.io/aws-load-balancer-controller/latest/
+- IRSA: https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html
 
 ## Step 12: Blue-Green Deployment
 
@@ -755,34 +1405,155 @@ Create:
 
 ```bash
 vim deployment/phase-11-advanced-deployments/blue-green/blue-deployment.yaml
+```
+
+Paste:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: launchboard-backend-blue
+  namespace: devops-launchboard
+  labels:
+    app: launchboard-backend
+    track: blue
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: launchboard-backend
+      track: blue
+  template:
+    metadata:
+      labels:
+        app: launchboard-backend
+        track: blue
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-11-blue
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until python -c "import socket; s=socket.create_connection(('launchboard-db', 5432), timeout=3); s.close()"; do
+                echo "waiting for postgres"
+                sleep 2
+              done
+              exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: launchboard-config
+            - secretRef:
+                name: launchboard-secret
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+```
+
+`labels.track: blue` and `selector.matchLabels.track: blue` are what separates this Deployment from `green` below — both carry `app: launchboard-backend` so either can be selected by the `active-backend-service.yaml` Service created above, but only one `track` value at a time.
+
+```bash
 vim deployment/phase-11-advanced-deployments/blue-green/green-deployment.yaml
+```
+
+Paste the same content as `blue-deployment.yaml`, but change every occurrence of `blue` to `green`: `metadata.name: launchboard-backend-green`, `labels.track: green`, `selector.matchLabels.track: green`, `template.metadata.labels.track: green`, and the image tag `:phase-11-green`.
+
+```bash
 vim deployment/phase-11-advanced-deployments/blue-green/kustomization.yaml
 ```
 
-Use the matching full file contents from the `blue-green` folder in this phase.
+Paste:
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - blue-deployment.yaml
+  - green-deployment.yaml
+  - active-backend-service.yaml
+```
+
+This groups the two track Deployments with the Service that switches between them, so `kubectl apply -k` applies all three together.
 
 Deploy blue-green:
 
 ```bash
 kubectl -n devops-launchboard delete deployment launchboard-backend
+
 kubectl apply -k deployment/phase-11-advanced-deployments/blue-green
+
 kubectl -n devops-launchboard get pods -l app=launchboard-backend --show-labels
 kubectl -n devops-launchboard describe service launchboard-backend
 ```
 
+Line explanation:
+
+- `kubectl delete deployment launchboard-backend` removes the single normal Deployment created in Step 10. It must go first: that Deployment's Pods carry the label `app: launchboard-backend` with no `track` label, which would otherwise also match the `active-backend-service.yaml` Service's selector and mix in with the blue/green Pods.
+- `kubectl apply -k .../blue-green` creates `launchboard-backend-blue`, `launchboard-backend-green`, and re-applies the Service from the kustomization.
+- `--show-labels` on the `get pods` command prints each Pod's full label set in the output, so you can see the `track=blue` / `track=green` labels directly instead of guessing which Pod belongs to which version.
+- `describe service` prints the Service's `Endpoints` field — the actual Pod IPs currently receiving traffic — which is the fastest way to confirm which track is live.
+
 Switch traffic to green:
 
 ```bash
-kubectl -n devops-launchboard patch service launchboard-backend -p '{"spec":{"selector":{"app":"launchboard-backend","track":"green"}}}'
+kubectl -n devops-launchboard patch service launchboard-backend \
+  -p '{"spec":{"selector":{"app":"launchboard-backend","track":"green"}}}'
+
 kubectl -n devops-launchboard describe service launchboard-backend
 ```
+
+Line explanation:
+
+- `kubectl patch service ... -p '{...}'` merges the given JSON into the Service's existing spec rather than replacing the whole object. Here it overwrites just `spec.selector`, changing `track` from `blue` to `green`.
+- The moment this patch applies, the Service's `Endpoints` switch from the blue Pods' IPs to the green Pods' IPs — traffic redirects instantly because both sets of Pods were already running and passing their readiness probes before the switch.
+- `describe service` again confirms the `Endpoints` field now lists the green Pods' IPs.
 
 Rollback to blue:
 
 ```bash
-kubectl -n devops-launchboard patch service launchboard-backend -p '{"spec":{"selector":{"app":"launchboard-backend","track":"blue"}}}'
+kubectl -n devops-launchboard patch service launchboard-backend \
+  -p '{"spec":{"selector":{"app":"launchboard-backend","track":"blue"}}}'
+
 kubectl -n devops-launchboard describe service launchboard-backend
 ```
+
+This is the same patch command with `track` set back to `blue`. Rollback is just as instant as the forward switch, for the same reason: the blue Pods never stopped running, so there is nothing to wait for.
 
 Why this works:
 
@@ -799,9 +1570,18 @@ Install Argo Rollouts controller:
 
 ```bash
 kubectl create namespace argo-rollouts
-kubectl apply -n argo-rollouts -f https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml
+
+kubectl apply -n argo-rollouts \
+  -f https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml
+
 kubectl -n argo-rollouts get pods
 ```
+
+Line explanation:
+
+- `kubectl create namespace argo-rollouts` creates a dedicated namespace for the controller, separate from `devops-launchboard` where the app runs — the controller manages Rollouts across every namespace in the cluster, so it does not need to live alongside the app it manages.
+- `kubectl apply -n argo-rollouts -f https://...install.yaml` installs the controller itself: a Deployment, CRDs (including the `Rollout` kind used below), RBAC roles, and a metrics service, all bundled in one manifest maintained by the Argo project.
+- `kubectl -n argo-rollouts get pods` confirms the controller Pod reaches `Running` before you create any Rollout — if it never starts, applying a `Rollout` resource later would have nothing to act on it.
 
 Install the Argo Rollouts kubectl plugin from the official guide:
 
@@ -809,29 +1589,146 @@ Install the Argo Rollouts kubectl plugin from the official guide:
 https://argo-rollouts.readthedocs.io/en/stable/installation/#kubectl-plugin-installation
 ```
 
+The plugin adds the `kubectl argo rollouts` subcommands used later in this step (`promote`, `abort`, and the `get rollout` status view) — it is a separate binary from the controller you just installed, run from your own machine rather than inside the cluster.
+
 Create:
 
 ```bash
 vim deployment/phase-11-advanced-deployments/canary/argo-rollout.yaml
+```
+
+Paste:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: launchboard-backend
+  namespace: devops-launchboard
+  labels:
+    app: launchboard-backend
+spec:
+  replicas: 4
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: launchboard-backend
+  strategy:
+    canary:
+      maxSurge: 1
+      maxUnavailable: 0
+      steps:
+        - setWeight: 25
+        - pause:
+            duration: 2m
+        - setWeight: 50
+        - pause:
+            duration: 5m
+        - setWeight: 100
+  template:
+    metadata:
+      labels:
+        app: launchboard-backend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-11-canary
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until python -c "import socket; s=socket.create_connection(('launchboard-db', 5432), timeout=3); s.close()"; do
+                echo "waiting for postgres"
+                sleep 2
+              done
+              exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: launchboard-config
+            - secretRef:
+                name: launchboard-secret
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+```
+
+- `kind: Rollout` is a Custom Resource provided by Argo Rollouts; it replaces the standard `Deployment` as the thing that manages these Pods, which is why the blue-green Deployments are deleted before applying this.
+- `strategy.canary.steps` defines the rollout sequence: shift 25% of traffic to the new version, pause 2 minutes for you to check logs and metrics, shift to 50%, pause 5 minutes, then go to 100%. The Rollout pauses automatically at each `pause` step and waits for either the duration to elapse or a manual `promote`.
+- `maxSurge: 1` / `maxUnavailable: 0` controls how Pods are added/removed during each step, the same safety guarantee as a normal rolling update.
+
+```bash
 vim deployment/phase-11-advanced-deployments/canary/kustomization.yaml
 ```
 
-Use the matching full file contents from the `canary` folder in this phase.
+Paste:
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - argo-rollout.yaml
+```
+
+Reference:
+
+- Argo Rollouts canary strategy: https://argo-rollouts.readthedocs.io/en/stable/features/canary/
 
 Before canary, clean up blue-green backend deployments:
 
 ```bash
 kubectl -n devops-launchboard delete deployment launchboard-backend-blue launchboard-backend-green
-kubectl -n devops-launchboard patch service launchboard-backend -p '{"spec":{"selector":{"app":"launchboard-backend"}}}'
+
+kubectl -n devops-launchboard patch service launchboard-backend \
+  -p '{"spec":{"selector":{"app":"launchboard-backend"}}}'
 ```
+
+Line explanation:
+
+- The two track Deployments from Step 12 must be removed first; the `Rollout` resource you apply next creates its own Pods labeled only `app: launchboard-backend` with no `track` label, and leaving the old Deployments running would mean two different controllers both trying to manage Pods with overlapping labels.
+- The `patch` removes `track` from the Service's selector entirely, so it goes back to matching on `app: launchboard-backend` alone — the same selector the Rollout's Pods carry.
 
 Apply rollout:
 
 ```bash
 kubectl apply -k deployment/phase-11-advanced-deployments/canary
+
 kubectl -n devops-launchboard get rollout
 kubectl -n devops-launchboard get pods -l app=launchboard-backend
 ```
+
+Line explanation:
+
+- `kubectl apply -k .../canary` creates the `Rollout` resource. Unlike a Deployment, a fresh `Rollout` with no prior revision skips the canary steps and goes straight to `replicas: 4` healthy Pods — the canary steps only take effect on the *next* update, once a previous revision exists to compare against.
+- `kubectl get rollout` (a CRD providing custom columns, not a built-in kubectl noun) shows the Rollout's current phase (`Healthy`, `Progressing`, `Paused`, or `Degraded`) and how many Pods are on the new version versus the old one.
 
 Watch rollout:
 
@@ -839,17 +1736,23 @@ Watch rollout:
 kubectl -n devops-launchboard get rollout launchboard-backend -w
 ```
 
+`-w` (watch) streams live updates instead of printing once and exiting, so you can see the Rollout move through each `setWeight` and `pause` step from the `argo-rollout.yaml` strategy in real time. To actually trigger a canary rollout (rather than the initial healthy deploy above), push a new image tag and run `kubectl argo rollouts set image launchboard-backend backend=$ECR_REGISTRY/launchboard-backend:NEW_TAG -n devops-launchboard`, then watch this command show the step-by-step traffic shift.
+
 Promote manually after checking logs and health:
 
 ```bash
 kubectl argo rollouts promote launchboard-backend -n devops-launchboard
 ```
 
+This skips the remaining `pause` duration and immediately advances to the next step (or to 100% if it was the last step) — the manual equivalent of deciding "this canary looks healthy, do not make me wait out the full pause."
+
 Abort if the canary is bad:
 
 ```bash
 kubectl argo rollouts abort launchboard-backend -n devops-launchboard
 ```
+
+This immediately routes all traffic back to the stable (previous) ReplicaSet and marks the rollout `Degraded`, without waiting for any pause or further steps — the canary-strategy equivalent of the blue-green rollback in Step 12.
 
 Why this works:
 
@@ -884,6 +1787,12 @@ data:
   RELEASE_BANNER: "Phase 11 controlled release"
 ```
 
+Line explanation:
+
+- `metadata.name: launchboard-feature-flags` is a separate ConfigMap from `launchboard-config` created in Step 10 — keeping flags in their own object means toggling a flag and redeploying it does not touch the unrelated app configuration (`APP_NAME`, `CORS_ORIGINS`, database settings) sitting in the other ConfigMap.
+- `ENABLE_ADVANCED_METRICS` / `ENABLE_DEMO_SEED` are example boolean-style flags, stored as the strings `"true"`/`"false"` because every value in a ConfigMap's `data` map is a string — the application code is responsible for parsing them.
+- `RELEASE_BANNER` is an example string flag, showing that feature flags are not limited to booleans.
+
 Paste into `kustomization.yaml`:
 
 ```yaml
@@ -899,12 +1808,21 @@ Apply:
 kubectl apply -k deployment/phase-11-advanced-deployments/feature-flags
 ```
 
+This creates the `launchboard-feature-flags` ConfigMap in the cluster. By itself this does nothing yet — no running Pod reads it until you attach it to a workload in one of the two ways below.
+
 Attach flags to the normal backend deployment:
 
 ```bash
-kubectl -n devops-launchboard set env deployment/launchboard-backend --from=configmap/launchboard-feature-flags
+kubectl -n devops-launchboard set env deployment/launchboard-backend \
+  --from=configmap/launchboard-feature-flags
+
 kubectl -n devops-launchboard rollout restart deployment/launchboard-backend
 ```
+
+Line explanation:
+
+- `kubectl set env --from=configmap/...` edits the Deployment's Pod template, adding every key in `launchboard-feature-flags` as an environment variable on the `backend` container (equivalent to adding an `envFrom.configMapRef` entry by hand).
+- `rollout restart` is required afterward: `set env` changes the Deployment spec, but existing Pods keep their old environment until they are recreated. The restart triggers a normal rolling update so every new Pod picks up the flags.
 
 Attach flags to the Argo Rollout backend:
 
@@ -912,13 +1830,26 @@ Attach flags to the Argo Rollout backend:
 kubectl -n devops-launchboard edit rollout launchboard-backend
 ```
 
+This opens the Rollout in your default terminal editor. `kubectl set env` does not support the `Rollout` kind, so add the ConfigMap by hand instead: find `spec.template.spec.containers[0].envFrom` (created in Step 13's `argo-rollout.yaml`, which already has one `configMapRef` entry for `launchboard-config`) and add a second entry for the flags ConfigMap, so the block reads:
+
+```yaml
+envFrom:
+  - configMapRef:
+      name: launchboard-config
+  - configMapRef:
+      name: launchboard-feature-flags
+```
+
+Save and exit; Argo Rollouts applies the change as a new revision and rolls it out through the same canary steps defined in `strategy.canary.steps`, since changing the Pod template counts as a new version exactly like a new image tag would.
+
 Why this works:
 
-The ConfigMap stores non-secret runtime settings. `kubectl set env` copies those settings into a normal Deployment. For an Argo Rollout, students edit the rollout pod template and add the same ConfigMap under `envFrom`. Real applications must read those variables in code before the flag changes behavior.
+The ConfigMap stores non-secret runtime settings as environment variables, which both a normal Deployment and an Argo `Rollout` expose to containers via `envFrom`. Real application code must read those variables and branch on them before the flag actually changes behavior — Kubernetes only delivers the value, it does not interpret it.
 
 Reference:
 
 - Kubernetes ConfigMap: https://kubernetes.io/docs/concepts/configuration/configmap/
+- kubectl set env: https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#set-env
 
 ## Verification Commands
 

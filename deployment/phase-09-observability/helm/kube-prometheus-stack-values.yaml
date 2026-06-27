@@ -1,10 +1,52 @@
+# Grafana configuration
+grafana:
+  enabled: true
+  adminUser: admin
+  adminPassword: CHANGE_ME_GRAFANA_PASSWORD
+  service:
+    type: ClusterIP
+    port: 80
+  persistence:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: default
+          orgId: 1
+          folder: ""
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/default
+  dashboards:
+    default:
+      kubernetes-cluster:
+        gnetId: 7249
+        revision: 1
+        datasource: Prometheus
+      node-exporter-full:
+        gnetId: 1860
+        revision: 37
+        datasource: Prometheus
+      kubernetes-pods:
+        gnetId: 6417
+        revision: 1
+        datasource: Prometheus
+
+# Prometheus configuration
 prometheus:
   prometheusSpec:
     retention: 3d
-    scrapeInterval: 30s
-    evaluationInterval: 30s
-    serviceMonitorSelectorNilUsesHelmValues: false
-    podMonitorSelectorNilUsesHelmValues: false
+    retentionSize: 5GB
     resources:
       requests:
         cpu: 200m
@@ -12,30 +54,40 @@ prometheus:
       limits:
         cpu: 1000m
         memory: 2Gi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
 
-grafana:
-  enabled: true
-  adminPassword: CHANGE_ME_GRAFANA_PASSWORD
-  defaultDashboardsEnabled: true
-  persistence:
-    enabled: true
-    size: 5Gi
-  service:
-    type: ClusterIP
-
+# Alertmanager configuration
 alertmanager:
+  enabled: true
   alertmanagerSpec:
-    replicas: 1
     resources:
       requests:
-        cpu: 100m
-        memory: 128Mi
+        cpu: 50m
+        memory: 64Mi
       limits:
-        cpu: 500m
-        memory: 512Mi
+        cpu: 200m
+        memory: 256Mi
 
-kube-state-metrics:
+# node-exporter configuration
+nodeExporter:
   enabled: true
 
-prometheus-node-exporter:
+# kube-state-metrics configuration
+kubeStateMetrics:
   enabled: true
+
+# Default rules (pre-built Prometheus alerting rules)
+defaultRules:
+  create: true
+  rules:
+    etcd: false
+    kubeScheduler: false

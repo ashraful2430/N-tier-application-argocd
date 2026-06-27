@@ -1330,41 +1330,71 @@ If cluster creation fails, run `eksctl utils describe-stacks --region $AWS_REGIO
 
 ## Step 9: Create ECR Repositories And Push Images
 
+Create one repository per service:
+
 ```bash
 aws ecr create-repository --repository-name launchboard-backend --region "$AWS_REGION"
 aws ecr create-repository --repository-name launchboard-frontend --region "$AWS_REGION"
+```
 
-aws ecr put-lifecycle-policy --repository-name launchboard-backend \
-  --lifecycle-policy-text file://deployment/phase-09-observability/ecr/lifecycle-policy.json --region "$AWS_REGION"
-aws ecr put-lifecycle-policy --repository-name launchboard-frontend \
-  --lifecycle-policy-text file://deployment/phase-09-observability/ecr/lifecycle-policy.json --region "$AWS_REGION"
+`aws ecr create-repository` creates a private repository per service; the full image URL becomes `ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/REPO_NAME:TAG`.
 
-aws ecr get-login-password --region "$AWS_REGION" | \
-  docker login --username AWS --password-stdin "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+Attach the lifecycle policy from Step 6 to both repositories:
 
+```bash
+aws ecr put-lifecycle-policy \
+  --repository-name launchboard-backend \
+  --lifecycle-policy-text file://deployment/phase-09-observability/ecr/lifecycle-policy.json \
+  --region "$AWS_REGION"
+
+aws ecr put-lifecycle-policy \
+  --repository-name launchboard-frontend \
+  --lifecycle-policy-text file://deployment/phase-09-observability/ecr/lifecycle-policy.json \
+  --region "$AWS_REGION"
+```
+
+This auto-expires old and untagged images so storage cost does not grow unbounded.
+
+Set a short variable for the registry URL so the commands below stay readable, then log in:
+
+```bash
+ECR_REGISTRY=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+aws ecr get-login-password --region "$AWS_REGION" \
+  | docker login --username AWS --password-stdin $ECR_REGISTRY
+```
+
+Line explanation:
+
+- `ECR_REGISTRY=...` builds the registry hostname once so every later command can reference `$ECR_REGISTRY` instead of repeating the full account ID and region.
+- `aws ecr get-login-password` asks AWS for a short-lived authentication token tied to your IAM credentials. The `|` pipes it into `docker login`; `--username AWS` is always the literal string `AWS` for ECR, not your IAM username; `--password-stdin` reads the token from the pipe instead of putting it on the command line.
+
+Build both images:
+
+```bash
 cd /opt/devops-launchboard/app-source
 
 docker build -f deployment/phase-09-observability/Dockerfile.backend \
   -t launchboard-backend:phase-9 .
+
 docker build -f deployment/phase-09-observability/Dockerfile.frontend \
-  --build-arg VITE_API_URL= -t launchboard-frontend:phase-9 .
-
-docker tag launchboard-backend:phase-9 \
-  "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-9"
-docker tag launchboard-frontend:phase-9 \
-  "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-frontend:phase-9"
-
-docker push "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-backend:phase-9"
-docker push "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/launchboard-frontend:phase-9"
+  --build-arg VITE_API_URL= \
+  -t launchboard-frontend:phase-9 .
 ```
 
-Command explanation:
+The trailing `.` on each command is the build context — it must be the repository root, because both Dockerfiles `COPY backend/...` / `COPY frontend/...` relative to it. `--build-arg VITE_API_URL=` left empty means the frontend uses relative `/api` paths, proxied by its own Nginx config.
 
-- `aws ecr create-repository` creates a private repository per service; the full image URL becomes `ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/REPO_NAME:TAG`.
-- `aws ecr put-lifecycle-policy` attaches the policy created in Step 6, which auto-expires old and untagged images so storage cost does not grow unbounded.
-- `aws ecr get-login-password | docker login` authenticates Docker with ECR using a temporary token generated from your IAM credentials; the username for ECR is always the literal string `AWS`.
-- `docker build` compiles both images locally; `docker tag` adds the full ECR registry URL as an additional name for the same image, which `docker push` then needs to know where to upload to.
-- Because EKS worker nodes authenticate to ECR automatically via IAM (no `imagePullSecret` needed) and images never leave your AWS account, pulls are fast and free of Docker Hub's rate limits.
+Tag and push both images:
+
+```bash
+docker tag launchboard-backend:phase-9 $ECR_REGISTRY/launchboard-backend:phase-9
+docker tag launchboard-frontend:phase-9 $ECR_REGISTRY/launchboard-frontend:phase-9
+
+docker push $ECR_REGISTRY/launchboard-backend:phase-9
+docker push $ECR_REGISTRY/launchboard-frontend:phase-9
+```
+
+`docker tag <local-name> <new-name>` does not copy or rebuild anything — it adds a second name pointing at the same image bytes already on disk, this time including the ECR registry hostname `docker push` needs to know where to upload to. Because EKS worker nodes authenticate to ECR automatically via IAM (no `imagePullSecret` needed) and images never leave your AWS account, pulls are fast and free of Docker Hub's rate limits.
 
 Reference:
 
