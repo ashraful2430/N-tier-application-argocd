@@ -1206,6 +1206,8 @@ spec:
                 secretKeyRef:
                   name: launchboard-secret
                   key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
@@ -1248,6 +1250,7 @@ Line explanation:
 - `spec.strategy.type: Recreate` terminates the existing Pod completely before creating a new one. This is required for the database: `RollingUpdate` would briefly run two Pods against the same EBS volume, and EBS only supports `ReadWriteOnce`, so the second Pod could not even mount it.
 - `image: postgres:16-alpine` comes from Docker Hub (public), not ECR, because it is an official upstream image you do not build. EKS worker nodes can pull public images through the NAT Gateway.
 - `env` reads `POSTGRES_DB` and `POSTGRES_USER` from the ConfigMap and `POSTGRES_PASSWORD` from the Secret, which is how the official Postgres image's entrypoint script creates the database and user on first start.
+- `PGDATA: /var/lib/postgresql/data/pgdata` points Postgres at a subdirectory of the mounted volume instead of the mount point itself. A freshly provisioned EBS volume's filesystem always contains a `lost+found` directory at its root, and `initdb` refuses to initialize a data directory it considers non-empty — it cannot tell `lost+found` apart from leftover database files. Without this, the Pod crash-loops with `initdb: error: directory "/var/lib/postgresql/data" exists but is not empty`.
 - `volumeMounts` mounts the `postgres-data` volume at `/var/lib/postgresql/data`, which is where PostgreSQL stores its files.
 - `readinessProbe`/`livenessProbe` both run `pg_isready` inside the container to check PostgreSQL is accepting connections, rather than an HTTP check.
 - `resources` gives the database more memory than the backend or frontend (`256Mi` request, `512Mi` limit), since PostgreSQL benefits from more memory for caching.

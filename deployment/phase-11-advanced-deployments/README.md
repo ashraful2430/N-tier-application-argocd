@@ -871,6 +871,8 @@ spec:
                 secretKeyRef:
                   name: launchboard-secret
                   key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
@@ -907,7 +909,7 @@ spec:
             claimName: launchboard-postgres-pvc
 ```
 
-`runAsUser: 999` is the `postgres:16-alpine` image's own built-in user (confirm with `docker run --rm postgres:16-alpine id -u`). `strategy.type: Recreate` is required because a single-writer database cannot run two Pods against the same `ReadWriteOnce` volume.
+`runAsUser: 999` is the `postgres:16-alpine` image's own built-in user (confirm with `docker run --rm postgres:16-alpine id -u`). `strategy.type: Recreate` is required because a single-writer database cannot run two Pods against the same `ReadWriteOnce` volume. `PGDATA: /var/lib/postgresql/data/pgdata` points Postgres at a subdirectory of the mounted volume rather than the mount point itself — a freshly provisioned EBS volume's filesystem always contains a `lost+found` directory at its root, and `initdb` refuses to initialize a data directory it considers non-empty, crash-looping the Pod without this.
 
 #### launchboard-postgres-service.yaml
 

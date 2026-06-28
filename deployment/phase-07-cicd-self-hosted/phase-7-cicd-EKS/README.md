@@ -756,6 +756,8 @@ spec:
                 secretKeyRef:
                   name: launchboard-secret
                   key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
@@ -781,6 +783,8 @@ spec:
           persistentVolumeClaim:
             claimName: launchboard-postgres-pvc
 ```
+
+`PGDATA: /var/lib/postgresql/data/pgdata` points Postgres at a subdirectory of the mounted volume instead of the mount point itself. A freshly provisioned EBS volume's filesystem always contains a `lost+found` directory at its root, and `initdb` refuses to initialize a data directory it considers non-empty — it cannot tell `lost+found` apart from leftover database files. Without this, the Pod crash-loops with `initdb: error: directory "/var/lib/postgresql/data" exists but is not empty`.
 
 ### launchboard-postgres-service.yaml
 

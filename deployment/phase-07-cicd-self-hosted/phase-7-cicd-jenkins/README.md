@@ -93,15 +93,15 @@ Jenkins runs continuously on a server you fully control, so it carries the same 
 
 ## Cost Warning
 
-| Resource | Approximate Cost |
-| --- | --- |
-| EKS control plane | ~$0.10/hour (~$73/month) |
-| 2 × t3.medium workers | ~$0.08/hour (~$60/month) |
-| NAT Gateway | ~$0.045/hour (~$33/month) |
-| Application Load Balancer | ~$0.02/hour (~$16/month) |
-| EBS volumes | ~$0.01/hour |
-| Jenkins EC2 (t3.small) | ~$0.02/hour (~$15/month) |
-| Amazon ECR storage | First 500 MB/month free, then ~$0.10/GB-month |
+| Resource                  | Approximate Cost                              |
+| ------------------------- | --------------------------------------------- |
+| EKS control plane         | ~$0.10/hour (~$73/month)                      |
+| 2 × t3.medium workers     | ~$0.08/hour (~$60/month)                      |
+| NAT Gateway               | ~$0.045/hour (~$33/month)                     |
+| Application Load Balancer | ~$0.02/hour (~$16/month)                      |
+| EBS volumes               | ~$0.01/hour                                   |
+| Jenkins EC2 (t3.small)    | ~$0.02/hour (~$15/month)                      |
+| Amazon ECR storage        | First 500 MB/month free, then ~$0.10/GB-month |
 
 Running this lab for a few hours costs a few dollars. Running everything 24/7 for a month costs roughly $200, dominated by the NAT Gateway and EKS control plane, neither of which existed in the Kind-backed version of this guide. Delete the EKS cluster and Jenkins EC2 after each lab session — see Cleanup at the end of this guide.
 
@@ -109,16 +109,16 @@ Create an AWS Budget before starting: AWS Console > Billing > Budgets > Create b
 
 ## Recommended AWS Setup
 
-| Item | Recommended Value |
-| --- | --- |
-| EC2 Name | `devops-launchboard-phase-7-jenkins` |
-| AMI | Ubuntu Server 24.04 LTS |
-| Instance Type | `t3.small` |
-| Storage | 30 GB gp3 |
-| Key Pair | `devops-launchboard-key` |
-| Security Group | `devops-launchboard-phase-7-jenkins-sg` |
-| SSH Port | `22`, your IP only |
-| Jenkins UI Port | `8080`, your IP only |
+| Item            | Recommended Value                       |
+| --------------- | --------------------------------------- |
+| EC2 Name        | `devops-launchboard-phase-7-jenkins`    |
+| AMI             | Ubuntu Server 24.04 LTS                 |
+| Instance Type   | `t3.small`                              |
+| Storage         | 30 GB gp3                               |
+| Key Pair        | `devops-launchboard-key`                |
+| Security Group  | `devops-launchboard-phase-7-jenkins-sg` |
+| SSH Port        | `22`, your IP only                      |
+| Jenkins UI Port | `8080`, your IP only                    |
 
 Do not open:
 
@@ -198,19 +198,19 @@ Run this step from AWS Console.
 
 Create one EC2 instance:
 
-| Field | Value |
-| --- | --- |
-| Name | `devops-launchboard-phase-7-jenkins` |
-| AMI | Ubuntu Server 24.04 LTS |
-| Instance Type | `t3.small` |
-| Storage | 30 GB gp3 |
-| Public IP | Enabled |
+| Field         | Value                                |
+| ------------- | ------------------------------------ |
+| Name          | `devops-launchboard-phase-7-jenkins` |
+| AMI           | Ubuntu Server 24.04 LTS              |
+| Instance Type | `t3.small`                           |
+| Storage       | 30 GB gp3                            |
+| Public IP     | Enabled                              |
 
 Security group inbound rules:
 
-| Type | Port | Source |
-| --- | ---: | --- |
-| SSH | 22 | Your IP |
+| Type                    | Port | Source  |
+| ----------------------- | ---: | ------- |
+| SSH                     |   22 | Your IP |
 | Custom TCP (Jenkins UI) | 8080 | Your IP |
 
 Why this step exists:
@@ -255,12 +255,35 @@ Run:
 cd ~
 sudo apt update
 sudo apt upgrade -y
-sudo apt install -y git curl wget vim unzip jq ca-certificates gnupg lsb-release
+sudo apt install -y git curl wget vim unzip jq ca-certificates gnupg lsb-release python3-venv python3-pip
+```
+
+Install Node.js 22 using the NodeSource apt repository:
+
+```bash
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list
+sudo apt update
+sudo apt install -y nodejs
+```
+
+Verify:
+
+```bash
+node --version
+npm --version
 ```
 
 Why this step exists:
 
-These are the same baseline Linux tools every other phase installs: cloning the repository, editing files, downloading binaries, and reading JSON output.
+Most of the first package list is the same baseline Linux tools every other phase installs: cloning the repository, editing files, downloading binaries, and reading JSON output. `python3-venv` and `python3-pip` are needed because the Jenkinsfile's "Backend Checks" stage runs `python3 -m venv .venv` directly on this EC2 instance (not inside a container) — Ubuntu ships a `python3` binary without the `venv` module by default, and `python3 -m venv` fails with `ensurepip is not available` if this package is missing.
+
+Node.js and npm are needed for the same reason, one stage later: the Jenkinsfile's "Frontend Checks" stage runs `npm ci`, `npm run lint`, and `npm run build` directly on this host. Ubuntu's own default repositories only carry Node.js 18, which is too old for this project's frontend tooling, so the NodeSource repository is added the same way Phase 2 (bare metal) does it, to get Node.js 22 and the matching `npm` binary instead.
+
+Reference:
+
+- NodeSource distributions: https://github.com/nodesource/distributions
 
 ## Step 5: Install Docker
 
@@ -1252,6 +1275,8 @@ spec:
                 secretKeyRef:
                   name: launchboard-secret
                   key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
@@ -1291,6 +1316,7 @@ spec:
 - `strategy.type: Recreate` terminates the existing Pod before creating a new one, required for a single-writer database that holds an exclusive lock on its EBS volume — a `RollingUpdate` would try to attach the same `ReadWriteOnce` volume to two Pods at once and fail.
 - `image: postgres:16-alpine` is the official upstream image — Jenkins never builds this one, only the backend and frontend images.
 - `env` reads `POSTGRES_DB`/`POSTGRES_USER` from the ConfigMap and `POSTGRES_PASSWORD` from the Secret, exactly what the official Postgres image's entrypoint needs to create the database on first start.
+- `PGDATA: /var/lib/postgresql/data/pgdata` points Postgres at a subdirectory of the mounted volume instead of the mount point itself. A freshly created EBS volume's filesystem always contains a `lost+found` directory at its root, and `initdb` refuses to initialize a data directory it considers "not empty" — it has no way to know `lost+found` is harmless filesystem bookkeeping rather than leftover database files. Pointing `PGDATA` at an empty subdirectory avoids the conflict entirely. This was never an issue in the Kind-backed version of this guide, because Kind's `local-path` provisioner bind-mounts an ordinary empty host folder with no `lost+found` in it.
 - `readinessProbe`/`livenessProbe` run `pg_isready` inside the container rather than an HTTP check, since PostgreSQL is not an HTTP service.
 
 ### launchboard-postgres-service.yaml
@@ -1919,7 +1945,7 @@ Line explanation:
 - `stage('Deploy To EKS')` creates the namespace and StorageClass, creates or updates the ConfigMap (with a throwaway placeholder `CORS_ORIGINS` value, corrected two stages later) and Secret from the build parameters (`--dry-run=client -o yaml | kubectl apply -f -` is the standard "create or update" idiom in kubectl, since plain `kubectl create` fails if the resource already exists), deletes any previous migration Job (Kubernetes Jobs are immutable, so a stale one must be deleted before applying a new one), applies the full kustomization, and waits for every rollout in dependency order.
 - `stage('Wait For ALB And Fix CORS')` is new in this version. It polls `kubectl get ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'` every 10 seconds for up to 5 minutes, since the AWS Load Balancer Controller takes a couple of minutes to provision a real ALB and is not instant the way Kind's port-mapped Nginx Ingress was. Once a hostname appears, it recreates the ConfigMap with the real `CORS_ORIGINS` value and restarts the backend Deployment so the running Pods pick up the corrected environment variable — ConfigMap changes never propagate to already-running Pods on their own.
 - `stage('Verify Application')` curls the health, readiness, and summary endpoints through the ALB's own DNS name, the same verification the main Phase 7 guide performs against its own public IP.
-- `post { always { ... } }` runs after every build, success or failure. It restores the three manifest files back to their committed placeholder state with `git checkout --`, undoing the `sed -i` from the stamp stage. Without this, the placeholders would be permanently replaced with a stale value in the Jenkins workspace, and the *next* pipeline run's `sed` command would silently do nothing because the placeholder strings would no longer exist.
+- `post { always { ... } }` runs after every build, success or failure. It restores the three manifest files back to their committed placeholder state with `git checkout --`, undoing the `sed -i` from the stamp stage. Without this, the placeholders would be permanently replaced with a stale value in the Jenkins workspace, and the _next_ pipeline run's `sed` command would silently do nothing because the placeholder strings would no longer exist.
 
 Reference:
 
@@ -2216,7 +2242,7 @@ vim deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/configmap.yaml
 Change `APP_NAME`:
 
 ```yaml
-  APP_NAME: DevOps LaunchBoard API via Jenkins on EKS v2
+APP_NAME: DevOps LaunchBoard API via Jenkins on EKS v2
 ```
 
 Commit and push:
@@ -2331,7 +2357,89 @@ sudo usermod -aG docker jenkins
 sudo systemctl restart jenkins
 ```
 
-### Problem 4: Pipeline Fails At Checkout With "Permission denied (publickey)"
+### Problem 4: "Backend Checks" Stage Fails With "ensurepip is not available"
+
+```text
+The virtual environment was not created successfully because ensurepip is not
+available. On Debian/Ubuntu systems, you need to install the python3-venv
+package using the following command.
+
+    apt install python3.12-venv
+```
+
+This means Step 4 was run before `python3-venv` was added to its package list, or you created this EC2 instance before that step was last updated. Install the missing package directly and re-run the build — no Jenkinsfile or workspace changes are needed, this is a one-time fix for the host:
+
+```bash
+sudo apt update
+sudo apt install -y python3-venv python3-pip
+```
+
+Why this happens: Ubuntu's `python3` package does not bundle the `venv` module by default. `python3 -m venv .venv` needs `ensurepip`, which only becomes available once `python3-venv` is installed. Since the Jenkinsfile runs this command directly on the EC2 instance (not inside a container with its own Python image), the host itself must have this package, the same reasoning Phase 2 (bare metal) installs it for.
+
+### Problem 5: "Backend Checks" Stage Fails With `ruff check .` Reporting F401 On `alembic/env.py`
+
+```text
+F401 [*] `app.models.deployment.Deployment` imported but unused
+  --> alembic/env.py:9:35
+F401 [*] `app.models.deployment.Service` imported but unused
+  --> alembic/env.py:9:47
+```
+
+This is not a Jenkins or EKS problem — it is a pre-existing lint finding in the application's own `backend/alembic/env.py`, and it will fail the same way in the main Phase 7 (GitHub Actions) guide and the sibling `phase-7-cicd-EKS` guide too, since all three run the same `ruff check .` command against the same backend source.
+
+`alembic/env.py` imports the `Deployment` and `Service` models purely so SQLAlchemy's `Base.metadata` picks up their table definitions — Alembic needs that metadata object populated to autogenerate migrations, even though nothing in this file calls `Deployment` or `Service` by name afterward. Ruff has no way to know an import exists for that side effect rather than direct use, so it flags it as unused.
+
+Fix it once, in your own repository, by adding a `noqa` suppression comment to that import line:
+
+```bash
+cd /opt/devops-launchboard/app-source
+vim backend/alembic/env.py
+```
+
+Change:
+
+```python
+from app.models.deployment import Deployment, Service
+```
+
+to:
+
+```python
+from app.models.deployment import Deployment, Service  # noqa: F401
+```
+
+Commit and push:
+
+```bash
+git add backend/alembic/env.py
+git commit -m "fix: suppress ruff F401 for alembic model imports"
+git push origin main
+```
+
+The next pipeline run (automatic within 5 minutes via Poll SCM, or triggered manually) will pick up the fix and the "Backend Checks" stage will pass.
+
+### Problem 6: "Frontend Checks" Stage Fails With "npm: not found"
+
+```text
+/var/lib/jenkins/workspace/launchboard-jenkins-deploy/frontend@tmp/.../script.sh.copy: 1: npm: not found
+ERROR: script returned exit code 127
+```
+
+Node.js and npm were never installed on this EC2 instance, the same root cause as Problem 4 but for the frontend toolchain instead of the Python one. Install them now and re-run the build — no Jenkinsfile or workspace changes are needed:
+
+```bash
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list
+sudo apt update
+sudo apt install -y nodejs
+node --version
+npm --version
+```
+
+Why this happens: the Jenkinsfile's "Frontend Checks" stage runs `npm ci`, `npm run lint`, and `npm run build` directly on this host, the same way "Backend Checks" runs Python directly on the host. Installing Jenkins itself does not install Node.js — that is a separate toolchain Step 4 must provision explicitly.
+
+### Problem 7: Pipeline Fails At Checkout With "Permission denied (publickey)"
 
 The Jenkins credential from Step 23 does not match the deploy key added to GitHub, or the deploy key was added to the wrong repository.
 
@@ -2341,17 +2449,29 @@ sudo -u jenkins ssh -T git@github.com -i /var/lib/jenkins/.ssh/known_hosts 2>&1 
 
 Re-check that the public key pasted into GitHub matches `cat ~/jenkins_deploy_key.pub`, and that the private key pasted into the Jenkins credential matches `cat ~/jenkins_deploy_key`.
 
-### Problem 5: Pipeline Fails At "Update Kubeconfig" With "ResourceNotFoundException" Or A Region Error
+### Problem 8: Pipeline Fails At "Update Kubeconfig" With "ResourceNotFoundException" Or A Region Error
 
-The `CLUSTER_NAME` or `AWS_REGION` value hardcoded in the Jenkinsfile (Step 20) does not match the cluster's actual name or region from Step 14.
+The `CLUSTER_NAME` or `AWS_REGION` value hardcoded in the Jenkinsfile does not match the cluster's actual name or region from Step 14.
 
 ```bash
 eksctl get cluster --region "$AWS_REGION"
 ```
 
-Fix the values in the Jenkinsfile, commit, and push.
+A specific variant of this is the AWS CLI printing the placeholder string back literally:
 
-### Problem 6: kubectl Commands Fail With "error: You must be logged in to the server (Unauthorized)"
+```text
+aws: [ERROR]: Provided region_name 'YOUR_AWS_REGION' doesn't match a supported format.
+```
+
+This means `AWS_REGION = 'YOUR_AWS_REGION'` was never replaced with a real region. **`Jenkinsfile` (Step 20) and `Jenkinsfile.rollback` (Step 21) each carry their own independent copy of this placeholder** — fixing it in one file does not fix it in the other, so if you replaced it in `Jenkinsfile` and the deploy pipeline started working, that tells you nothing about whether `Jenkinsfile.rollback` was also fixed. Check both files explicitly:
+
+```bash
+grep -n "AWS_REGION = 'YOUR_AWS_REGION'" deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/Jenkinsfile deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/Jenkinsfile.rollback
+```
+
+Fix whichever file `grep` still finds the placeholder in, commit, and push.
+
+### Problem 9: kubectl Commands Fail With "error: You must be logged in to the server (Unauthorized)"
 
 The IAM identity mapping from Step 16 is missing, or maps the wrong ARN. The IAM user behind the `aws-jenkins-credentials` Jenkins credential (Step 19) must exactly match the ARN mapped into the cluster's RBAC.
 
@@ -2361,7 +2481,7 @@ eksctl get iamidentitymapping --cluster "$CLUSTER_NAME" --region "$AWS_REGION"
 
 If the entry is missing or wrong, re-run the `eksctl create iamidentitymapping` command from Step 16 with the correct ARN.
 
-### Problem 7: docker push To ECR Fails With "no basic auth credentials"
+### Problem 10: docker push To ECR Fails With "no basic auth credentials"
 
 The ECR login token from `aws ecr get-login-password` is only valid for 12 hours and is re-fetched on every pipeline run by the "Log In To ECR" stage, so this almost always means that stage did not run, or ran against the wrong region.
 
@@ -2371,7 +2491,36 @@ aws ecr get-login-password --region "$AWS_REGION" \
   | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 ```
 
-### Problem 8: Pods Show ImagePullBackOff
+### Problem 11: "Deploy To EKS" Stage Fails At `rollout status deployment/launchboard-db` With "exceeded its progress deadline"
+
+```text
+error: deployment "launchboard-db" exceeded its progress deadline
+```
+
+Check the Pod's actual crash reason — the rollout timeout itself is generic and never tells you why:
+
+```bash
+kubectl -n devops-launchboard get pods
+kubectl -n devops-launchboard logs deployment/launchboard-db --previous --tail=40
+```
+
+If the log shows:
+
+```text
+initdb: error: directory "/var/lib/postgresql/data" exists but is not empty
+initdb: detail: It contains a lost+found directory, perhaps due to it being a mount point.
+```
+
+this is a known PostgreSQL-on-EBS issue, not an EKS or Jenkins problem. A freshly formatted EBS volume's filesystem always contains a `lost+found` directory at its root, and PostgreSQL's `initdb` refuses to initialize a data directory it considers non-empty. The fix is to set `PGDATA` to a subdirectory of the mount in `k8s/launchboard-postgres-deployment.yaml` (already done in this guide's manifest from Step 18 — if you are hitting this, your checked-out copy predates that fix):
+
+```yaml
+- name: PGDATA
+  value: /var/lib/postgresql/data/pgdata
+```
+
+After adding it, commit, push, and re-run the deploy pipeline. The backend Pods crashing with `ConnectionRefusedError` in their own logs around the same time are not a separate bug — the backend's startup script waits on a TCP connection to Postgres before doing anything else, so it crash-loops for as long as Postgres itself never comes up.
+
+### Problem 12: Pods Show ImagePullBackOff
 
 The image was pushed to the wrong account, region, or repository name, the ECR repositories from Step 15 were never created, or a manifest still has a literal placeholder string. Check:
 
@@ -2383,7 +2532,7 @@ aws ecr describe-repositories --region "$AWS_REGION" --query "repositories[].rep
 
 If `grep` finds either placeholder still present after a build ran, the "Stamp Image Tag Into Manifests" stage did not run before "Deploy To EKS" — check the build's Console Output for the order stages actually executed in.
 
-### Problem 9: "Wait For ALB And Fix CORS" Stage Times Out
+### Problem 13: "Wait For ALB And Fix CORS" Stage Times Out
 
 The AWS Load Balancer Controller from Step 17 is not running, crashed, or lacks IRSA permissions.
 
@@ -2395,7 +2544,7 @@ kubectl -n devops-launchboard describe ingress launchboard-ingress
 
 `kubectl describe ingress` shows Kubernetes Events at the bottom, which usually name the exact AWS API error (commonly a missing IAM permission on the controller's IRSA role).
 
-### Problem 10: Second Build's "Stamp Image Tag" Stage Silently Does Nothing
+### Problem 14: Second Build's "Stamp Image Tag" Stage Silently Does Nothing
 
 The `post { always { git checkout -- ... } }` block from Step 20 did not run on a previous failed build (for example, the build was manually aborted), so the placeholders are already gone from the workspace. Manually restore them:
 
@@ -2406,7 +2555,7 @@ git checkout -- deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/la
   deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/launchboard-migration-job.yaml
 ```
 
-### Problem 11: CORS Errors In Browser
+### Problem 15: CORS Errors In Browser
 
 Should be rare in this version, since "Wait For ALB And Fix CORS" recomputes `CORS_ORIGINS` from the live ALB hostname on every run. If it still happens:
 
@@ -2531,24 +2680,24 @@ CloudWatch > Log Groups
 
 ## Reference Documentation
 
-| Topic | Link |
-| --- | --- |
-| Jenkins installation (Debian/Ubuntu) | https://www.jenkins.io/doc/book/installing/linux/#debianubuntu |
-| Jenkins Pipeline syntax | https://www.jenkins.io/doc/book/pipeline/syntax/ |
-| Jenkins Pipeline from SCM | https://www.jenkins.io/doc/book/pipeline/getting-started/#defining-a-pipeline-in-scm |
-| Jenkins credentials | https://www.jenkins.io/doc/book/using/using-credentials/ |
-| Jenkins Poll SCM cron syntax | https://www.jenkins.io/doc/book/pipeline/syntax/#cron-syntax |
-| Jenkins built-in steps reference | https://www.jenkins.io/doc/pipeline/steps/ |
-| Docker Engine Ubuntu install | https://docs.docker.com/engine/install/ubuntu/ |
-| Amazon EKS | https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html |
-| eksctl | https://eksctl.io/ |
-| ECR lifecycle policies | https://docs.aws.amazon.com/AmazonECR/latest/userguide/LifecyclePolicies.html |
-| Managing IAM identities for your cluster | https://docs.aws.amazon.com/eks/latest/userguide/grant-k8s-access.html |
-| AWS Load Balancer Controller | https://kubernetes-sigs.github.io/aws-load-balancer-controller/ |
-| Kustomize documentation | https://kustomize.io/ |
-| Kubernetes Deployments | https://kubernetes.io/docs/concepts/workloads/controllers/deployment/ |
-| kubectl rollout | https://kubernetes.io/docs/reference/kubectl/generated/kubectl_rollout/ |
-| Horizontal Pod Autoscaling | https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/ |
+| Topic                                    | Link                                                                                 |
+| ---------------------------------------- | ------------------------------------------------------------------------------------ |
+| Jenkins installation (Debian/Ubuntu)     | https://www.jenkins.io/doc/book/installing/linux/#debianubuntu                       |
+| Jenkins Pipeline syntax                  | https://www.jenkins.io/doc/book/pipeline/syntax/                                     |
+| Jenkins Pipeline from SCM                | https://www.jenkins.io/doc/book/pipeline/getting-started/#defining-a-pipeline-in-scm |
+| Jenkins credentials                      | https://www.jenkins.io/doc/book/using/using-credentials/                             |
+| Jenkins Poll SCM cron syntax             | https://www.jenkins.io/doc/book/pipeline/syntax/#cron-syntax                         |
+| Jenkins built-in steps reference         | https://www.jenkins.io/doc/pipeline/steps/                                           |
+| Docker Engine Ubuntu install             | https://docs.docker.com/engine/install/ubuntu/                                       |
+| Amazon EKS                               | https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html                    |
+| eksctl                                   | https://eksctl.io/                                                                   |
+| ECR lifecycle policies                   | https://docs.aws.amazon.com/AmazonECR/latest/userguide/LifecyclePolicies.html        |
+| Managing IAM identities for your cluster | https://docs.aws.amazon.com/eks/latest/userguide/grant-k8s-access.html               |
+| AWS Load Balancer Controller             | https://kubernetes-sigs.github.io/aws-load-balancer-controller/                      |
+| Kustomize documentation                  | https://kustomize.io/                                                                |
+| Kubernetes Deployments                   | https://kubernetes.io/docs/concepts/workloads/controllers/deployment/                |
+| kubectl rollout                          | https://kubernetes.io/docs/reference/kubectl/generated/kubectl_rollout/              |
+| Horizontal Pod Autoscaling               | https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/           |
 
 ## What To Do Next
 

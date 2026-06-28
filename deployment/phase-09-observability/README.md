@@ -883,6 +883,8 @@ spec:
                 secretKeyRef:
                   name: launchboard-secret
                   key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
@@ -922,6 +924,7 @@ spec:
 - `strategy.type: Recreate` terminates the existing Pod before creating a new one — required for a single-writer database holding an exclusive lock on its EBS volume; `RollingUpdate` would briefly run two Pods against the same `ReadWriteOnce` volume.
 - `image: postgres:16-alpine` comes from Docker Hub (public), not ECR, because it is an official upstream image you do not build. Worker nodes reach it through the NAT Gateway.
 - `env` reads `POSTGRES_DB`/`POSTGRES_USER` from the ConfigMap and `POSTGRES_PASSWORD` from the Secret — what the official Postgres image's entrypoint needs to create the database on first start.
+- `PGDATA: /var/lib/postgresql/data/pgdata` points Postgres at a subdirectory of the mounted volume instead of the mount point itself. A freshly provisioned EBS volume's filesystem always contains a `lost+found` directory at its root, and `initdb` refuses to initialize a data directory it considers non-empty. Without this, the Pod crash-loops with `initdb: error: directory "/var/lib/postgresql/data" exists but is not empty`.
 - `readinessProbe`/`livenessProbe` run `pg_isready` rather than an HTTP check, since PostgreSQL is not an HTTP service.
 
 #### launchboard-postgres-service.yaml

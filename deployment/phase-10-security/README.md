@@ -955,6 +955,8 @@ spec:
                 secretKeyRef:
                   name: launchboard-secret
                   key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
@@ -991,7 +993,7 @@ spec:
             claimName: launchboard-postgres-pvc
 ```
 
-This is the first phase where the PostgreSQL Pod itself gets a full `securityContext`. Earlier phases left PostgreSQL running as whatever user the official image defaults to; here it explicitly runs as UID 999 (the `postgres` image's own built-in user — confirm with `docker run --rm postgres:16-alpine id -u`), drops every Linux capability, and blocks privilege escalation. This is required for the Pod Security Admission `restricted` level applied in Step 10: without these fields, the namespace would reject this Deployment outright once the labels are in place. `strategy.type: Recreate` is unchanged from earlier phases — a single-writer database cannot run two Pods against the same `ReadWriteOnce` volume.
+This is the first phase where the PostgreSQL Pod itself gets a full `securityContext`. Earlier phases left PostgreSQL running as whatever user the official image defaults to; here it explicitly runs as UID 999 (the `postgres` image's own built-in user — confirm with `docker run --rm postgres:16-alpine id -u`), drops every Linux capability, and blocks privilege escalation. This is required for the Pod Security Admission `restricted` level applied in Step 10: without these fields, the namespace would reject this Deployment outright once the labels are in place. `strategy.type: Recreate` is unchanged from earlier phases — a single-writer database cannot run two Pods against the same `ReadWriteOnce` volume. `PGDATA: /var/lib/postgresql/data/pgdata` points Postgres at a subdirectory of the mounted volume rather than the mount point itself — a freshly provisioned EBS volume's filesystem always contains a `lost+found` directory at its root, and `initdb` refuses to initialize a data directory it considers non-empty, crash-looping the Pod without this.
 
 #### launchboard-postgres-service.yaml
 

@@ -798,6 +798,8 @@ spec:
                 secretKeyRef:
                   name: launchboard-secret
                   key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
@@ -834,7 +836,7 @@ spec:
             claimName: launchboard-postgres-pvc
 ```
 
-This is the Deployment whose PVC you back up with Velero and restore from a PostgreSQL dump later in this phase. `strategy.type: Recreate` terminates the existing Pod before creating a new one — required for a single-writer database holding an exclusive lock on its `ReadWriteOnce` volume. `runAsUser: 999` is the `postgres:16-alpine` image's own built-in user (confirm with `docker run --rm postgres:16-alpine id -u`); `allowPrivilegeEscalation: false` and `capabilities.drop: [ALL]` satisfy the same restricted-profile pattern as every other container in this phase.
+This is the Deployment whose PVC you back up with Velero and restore from a PostgreSQL dump later in this phase. `strategy.type: Recreate` terminates the existing Pod before creating a new one — required for a single-writer database holding an exclusive lock on its `ReadWriteOnce` volume. `runAsUser: 999` is the `postgres:16-alpine` image's own built-in user (confirm with `docker run --rm postgres:16-alpine id -u`); `allowPrivilegeEscalation: false` and `capabilities.drop: [ALL]` satisfy the same restricted-profile pattern as every other container in this phase. `PGDATA: /var/lib/postgresql/data/pgdata` points Postgres at a subdirectory of the mounted volume rather than the mount point itself — a freshly provisioned EBS volume's filesystem always contains a `lost+found` directory at its root, and `initdb` refuses to initialize a data directory it considers non-empty, crash-looping the Pod without this.
 
 #### launchboard-postgres-service.yaml
 

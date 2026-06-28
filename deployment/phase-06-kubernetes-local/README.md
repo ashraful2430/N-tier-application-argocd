@@ -1068,6 +1068,8 @@ spec:
                 secretKeyRef:
                   name: launchboard-secret
                   key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
@@ -1127,6 +1129,7 @@ Line explanation:
 - `valueFrom.configMapKeyRef.key: POSTGRES_DB` reads specifically the `POSTGRES_DB` key from that ConfigMap.
 - `env[2].valueFrom.secretKeyRef.name: launchboard-secret` reads from the Secret named `launchboard-secret`.
 - `env[2].valueFrom.secretKeyRef.key: POSTGRES_PASSWORD` reads the `POSTGRES_PASSWORD` key from the Secret.
+- `env[3].name: PGDATA` with `value: /var/lib/postgresql/data/pgdata` points Postgres at a subdirectory of the mounted volume instead of the mount point itself. Kind's `local-path` provisioner bind-mounts an ordinary empty host folder, so this is not strictly required here the way it is on a real cloud cluster — but setting it defensively keeps this manifest identical to the one used in the cloud-backed phases, where a freshly formatted EBS volume's `lost+found` directory would otherwise make `initdb` refuse to start.
 - `volumeMounts[0].name: postgres-data` references the volume named `postgres-data` defined in the `volumes` section below.
 - `volumeMounts[0].mountPath: /var/lib/postgresql/data` is where PostgreSQL stores its data files inside the container. Mounting the PVC here means database files persist on the PVC even if the container restarts.
 - `readinessProbe` defines how Kubernetes checks if the Pod is ready to receive traffic. A Pod that fails readiness is removed from Service endpoints so no traffic is sent to it.
@@ -3360,6 +3363,8 @@ spec:
                 secretKeyRef:
                   name: launchboard-secret
                   key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
@@ -3400,6 +3405,7 @@ Line explanation:
 
 - `strategy.type: Recreate` kills the old Pod before starting a new one during updates. Required because the PVC uses `ReadWriteOnce` which only allows one Pod to mount it at a time.
 - `env` reads database name and user from the ConfigMap and password from the Secret. This keeps credentials out of the image and out of this manifest.
+- `env.PGDATA: /var/lib/postgresql/data/pgdata` points Postgres at a subdirectory of the mounted volume instead of the mount point itself. Kind's `local-path` provisioner does not have the issue this guards against (a freshly formatted cloud volume's `lost+found` directory confusing `initdb`), but setting it here keeps this manifest identical to the cloud-backed phases that do need it.
 - `volumeMounts.mountPath: /var/lib/postgresql/data` is where PostgreSQL writes its data files. Mounting the PVC here means data persists across Pod restarts.
 - `readinessProbe` and `livenessProbe` both run `pg_isready` to check if PostgreSQL is accepting connections.
 - `resources.requests` reserves CPU and memory for scheduling. `resources.limits` prevents the Pod from using too much.
