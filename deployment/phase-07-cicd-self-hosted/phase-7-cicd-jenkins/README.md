@@ -484,15 +484,18 @@ java -version
 Add the Jenkins repository and install:
 
 ```bash
-sudo curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key \
-  -o /usr/share/keyrings/jenkins-keyring.asc
+sudo mkdir -p /etc/apt/keyrings
+sudo curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key \
+  -o /etc/apt/keyrings/jenkins-keyring.asc
 
-echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" \
+echo "deb [signed-by=/etc/apt/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" \
   | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
 
 sudo apt update
 sudo apt install -y jenkins
 ```
+
+Jenkins periodically rotates its package signing key, and the key filename is versioned by year (`jenkins.io-2026.key` at the time of writing). If `sudo apt update` reports `NO_PUBKEY` with a key ID that does not match what you just downloaded, the key has rotated again since this guide was written — check the current filename in the official install command at the Reference link below and substitute it here.
 
 Start and enable Jenkins:
 
@@ -2278,7 +2281,37 @@ kubectl -n kube-system logs deployment/aws-load-balancer-controller --tail=50
 
 ## Troubleshooting
 
-### Problem 1: Jenkins UI Is Unreachable On Port 8080
+### Problem 1: `sudo apt install jenkins` Fails With "NO_PUBKEY" Or "Package jenkins is not available"
+
+```text
+W: GPG error: https://pkg.jenkins.io/debian-stable binary/ Release: The following signatures couldn't
+be verified because the public key is not available: NO_PUBKEY 7198F4B714ABFC68
+E: The repository 'https://pkg.jenkins.io/debian-stable binary/ Release' is not signed.
+...
+E: Package 'jenkins' has no installation candidate
+```
+
+Jenkins rotated its package signing key again since Step 9 was written, so the downloaded `jenkins.io-2026.key` file no longer matches the key ID the repository's `Release` file is actually signed with. `apt` correctly refuses to install from an unsigned repository — this is not a connectivity problem, it is a stale key.
+
+Fix it by re-running Step 9's commands with the current key filename from the official install page:
+
+```bash
+sudo rm -f /etc/apt/keyrings/jenkins-keyring.asc /etc/apt/sources.list.d/jenkins.list
+```
+
+Then open https://www.jenkins.io/doc/book/installing/linux/#debianubuntu, copy the exact `jenkins.io-YYYY.key` filename it currently shows, and re-run:
+
+```bash
+sudo mkdir -p /etc/apt/keyrings
+sudo curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-CURRENT_YEAR.key \
+  -o /etc/apt/keyrings/jenkins-keyring.asc
+echo "deb [signed-by=/etc/apt/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" \
+  | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+sudo apt update
+sudo apt install -y jenkins
+```
+
+### Problem 2: Jenkins UI Is Unreachable On Port 8080
 
 Common causes:
 
@@ -2288,7 +2321,7 @@ Jenkins service is not running: sudo systemctl status jenkins
 Your IP address changed since the security group rule was created.
 ```
 
-### Problem 2: Pipeline Fails With "permission denied" On Docker Commands
+### Problem 3: Pipeline Fails With "permission denied" On Docker Commands
 
 The `jenkins` user is not in the `docker` group, or Jenkins was not restarted after Step 11.
 
@@ -2298,7 +2331,7 @@ sudo usermod -aG docker jenkins
 sudo systemctl restart jenkins
 ```
 
-### Problem 3: Pipeline Fails At Checkout With "Permission denied (publickey)"
+### Problem 4: Pipeline Fails At Checkout With "Permission denied (publickey)"
 
 The Jenkins credential from Step 23 does not match the deploy key added to GitHub, or the deploy key was added to the wrong repository.
 
@@ -2308,7 +2341,7 @@ sudo -u jenkins ssh -T git@github.com -i /var/lib/jenkins/.ssh/known_hosts 2>&1 
 
 Re-check that the public key pasted into GitHub matches `cat ~/jenkins_deploy_key.pub`, and that the private key pasted into the Jenkins credential matches `cat ~/jenkins_deploy_key`.
 
-### Problem 4: Pipeline Fails At "Update Kubeconfig" With "ResourceNotFoundException" Or A Region Error
+### Problem 5: Pipeline Fails At "Update Kubeconfig" With "ResourceNotFoundException" Or A Region Error
 
 The `CLUSTER_NAME` or `AWS_REGION` value hardcoded in the Jenkinsfile (Step 20) does not match the cluster's actual name or region from Step 14.
 
@@ -2318,7 +2351,7 @@ eksctl get cluster --region "$AWS_REGION"
 
 Fix the values in the Jenkinsfile, commit, and push.
 
-### Problem 5: kubectl Commands Fail With "error: You must be logged in to the server (Unauthorized)"
+### Problem 6: kubectl Commands Fail With "error: You must be logged in to the server (Unauthorized)"
 
 The IAM identity mapping from Step 16 is missing, or maps the wrong ARN. The IAM user behind the `aws-jenkins-credentials` Jenkins credential (Step 19) must exactly match the ARN mapped into the cluster's RBAC.
 
@@ -2328,7 +2361,7 @@ eksctl get iamidentitymapping --cluster "$CLUSTER_NAME" --region "$AWS_REGION"
 
 If the entry is missing or wrong, re-run the `eksctl create iamidentitymapping` command from Step 16 with the correct ARN.
 
-### Problem 6: docker push To ECR Fails With "no basic auth credentials"
+### Problem 7: docker push To ECR Fails With "no basic auth credentials"
 
 The ECR login token from `aws ecr get-login-password` is only valid for 12 hours and is re-fetched on every pipeline run by the "Log In To ECR" stage, so this almost always means that stage did not run, or ran against the wrong region.
 
@@ -2338,7 +2371,7 @@ aws ecr get-login-password --region "$AWS_REGION" \
   | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 ```
 
-### Problem 7: Pods Show ImagePullBackOff
+### Problem 8: Pods Show ImagePullBackOff
 
 The image was pushed to the wrong account, region, or repository name, the ECR repositories from Step 15 were never created, or a manifest still has a literal placeholder string. Check:
 
@@ -2350,7 +2383,7 @@ aws ecr describe-repositories --region "$AWS_REGION" --query "repositories[].rep
 
 If `grep` finds either placeholder still present after a build ran, the "Stamp Image Tag Into Manifests" stage did not run before "Deploy To EKS" — check the build's Console Output for the order stages actually executed in.
 
-### Problem 8: "Wait For ALB And Fix CORS" Stage Times Out
+### Problem 9: "Wait For ALB And Fix CORS" Stage Times Out
 
 The AWS Load Balancer Controller from Step 17 is not running, crashed, or lacks IRSA permissions.
 
@@ -2362,7 +2395,7 @@ kubectl -n devops-launchboard describe ingress launchboard-ingress
 
 `kubectl describe ingress` shows Kubernetes Events at the bottom, which usually name the exact AWS API error (commonly a missing IAM permission on the controller's IRSA role).
 
-### Problem 9: Second Build's "Stamp Image Tag" Stage Silently Does Nothing
+### Problem 10: Second Build's "Stamp Image Tag" Stage Silently Does Nothing
 
 The `post { always { git checkout -- ... } }` block from Step 20 did not run on a previous failed build (for example, the build was manually aborted), so the placeholders are already gone from the workspace. Manually restore them:
 
@@ -2373,7 +2406,7 @@ git checkout -- deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/la
   deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/launchboard-migration-job.yaml
 ```
 
-### Problem 10: CORS Errors In Browser
+### Problem 11: CORS Errors In Browser
 
 Should be rare in this version, since "Wait For ALB And Fix CORS" recomputes `CORS_ORIGINS` from the live ALB hostname on every run. If it still happens:
 
