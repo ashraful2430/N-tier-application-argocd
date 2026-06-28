@@ -6,10 +6,23 @@ pipeline {
   }
 
   environment {
+    AWS_CREDS = credentials('aws-jenkins-credentials')
+    AWS_ACCESS_KEY_ID = "${AWS_CREDS_USR}"
+    AWS_SECRET_ACCESS_KEY = "${AWS_CREDS_PSW}"
+    AWS_REGION = 'YOUR_AWS_REGION'
+    CLUSTER_NAME = 'devops-launchboard-phase-7-jenkins'
     NAMESPACE = 'devops-launchboard'
   }
 
   stages {
+    stage('Update Kubeconfig') {
+      steps {
+        sh '''
+          aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region "${AWS_REGION}"
+        '''
+      }
+    }
+
     stage('Show Rollout History') {
       steps {
         sh 'kubectl -n "${NAMESPACE}" rollout history deployment/${DEPLOYMENT}'
@@ -40,11 +53,17 @@ pipeline {
 
     stage('Verify Application') {
       steps {
+        script {
+          env.ALB_DNS = sh(
+            script: "kubectl -n ${env.NAMESPACE} get ingress launchboard-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'",
+            returnStdout: true
+          ).trim()
+        }
         sh '''
-          curl -fsS http://127.0.0.1/healthz
-          curl -fsS http://127.0.0.1/health
-          curl -fsS http://127.0.0.1/ready
-          echo "Rollback of ${DEPLOYMENT} verified."
+          curl -fsS "http://${ALB_DNS}/healthz"
+          curl -fsS "http://${ALB_DNS}/health"
+          curl -fsS "http://${ALB_DNS}/ready"
+          echo "Rollback of ${DEPLOYMENT} verified at http://${ALB_DNS}"
         '''
       }
     }

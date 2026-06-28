@@ -312,6 +312,10 @@ Docker version ...
 Docker Compose version ...
 ```
 
+Reference:
+
+- Install Docker Engine on Ubuntu: https://docs.docker.com/engine/install/ubuntu/
+
 ## Step 5: Create GitHub SSH Key On EC2
 
 Run:
@@ -573,6 +577,11 @@ Production-grade note:
 
 This backend image is production-style for this phase because it uses a slim base image, multi-stage build, non-root user, health check, and no public port mapping in Compose.
 
+Reference:
+
+- Dockerfile reference: https://docs.docker.com/reference/dockerfile/
+- Multi-stage builds: https://docs.docker.com/build/building/multi-stage/
+
 ## Step 10: Create Frontend Dockerfile
 
 Run:
@@ -636,6 +645,11 @@ The frontend image is lightweight because the final runtime image contains only 
 Important fix:
 
 This version does not force a custom non-root Nginx user. The official Nginx Alpine image already has its expected entrypoint and runtime paths. This avoids the permission and PID problems students faced in Phase 3.
+
+Reference:
+
+- Official Nginx Docker image: https://hub.docker.com/_/nginx
+- Vite environment variables: https://vite.dev/guide/env-and-mode
 
 ## Step 11: Create Nginx Config
 
@@ -721,6 +735,11 @@ Line-by-line explanation:
 | `location = /ready` | Proxies backend readiness checks. |
 | `location /` | Handles all frontend routes. |
 | `try_files $uri $uri/ /index.html;` | Supports React browser refresh and client-side routing. |
+
+Reference:
+
+- Nginx server block documentation: https://nginx.org/en/docs/http/ngx_http_core_module.html
+- Nginx proxy module: https://nginx.org/en/docs/http/ngx_http_proxy_module.html
 
 ## Step 12: Create Compose Environment File
 
@@ -914,6 +933,11 @@ Important Compose line explanation:
 | No backend `ports` | Keeps backend private inside the Compose network. |
 | No database `ports` | Keeps PostgreSQL private inside the Compose network. |
 
+Reference:
+
+- Compose file reference: https://docs.docker.com/reference/compose-file/
+- Compose healthcheck and depends_on: https://docs.docker.com/compose/how-tos/startup-order/
+
 ## Step 14: Create Production Override File
 
 Run:
@@ -956,6 +980,11 @@ Line-by-line explanation:
 Note:
 
 These limits are lab-friendly. On a real production server, tune CPU and memory based on metrics.
+
+Reference:
+
+- Compose merge and override: https://docs.docker.com/compose/how-tos/multiple-compose-files/merge/
+- Compose resource constraints: https://docs.docker.com/reference/compose-file/deploy/#resources
 
 ## Step 15: Validate Compose Config
 

@@ -29,7 +29,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: frontend
-          image: launchboard-frontend:IMAGE_TAG_PLACEHOLDER
+          image: ECR_REGISTRY_PLACEHOLDER/launchboard-frontend:IMAGE_TAG_PLACEHOLDER
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

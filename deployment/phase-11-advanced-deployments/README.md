@@ -439,6 +439,10 @@ Why this step exists:
 
 Advanced releases create multiple image tags. Lifecycle policy keeps the registry clean so old release images do not pile up forever.
 
+Reference:
+
+- Amazon ECR lifecycle policies: https://docs.aws.amazon.com/AmazonECR/latest/userguide/LifecyclePolicies.html
+
 ## Step 8: Create Production Dockerfiles
 
 Create:
@@ -614,6 +618,11 @@ Why these files exist:
 
 The backend and frontend images are built the same way every time. Multi-stage builds keep runtime images smaller, non-root users reduce container risk, and health checks let Kubernetes verify each release.
 
+Reference:
+
+- Dockerfile reference: https://docs.docker.com/reference/dockerfile/
+- Nginx unprivileged image: https://hub.docker.com/r/nginxinc/nginx-unprivileged
+
 ## Step 9: Build And Push Images
 
 Set a short variable for the registry URL so the commands below stay readable:
@@ -687,6 +696,10 @@ Line explanation:
 Why this step exists:
 
 Blue-green and canary releases compare versions. For a lab, these tags may point to the same code. In real production, `green` or `canary` would usually be a newer build.
+
+Reference:
+
+- Push images to ECR: https://docs.aws.amazon.com/AmazonECR/latest/userguide/docker-push-ecr-image.html
 
 ## Step 10: Deploy The Base Application
 

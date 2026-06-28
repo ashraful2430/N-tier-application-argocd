@@ -1608,6 +1608,10 @@ launchboard-backend has 2 replicas
 launchboard-frontend has 2 replicas
 ```
 
+Reference:
+
+- `docker stack deploy` CLI reference: https://docs.docker.com/reference/cli/docker/stack/deploy/
+
 ## Step 19: Verify The App
 
 Run from EC2:
@@ -1665,6 +1669,10 @@ Scaling changes how many replicas a service should run. This is one of the core 
 Important:
 
 This manual scale change can be overwritten if you redeploy the stack file with `replicas: 2`.
+
+Reference:
+
+- `docker service scale` CLI reference: https://docs.docker.com/reference/cli/docker/service/scale/
 
 ## Step 21: Rolling Update
 

@@ -2,14 +2,16 @@ pipeline {
   agent any
 
   parameters {
-    string(name: 'PUBLIC_APP_URL', defaultValue: 'http://127.0.0.1', description: 'Public browser URL for CORS (your EC2 public IP, e.g. http://YOUR_EC2_PUBLIC_IP)')
     password(name: 'DB_PASSWORD', defaultValue: 'CHANGE_ME_STRONG_PASSWORD', description: 'PostgreSQL password for this lab')
   }
 
   environment {
-    KIND_CLUSTER = 'launchboard-jenkins'
+    AWS_CREDS = credentials('aws-jenkins-credentials')
+    AWS_ACCESS_KEY_ID = "${AWS_CREDS_USR}"
+    AWS_SECRET_ACCESS_KEY = "${AWS_CREDS_PSW}"
+    AWS_REGION = 'YOUR_AWS_REGION'
+    CLUSTER_NAME = 'devops-launchboard-phase-7-jenkins'
     NAMESPACE = 'devops-launchboard'
-    PUBLIC_APP_URL = "${params.PUBLIC_APP_URL}"
     DB_PASSWORD = "${params.DB_PASSWORD}"
   }
 
@@ -40,36 +42,28 @@ pipeline {
       steps {
         script {
           env.IMAGE_TAG = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+          env.ACCOUNT_ID = sh(script: 'aws sts get-caller-identity --query Account --output text', returnStdout: true).trim()
+          env.ECR_REGISTRY = "${env.ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com"
         }
         echo "Image tag for this build: ${env.IMAGE_TAG}"
+        echo "ECR registry: ${env.ECR_REGISTRY}"
       }
     }
 
-    stage('Create Kind Cluster If Missing') {
+    stage('Update Kubeconfig') {
       steps {
         sh '''
-          if ! kind get clusters | grep -q "^${KIND_CLUSTER}$"; then
-            kind create cluster --name "${KIND_CLUSTER}" \
-              --config deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/kind-config.yaml
-          else
-            echo "Cluster ${KIND_CLUSTER} already exists, reusing it."
-          fi
-          kubectl cluster-info --context "kind-${KIND_CLUSTER}"
+          aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region "${AWS_REGION}"
+          kubectl get nodes
         '''
       }
     }
 
-    stage('Install Nginx Ingress Controller If Missing') {
+    stage('Log In To ECR') {
       steps {
         sh '''
-          if ! kubectl get namespace ingress-nginx >/dev/null 2>&1; then
-            kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/kind/deploy.yaml
-            sleep 10
-          fi
-          kubectl wait --namespace ingress-nginx \
-            --for=condition=ready pod \
-            --selector=app.kubernetes.io/component=controller \
-            --timeout=180s
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
         '''
       }
     }
@@ -78,19 +72,19 @@ pipeline {
       steps {
         sh '''
           docker build -f deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/Dockerfile.backend \
-            -t "launchboard-backend:${IMAGE_TAG}" .
+            -t "${ECR_REGISTRY}/launchboard-backend:${IMAGE_TAG}" .
           docker build -f deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/Dockerfile.frontend \
             --build-arg VITE_API_URL= \
-            -t "launchboard-frontend:${IMAGE_TAG}" .
+            -t "${ECR_REGISTRY}/launchboard-frontend:${IMAGE_TAG}" .
         '''
       }
     }
 
-    stage('Load Images Into Kind') {
+    stage('Push Images To ECR') {
       steps {
         sh '''
-          kind load docker-image "launchboard-backend:${IMAGE_TAG}" --name "${KIND_CLUSTER}"
-          kind load docker-image "launchboard-frontend:${IMAGE_TAG}" --name "${KIND_CLUSTER}"
+          docker push "${ECR_REGISTRY}/launchboard-backend:${IMAGE_TAG}"
+          docker push "${ECR_REGISTRY}/launchboard-frontend:${IMAGE_TAG}"
         '''
       }
     }
@@ -98,7 +92,7 @@ pipeline {
     stage('Stamp Image Tag Into Manifests') {
       steps {
         sh '''
-          sed -i "s|IMAGE_TAG_PLACEHOLDER|${IMAGE_TAG}|g" \
+          sed -i "s|ECR_REGISTRY_PLACEHOLDER|${ECR_REGISTRY}|g; s|IMAGE_TAG_PLACEHOLDER|${IMAGE_TAG}|g" \
             deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/launchboard-backend-deployment.yaml \
             deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/launchboard-frontend-deployment.yaml \
             deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/launchboard-migration-job.yaml
@@ -106,15 +100,16 @@ pipeline {
       }
     }
 
-    stage('Deploy To Kind') {
+    stage('Deploy To EKS') {
       steps {
         sh 'kubectl apply -f deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/namespace.yaml'
+        sh 'kubectl apply -f deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/storageclass.yaml'
         sh '''
           kubectl create configmap launchboard-config \
             --namespace "${NAMESPACE}" \
             --from-literal=APP_NAME="DevOps LaunchBoard API" \
             --from-literal=APP_ENV=production \
-            --from-literal=CORS_ORIGINS="${PUBLIC_APP_URL}" \
+            --from-literal=CORS_ORIGINS="http://placeholder.invalid" \
             --from-literal=SEED_DEMO_DATA=true \
             --from-literal=POSTGRES_DB=launchboard \
             --from-literal=POSTGRES_USER=launchboard_user \
@@ -136,16 +131,51 @@ pipeline {
       }
     }
 
+    stage('Wait For ALB And Fix CORS') {
+      steps {
+        script {
+          def albDns = ''
+          for (int i = 0; i < 30; i++) {
+            albDns = sh(
+              script: "kubectl -n ${env.NAMESPACE} get ingress launchboard-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true",
+              returnStdout: true
+            ).trim()
+            if (albDns) {
+              break
+            }
+            echo "Waiting for ALB hostname... (${i + 1}/30)"
+            sleep(10)
+          }
+          if (!albDns) {
+            error 'ALB hostname did not appear within 5 minutes. Check the aws-load-balancer-controller logs.'
+          }
+          env.ALB_DNS = albDns
+        }
+        sh '''
+          kubectl create configmap launchboard-config \
+            --namespace "${NAMESPACE}" \
+            --from-literal=APP_NAME="DevOps LaunchBoard API" \
+            --from-literal=APP_ENV=production \
+            --from-literal=CORS_ORIGINS="http://${ALB_DNS}" \
+            --from-literal=SEED_DEMO_DATA=true \
+            --from-literal=POSTGRES_DB=launchboard \
+            --from-literal=POSTGRES_USER=launchboard_user \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n "${NAMESPACE}" rollout restart deployment/launchboard-backend
+          kubectl -n "${NAMESPACE}" rollout status deployment/launchboard-backend --timeout=180s
+        '''
+      }
+    }
+
     stage('Verify Application') {
       steps {
         sh '''
-          sleep 5
-          curl -fsS http://127.0.0.1/healthz
-          curl -fsS http://127.0.0.1/health
-          curl -fsS http://127.0.0.1/ready
-          curl -fsS http://127.0.0.1/api/summary | head -c 400
+          curl -fsS "http://${ALB_DNS}/healthz"
+          curl -fsS "http://${ALB_DNS}/health"
+          curl -fsS "http://${ALB_DNS}/ready"
+          curl -fsS "http://${ALB_DNS}/api/summary" | head -c 400
           echo ""
-          echo "Deployment of ${IMAGE_TAG} verified."
+          echo "Deployment of ${IMAGE_TAG} verified at http://${ALB_DNS}"
         '''
       }
     }

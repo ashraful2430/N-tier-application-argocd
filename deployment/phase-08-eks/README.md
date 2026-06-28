@@ -509,6 +509,10 @@ Expected:
 main
 ```
 
+Reference:
+
+- GitHub deploy keys: https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys
+
 ## Step 9: Create Phase 8 Folders
 
 Run:
@@ -553,9 +557,26 @@ __pycache__
 deployment/phase-04-docker-compose/.env
 ```
 
+Line explanation:
+
+- `.git` keeps Git history out of Docker builds.
+- `.github` keeps GitHub Actions workflow files out of images.
+- `.venv` and `backend/.venv` keep local Python virtual environments out of images; the Dockerfile creates its own inside the build.
+- `frontend/node_modules` keeps local frontend dependencies out of images; the Dockerfile's builder stage runs its own install.
+- `frontend/dist` ignores any old local build output.
+- `node_modules` ignores any root-level Node dependencies outside `frontend/`.
+- `__pycache__`, `**/__pycache__`, and `*.pyc` ignore Python bytecode caches.
+- `.pytest_cache` and `.ruff_cache` ignore test and lint caches.
+- `.env` and `.env.*` keep real secret env files out of images.
+- `deployment/phase-04-docker-compose/.env` ignores the real env file from the Phase 4 lab, in case a student worked through phases in order on the same checkout.
+
 Why this file exists:
 
 Docker should not send secrets, dependency folders, virtual environments, caches, or build output into image builds. Same file as every previous phase.
+
+Reference:
+
+- Docker build context: https://docs.docker.com/build/concepts/context/
 
 ## Step 11: Create EKS Cluster Config
 

@@ -631,6 +631,11 @@ Why this step exists:
 
 The app needs its own database and database user. Using a dedicated user is safer than connecting as `postgres`.
 
+Reference:
+
+- PostgreSQL CREATE ROLE: https://www.postgresql.org/docs/current/sql-createrole.html
+- PostgreSQL CREATE DATABASE: https://www.postgresql.org/docs/current/sql-createdatabase.html
+
 ## Step 9: Create Backend Environment File
 
 Run:
@@ -753,6 +758,11 @@ pip list
 Why this step exists:
 
 The backend needs a Python virtual environment and dependencies before it can start.
+
+Reference:
+
+- Python venv: https://docs.python.org/3/library/venv.html
+- pip editable installs: https://pip.pypa.io/en/stable/topics/local-project-installs/#editable-installs
 
 ## Step 12: Run Database Migrations
 
@@ -901,6 +911,10 @@ test -f /var/www/devops-launchboard/index.html && echo "Frontend published"
 Why this step exists:
 
 Nginx serves files from `/var/www/devops-launchboard`. The build must be copied there before users can open the UI.
+
+Reference:
+
+- rsync manual: https://download.samba.org/pub/rsync/rsync.1
 
 ## Step 16: Create systemd Service Files
 

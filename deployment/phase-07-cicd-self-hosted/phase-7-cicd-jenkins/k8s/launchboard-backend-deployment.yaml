@@ -28,7 +28,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: backend
-          image: launchboard-backend:IMAGE_TAG_PLACEHOLDER
+          image: ECR_REGISTRY_PLACEHOLDER/launchboard-backend:IMAGE_TAG_PLACEHOLDER
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh

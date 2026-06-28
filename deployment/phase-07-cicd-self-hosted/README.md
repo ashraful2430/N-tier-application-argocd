@@ -346,6 +346,10 @@ Why this step exists:
 
 The deploy key lets the EC2 server clone the repository over SSH without a personal password or token. A deploy key is scoped to one repository, which is safer than a personal SSH key on a shared lab server.
 
+Reference:
+
+- GitHub deploy keys: https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys
+
 ## Step 7: Clone The Repository
 
 Run:
@@ -487,9 +491,26 @@ __pycache__
 deployment/phase-04-docker-compose/.env
 ```
 
+Line explanation:
+
+- `.git` keeps Git history out of Docker builds.
+- `.github` keeps GitHub Actions workflow files out of images — they have no reason to be inside a container, and this repository's own pipeline files live there.
+- `.venv` and `backend/.venv` keep local Python virtual environments out of images; the Dockerfile creates its own inside the build.
+- `frontend/node_modules` keeps local frontend dependencies out of images; the Dockerfile's builder stage runs its own `npm install`/`npm ci`.
+- `frontend/dist` ignores any old local build output so a stale build never accidentally gets copied in.
+- `node_modules` ignores any root-level Node dependencies outside the `frontend/` folder.
+- `__pycache__`, `**/__pycache__`, and `*.pyc` ignore Python bytecode caches.
+- `.pytest_cache` and `.ruff_cache` ignore test and lint caches.
+- `.env` and `.env.*` keep real secret env files out of images — only `.env.example` style placeholder files should ever reach a build context.
+- `deployment/phase-04-docker-compose/.env` ignores the real env file from the Phase 4 lab, in case a student worked through phases in order on the same checkout.
+
 Why this file exists:
 
 Docker should not copy secrets, local virtual environments, dependency folders, caches, or build output into images. In CI this also matters for speed: a smaller build context uploads to the Docker daemon faster on every single pipeline run.
+
+Reference:
+
+- Docker build context: https://docs.docker.com/build/concepts/context/
 
 ## Step 12: Create Kind Config, Dockerfiles, And Nginx Config
 

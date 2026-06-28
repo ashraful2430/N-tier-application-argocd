@@ -1435,6 +1435,10 @@ Why this step exists:
 
 The frontend container is the public entry point. It serves static frontend files and forwards API requests to the backend container.
 
+Reference:
+
+- `docker run` CLI reference: https://docs.docker.com/reference/cli/docker/container/run/
+
 ## Step 16: Verify From Browser
 
 From your local machine, open:

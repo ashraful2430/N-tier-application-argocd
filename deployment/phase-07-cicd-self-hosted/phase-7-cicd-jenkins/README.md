@@ -1,15 +1,17 @@
-# Phase 7: CI/CD Automation — Jenkins From Scratch
+# Phase 7: CI/CD Automation — Jenkins From Scratch (Amazon EKS)
 
 ## Fresh Start Assumption
 
-This phase starts from a clean Ubuntu EC2 server and a GitHub repository.
+This phase starts from a clean Ubuntu EC2 server, a clean AWS account, and a GitHub repository.
 
-You do not need to complete any previous phase before using this guide. This guide does not reuse the main Phase 7 (GitHub Actions) server, cluster, or files — it builds its own Jenkins server, its own Kind cluster, and its own copies of every file, end to end.
+You do not need to complete any previous phase before using this guide. This guide does not reuse the main Phase 7 (GitHub Actions) server, cluster, or files, and it does not reuse the sibling `phase-7-cicd-EKS` guide's cluster either — it builds its own Jenkins server, its own EKS cluster, its own ECR repositories, and its own copies of every file, end to end.
 
 This guide assumes:
 
-- You have a fresh AWS EC2 server.
-- Docker, kubectl, Kind, and Jenkins are not installed yet.
+- You have an AWS account with permissions to create EKS, EC2, IAM, VPC, ALB, EBS, ECR, and NAT Gateway resources.
+- You have a fresh AWS EC2 server for Jenkins.
+- Docker, AWS CLI, kubectl, eksctl, Helm, and Jenkins are not installed yet.
+- No EKS cluster or ECR repository exists yet.
 - The repository is not cloned yet.
 - You will create files with `vim`.
 - You will type commands manually.
@@ -23,11 +25,13 @@ git@github.com:ashraful2430/N-tier-application.git
 
 ## What You Will Build
 
-This phase builds a self-hosted CI/CD pipeline using Jenkins instead of GitHub Actions:
+This phase builds a self-hosted CI/CD pipeline using Jenkins that deploys to a real Amazon EKS cluster instead of a local Kind cluster:
 
 - Installs Jenkins directly on an EC2 server (the most common way teams run a self-hosted CI server).
-- Creates a Jenkins Pipeline job that checks out the repository, lints and smoke-tests the backend, lints and builds the frontend, builds Docker images tagged with the Git commit SHA, creates a local Kind Kubernetes cluster if one does not already exist, loads the images into it, and deploys the app.
-- Tags every build with the Git commit SHA so rollback is real, not cosmetic — the same lesson taught in the main Phase 7 guide, now reproduced with Jenkins instead of GitHub Actions.
+- Creates an Amazon EKS cluster and ECR repositories once, ahead of time, the same way a real platform team provisions infrastructure before wiring up a pipeline to it.
+- Creates a Jenkins Pipeline job that checks out the repository, lints and smoke-tests the backend, lints and builds the frontend, builds Docker images tagged with the Git commit SHA, pushes them to Amazon ECR, and deploys to the EKS cluster with `kubectl`.
+- Tags every build with the Git commit SHA so rollback is real, not cosmetic — the same lesson taught in the main Phase 7 guide, now reproduced with Jenkins and EKS instead of GitHub Actions and Kind.
+- Automatically discovers the AWS Application Load Balancer's DNS name after every deploy and updates the backend's CORS setting to match it, so the app works in a browser without a second manual step.
 - Adds a second Jenkins Pipeline job for one-click rollback.
 - Polls GitHub for new commits on a schedule, so pushing code triggers a new build automatically without exposing the server to the internet.
 
@@ -45,19 +49,23 @@ Jenkins server (runs directly on your EC2 instance)
   | 1. Checkout
   | 2. Backend lint + smoke test
   | 3. Frontend lint + build
-  | 4. Docker build (commit SHA tag)
-  | 5. Create Kind cluster + Nginx Ingress if missing
-  | 6. Load images into Kind
-  | 7. Apply Kubernetes manifests
-  | 8. Wait for rollout
-  | 9. Verify with curl
+  | 4. Update EKS kubeconfig (IAM credentials, no static kubeconfig file)
+  | 5. Docker login to ECR
+  | 6. Docker build (commit SHA tag)
+  | 7. Docker push to ECR
+  | 8. Apply Kubernetes manifests to EKS
+  | 9. Wait for rollout
+  | 10. Discover ALB DNS name, fix CORS, restart backend
+  | 11. Verify with curl against the ALB
   |
   v
-Local Kind Kubernetes cluster (on the same EC2 instance)
+Amazon EKS cluster (separate AWS-managed infrastructure, not this EC2)
   |
   v
-DevOps LaunchBoard app
+DevOps LaunchBoard app, reachable through its own AWS Application Load Balancer
 ```
+
+The Jenkins EC2 instance is purely a CI controller in this version of the lab. Unlike the Kind-based guide, the live application never runs on the Jenkins box itself and is never reached through the Jenkins box's own IP address — it runs on EKS worker nodes and is reached through an AWS Application Load Balancer that EKS provisions on its own.
 
 ## When To Use This Architecture
 
@@ -68,15 +76,36 @@ Use Jenkins instead of GitHub Actions when:
 - You need Jenkins' large plugin ecosystem (artifact repositories, ticketing system integrations, notification channels) that a specific Git host's native CI may not offer.
 - You want full control over the CI server's OS, patching schedule, and installed tooling.
 
+Use this EKS-backed variant instead of the Kind-backed variant when:
+
+- You want to practice deploying to a real managed Kubernetes control plane, AWS networking, and a cloud load balancer, the same skills exercised in Phase 8, but triggered by Jenkins instead of by hand.
+- You want rollback and scaling lessons to carry over directly to a production-shaped target instead of a single-node local cluster.
+
 Do not use this exact architecture when:
 
 - You only need basic CI/CD and your code already lives on GitHub — GitHub Actions (the main Phase 7 guide) needs less infrastructure to operate and patch.
-- You need a long-term production platform — this guide deploys to a local Kind cluster on a single EC2 instance, the same teaching-only target as the main Phase 7 guide.
 - You cannot dedicate a server to running Jenkins continuously. Unlike GitHub-hosted runners, Jenkins itself is a process you must patch, back up, and keep running.
+- You are cost-sensitive and only need a teaching-only target — the Kind-backed `phase-7-cicd-jenkins` setup this guide replaces is free to run locally; this EKS-backed setup is not.
 
 Production note:
 
-Jenkins runs continuously on a server you fully control, so it carries the same risk as any self-hosted runner: anyone who can push a malicious Jenkinsfile to a repository Jenkins builds can run arbitrary commands on that server. For serious production use, run build agents on ephemeral, isolated nodes (Jenkins agents on Kubernetes or Docker), restrict which repositories and branches can trigger builds, and keep Jenkins itself patched and behind a reverse proxy with HTTPS.
+Jenkins runs continuously on a server you fully control, so it carries the same risk as any self-hosted runner: anyone who can push a malicious Jenkinsfile to a repository Jenkins builds can run arbitrary commands on that server, and in this version that server also holds AWS credentials with EKS and ECR access. For serious production use, run build agents on ephemeral, isolated nodes (Jenkins agents on Kubernetes or Docker), restrict which repositories and branches can trigger builds, prefer short-lived credentials (an IAM role assumed per build) over long-lived access keys stored in Jenkins, and keep Jenkins itself patched and behind a reverse proxy with HTTPS.
+
+## Cost Warning
+
+| Resource | Approximate Cost |
+| --- | --- |
+| EKS control plane | ~$0.10/hour (~$73/month) |
+| 2 × t3.medium workers | ~$0.08/hour (~$60/month) |
+| NAT Gateway | ~$0.045/hour (~$33/month) |
+| Application Load Balancer | ~$0.02/hour (~$16/month) |
+| EBS volumes | ~$0.01/hour |
+| Jenkins EC2 (t3.small) | ~$0.02/hour (~$15/month) |
+| Amazon ECR storage | First 500 MB/month free, then ~$0.10/GB-month |
+
+Running this lab for a few hours costs a few dollars. Running everything 24/7 for a month costs roughly $200, dominated by the NAT Gateway and EKS control plane, neither of which existed in the Kind-backed version of this guide. Delete the EKS cluster and Jenkins EC2 after each lab session — see Cleanup at the end of this guide.
+
+Create an AWS Budget before starting: AWS Console > Billing > Budgets > Create budget.
 
 ## Recommended AWS Setup
 
@@ -84,39 +113,43 @@ Jenkins runs continuously on a server you fully control, so it carries the same 
 | --- | --- |
 | EC2 Name | `devops-launchboard-phase-7-jenkins` |
 | AMI | Ubuntu Server 24.04 LTS |
-| Instance Type | `t3.medium` |
-| Storage | 40 GB gp3 |
+| Instance Type | `t3.small` |
+| Storage | 30 GB gp3 |
 | Key Pair | `devops-launchboard-key` |
 | Security Group | `devops-launchboard-phase-7-jenkins-sg` |
 | SSH Port | `22`, your IP only |
 | Jenkins UI Port | `8080`, your IP only |
-| HTTP Port | `80`, anywhere |
-| HTTPS Port | `443`, anywhere if testing HTTPS |
 
 Do not open:
 
 ```text
+80
+443
 8000
 5432
 6443
 ```
 
-The backend, database, and Kubernetes API should not be public.
+No port needs to be open to the public internet on this server at all. The live application is served by EKS through its own AWS Application Load Balancer, not through this EC2 instance, so this box never needs an inbound HTTP/HTTPS rule the way the Kind-backed guide did.
 
-Why `t3.medium` instead of the `t3.small` used in the main Phase 7 guide: Jenkins itself is a persistent Java process that needs roughly 1-2 GB of heap memory on top of Docker, Kind, and the app's own Pods (PostgreSQL, backend, frontend, Nginx Ingress Controller). A `t3.small` (2 GB RAM total) runs out of memory once Jenkins and a running Kind cluster are both active; `t3.medium` (4 GB RAM) gives enough headroom.
+Why `t3.small` instead of the `t3.medium` used in the Kind-backed Jenkins guide: this server no longer runs a local Kubernetes cluster (Kind) or the application's own Pods. It only runs Jenkins itself, plus short-lived `docker build` steps during each pipeline run. That is a meaningfully smaller footprint than Jenkins plus a full local cluster, so `t3.small` (2 GB RAM) is enough — the same size used for the AWS-CLI-driven workstations in Phase 8 and the sibling `phase-7-cicd-EKS` guide.
 
 ## Files Included In This Phase
 
 ```text
 deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/
++-- cluster/
+|   +-- eksctl-cluster.yaml               (EKS cluster definition)
++-- ecr/
+|   +-- lifecycle-policy.json             (ECR image cleanup rules)
 +-- Dockerfile.backend
 +-- Dockerfile.frontend
 +-- nginx-frontend.conf
-+-- kind-config.yaml
 +-- Jenkinsfile                          (deploy pipeline)
 +-- Jenkinsfile.rollback                 (rollback pipeline)
 +-- k8s/
 |   +-- namespace.yaml
+|   +-- storageclass.yaml
 |   +-- configmap.yaml
 |   +-- secret.example.yaml
 |   +-- pvc.yaml
@@ -128,11 +161,38 @@ deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/
 |   +-- launchboard-frontend-deployment.yaml
 |   +-- launchboard-frontend-service.yaml
 |   +-- ingress.yaml
+|   +-- hpa.yaml
 |   +-- kustomization.yaml
 +-- README.md
 ```
 
-## Step 1: Create EC2 Server
+## Step 1: Prepare AWS IAM User
+
+Use an IAM principal that can create:
+
+```text
+EKS clusters
+EC2 instances
+VPC resources (subnets, route tables, internet gateways, NAT gateways)
+IAM roles, policies, and users
+ECR repositories
+CloudWatch log groups
+Elastic Load Balancers
+EBS volumes
+CloudFormation stacks (eksctl uses CloudFormation internally)
+```
+
+If you are using the root account for a student lab, that works but is not recommended for production. For a dedicated IAM user, attach the `AdministratorAccess` policy for the lab, and scope it down later when you understand which permissions are needed.
+
+Why this step exists:
+
+EKS creates many AWS resources across multiple services. Missing IAM permissions are one of the most common reasons EKS setup fails. This same IAM user's access keys are what you configure on the EC2 server in Step 6 to run `eksctl`, `aws ecr`, and `helm` commands by hand. A second, narrower-scoped IAM user is created later in Step 19 specifically for Jenkins' own pipeline runs — that one does not need `AdministratorAccess`.
+
+Reference:
+
+- EKS IAM: https://docs.aws.amazon.com/eks/latest/userguide/security-iam.html
+
+## Step 2: Create EC2 Server
 
 Run this step from AWS Console.
 
@@ -142,8 +202,8 @@ Create one EC2 instance:
 | --- | --- |
 | Name | `devops-launchboard-phase-7-jenkins` |
 | AMI | Ubuntu Server 24.04 LTS |
-| Instance Type | `t3.medium` |
-| Storage | 40 GB gp3 |
+| Instance Type | `t3.small` |
+| Storage | 30 GB gp3 |
 | Public IP | Enabled |
 
 Security group inbound rules:
@@ -152,19 +212,17 @@ Security group inbound rules:
 | --- | ---: | --- |
 | SSH | 22 | Your IP |
 | Custom TCP (Jenkins UI) | 8080 | Your IP |
-| HTTP | 80 | Anywhere |
-| HTTPS | 443 | Anywhere if testing HTTPS |
 
 Why this step exists:
 
-This single server runs Docker, Kind, kubectl, and Jenkins itself. Jenkins schedules and executes the pipeline directly on this machine, the same way a small company would run a first self-hosted Jenkins controller before splitting build agents onto separate machines.
+This single server runs Docker, AWS CLI, eksctl, kubectl, Helm, and Jenkins itself. Jenkins schedules and executes the pipeline directly on this machine, the same way a small company would run a first self-hosted Jenkins controller before splitting build agents onto separate machines. The application itself does not run here — it runs on EKS worker nodes created in Step 14.
 
 Reference:
 
 - AWS EC2 docs: https://docs.aws.amazon.com/ec2/
 - EC2 security groups: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-security-groups.html
 
-## Step 2: SSH Into EC2
+## Step 3: SSH Into EC2
 
 Run from your local machine:
 
@@ -189,7 +247,7 @@ ip-...
 /home/ubuntu
 ```
 
-## Step 3: Update Server And Install Base Tools
+## Step 4: Update Server And Install Base Tools
 
 Run:
 
@@ -204,7 +262,7 @@ Why this step exists:
 
 These are the same baseline Linux tools every other phase installs: cloning the repository, editing files, downloading binaries, and reading JSON output.
 
-## Step 4: Install Docker
+## Step 5: Install Docker
 
 Run:
 
@@ -237,13 +295,59 @@ docker info
 
 Why this step exists:
 
-Docker builds the backend and frontend images, and Kind itself runs Kubernetes nodes as Docker containers. Both the `ubuntu` user (for manual commands) and, later, the `jenkins` user (for pipeline runs) need to run Docker commands.
+Docker builds the backend and frontend images that get pushed to ECR. Both the `ubuntu` user (for manual commands) and, later, the `jenkins` user (for pipeline runs) need to run Docker commands.
 
 Reference:
 
 - Docker Engine Ubuntu install: https://docs.docker.com/engine/install/ubuntu/
 
-## Step 5: Install kubectl And Kind
+## Step 6: Configure AWS CLI
+
+Install the AWS CLI:
+
+```bash
+cd ~
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+unzip awscliv2.zip
+sudo ./aws/install
+rm -rf awscliv2.zip awscli
+```
+
+Configure it with the IAM user's access key from Step 1:
+
+```bash
+aws configure
+```
+
+Enter your Access Key ID, Secret Access Key, region (e.g. `us-east-1`), and `json` for output format.
+
+Set shell variables you will reuse throughout the rest of this guide:
+
+```bash
+export AWS_REGION=YOUR_AWS_REGION
+export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+export CLUSTER_NAME=devops-launchboard-phase-7-jenkins
+echo "Account: $ACCOUNT_ID  Region: $AWS_REGION  Cluster: $CLUSTER_NAME"
+```
+
+Replace `YOUR_AWS_REGION` with your region (e.g. `us-east-1`).
+
+Verify:
+
+```bash
+aws --version
+aws sts get-caller-identity
+```
+
+Why this step exists:
+
+Every AWS operation in the rest of this guide — creating the EKS cluster, creating ECR repositories, mapping IAM identities into the cluster's RBAC, installing the Load Balancer Controller — goes through this AWS CLI configuration, run as the `ubuntu` user. The `export` lines are shell variables, not persistent configuration: if you disconnect and reconnect over SSH, you must re-run them in the new session.
+
+Reference:
+
+- AWS CLI install: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+
+## Step 7: Install kubectl, eksctl, And Helm
 
 Install kubectl:
 
@@ -257,32 +361,39 @@ sudo mv kubectl /usr/local/bin/kubectl
 rm stable.txt
 ```
 
-Install Kind:
+Install eksctl:
 
 ```bash
 cd ~
-curl -Lo kind https://kind.sigs.k8s.io/dl/v0.29.0/kind-linux-amd64
-chmod +x kind
-sudo mv kind /usr/local/bin/kind
+curl -sL "https://github.com/eksctl-io/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz" | tar xz
+sudo mv eksctl /usr/local/bin/eksctl
+```
+
+Install Helm:
+
+```bash
+cd ~
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 ```
 
 Verify:
 
 ```bash
 kubectl version --client
-kind version
+eksctl version
+helm version
 ```
 
 Why this step exists:
 
-`kind` creates the local Kubernetes cluster that the Jenkins pipeline deploys to, and `kubectl` is how both you and Jenkins talk to that cluster. Installing both to `/usr/local/bin` puts them on the PATH for every user on this machine, including the `jenkins` system user created in Step 7.
+`eksctl` creates and manages the EKS cluster, `kubectl` is how both you and Jenkins talk to that cluster once it exists, and `helm` installs the AWS Load Balancer Controller in Step 17. Installing all three to `/usr/local/bin` puts them on the PATH for every user on this machine, including the `jenkins` system user created in Step 9.
 
 Reference:
 
 - Install kubectl: https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/
-- Kind quick start: https://kind.sigs.k8s.io/docs/user/quick-start/
+- eksctl: https://eksctl.io/
 
-## Step 6: Create GitHub SSH Key And Clone The Repository
+## Step 8: Create GitHub SSH Key And Clone The Repository
 
 Run:
 
@@ -353,9 +464,13 @@ main
 
 Why this step exists:
 
-You need a local copy of the application source to create the Phase 7 Jenkins files and to build images. This key is only used by your own `ubuntu` user for this initial clone and manual edits; Jenkins gets its own separate deploy key in Step 11, which is a better security practice than sharing one key between a human user and an automated service.
+You need a local copy of the application source to create the Phase 7 Jenkins files and to build images. This key is only used by your own `ubuntu` user for this initial clone and manual edits; Jenkins gets its own separate deploy key in Step 23, which is a better security practice than sharing one key between a human user and an automated service.
 
-## Step 7: Install Java And Jenkins
+Reference:
+
+- GitHub deploy keys: https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys
+
+## Step 9: Install Java And Jenkins
 
 Jenkins is a Java application. Install a current LTS Java runtime first, then add Jenkins' own apt repository.
 
@@ -391,13 +506,13 @@ Expected: `active (running)`.
 
 Why this step exists:
 
-Jenkins is not a container or a managed service in this guide — it installs as a system service (`jenkins.service`) running under its own dedicated Linux user, also named `jenkins`. That user, not `ubuntu`, is who actually executes every pipeline stage, which is why later steps configure permissions specifically for the `jenkins` user.
+Jenkins is not a container or a managed service in this guide — it installs as a system service (`jenkins.service`) running under its own dedicated Linux user, also named `jenkins`. That user, not `ubuntu`, is who actually executes every pipeline stage, which is why later steps configure permissions and credentials specifically for the `jenkins` user.
 
 Reference:
 
 - Jenkins Debian/Ubuntu install: https://www.jenkins.io/doc/book/installing/linux/#debianubuntu
 
-## Step 8: Open Jenkins And Finish The Setup Wizard
+## Step 10: Open Jenkins And Finish The Setup Wizard
 
 Get the initial administrator password:
 
@@ -421,11 +536,11 @@ Confirm the Jenkins URL on the final screen matches `http://YOUR_EC2_PUBLIC_IP:8
 
 Why this step exists:
 
-The initial admin password file proves that whoever is unlocking Jenkins already has root access to the server it runs on — Jenkins will not let you create an account over the network without it. The suggested plugin set already includes everything this guide's Jenkinsfiles need (`git`, `workflow-aggregator` for Pipeline, `credentials-binding`); no extra plugin installation step is required.
+The initial admin password file proves that whoever is unlocking Jenkins already has root access to the server it runs on — Jenkins will not let you create an account over the network without it. The suggested plugin set already includes everything this guide's Jenkinsfiles need (`git`, `workflow-aggregator` for Pipeline, `credentials-binding`); no extra plugin installation step is required, including for the AWS credential used in Step 19, which only needs Jenkins' built-in "Username with password" credential type.
 
-## Step 9: Allow The Jenkins User To Run Docker And Kind
+## Step 11: Allow The Jenkins User To Run Docker
 
-The `jenkins` system user (not `ubuntu`) executes every pipeline stage, so it needs the same Docker and kubeconfig access that you set up for `ubuntu` in Steps 4-5.
+The `jenkins` system user (not `ubuntu`) executes every pipeline stage, so it needs the same Docker access that you set up for `ubuntu` in Step 5.
 
 Add `jenkins` to the `docker` group:
 
@@ -444,14 +559,16 @@ sudo -u jenkins docker ps
 
 Expected: an empty container list (`CONTAINER ID   IMAGE   COMMAND ...` with no rows), not a permission error.
 
-Why no kubeconfig step is needed yet: `kind create cluster` writes its kubeconfig to the home directory of whichever user runs it (`/var/lib/jenkins/.kube/config` for the `jenkins` user). Since the Jenkinsfile in Step 13 runs `kind create cluster` itself the first time it executes, the `jenkins` user's kubeconfig is created automatically on the first pipeline run — there is nothing to copy or chown manually.
+Why no AWS credential file step is needed here: unlike the Docker group, AWS access does not need a system-user-specific setup step. The Jenkinsfile in Step 20 reads AWS credentials from a Jenkins credential (created in Step 19) and exports them as `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` shell environment variables for the duration of each pipeline run. The `jenkins` Linux user never needs its own `~/.aws/credentials` file, and the EKS kubeconfig that `aws eks update-kubeconfig` writes to `/var/lib/jenkins/.kube/config` is created automatically the first time the pipeline runs that command — there is nothing to copy or chown manually.
 
-## Step 10: Create Phase Folders And Root `.dockerignore`
+## Step 12: Create Phase Folders And Root `.dockerignore`
 
 Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
+mkdir -p deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/cluster
+mkdir -p deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/ecr
 mkdir -p deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s
 ```
 
@@ -485,7 +602,7 @@ Why this step exists:
 
 Docker only reads `.dockerignore` from the build context root, and the build context in this phase is the repository root (every `docker build` command ends with a final `.`). Skipping this file would let Docker copy local virtual environments, `node_modules`, and cache folders into the build context, slowing builds and bloating images.
 
-## Step 11: Create Dockerfiles And Nginx Config
+## Step 13: Create Dockerfiles And Nginx Config
 
 ### Dockerfile.backend
 
@@ -553,12 +670,12 @@ Line explanation:
 - `ENV VIRTUAL_ENV=/opt/venv` and `ENV PATH="/opt/venv/bin:${PATH}"` create and prioritize a virtual environment at a known path so it can be copied between stages.
 - `COPY backend/pyproject.toml backend/alembic.ini ./` copies dependency definitions before source code, a Docker layer-caching trick: unchanged dependencies mean a cached, faster rebuild.
 - `RUN pip install --no-cache-dir .` installs the application and its base dependencies. Alembic is a base dependency (not a dev-only extra), so this single install is enough for the migration Job too.
-- `groupadd --system --gid 10001 app` / `useradd --system --uid 10001 --gid 10001 ...` create a non-login service user with an explicit, pinned numeric UID/GID rather than letting the system auto-assign one. A name-only `USER app` produces a non-numeric user that Kubernetes cannot verify against `runAsNonRoot`; pinning a fixed UID/GID keeps the Dockerfile and the Kubernetes `securityContext` (in Step 12) deterministic and in sync.
+- `groupadd --system --gid 10001 app` / `useradd --system --uid 10001 --gid 10001 ...` create a non-login service user with an explicit, pinned numeric UID/GID rather than letting the system auto-assign one. A name-only `USER app` produces a non-numeric user that Kubernetes cannot verify against `runAsNonRoot`; pinning a fixed UID/GID keeps the Dockerfile and the Kubernetes `securityContext` (in Step 18) deterministic and in sync.
 - `COPY --from=builder /opt/venv /opt/venv` and `COPY --from=builder /app /app` bring only the installed dependencies and app code into the clean runtime stage — no build tools, no pip cache.
 - `RUN chown -R app:app /app /opt/venv` gives the non-root user ownership of its own files.
 - `USER app` switches to the non-root user for the rest of the image.
 - `HEALTHCHECK` polls `/health` every 30 seconds so Docker itself can report container health.
-- `CMD [...]` starts Uvicorn listening on all interfaces. `--proxy-headers` makes FastAPI trust the `X-Forwarded-*` headers added by the Nginx Ingress in front of it.
+- `CMD [...]` starts Uvicorn listening on all interfaces. `--proxy-headers` makes FastAPI trust the `X-Forwarded-*` headers added by the AWS Application Load Balancer in front of it.
 
 ### Dockerfile.frontend
 
@@ -665,7 +782,7 @@ server {
 Line explanation:
 
 - `listen 8080` matches the unprivileged image's non-root port.
-- `location = /healthz` returns a plain `200 ok` without hitting the backend — this is what the Kubernetes probes check.
+- `location = /healthz` returns a plain `200 ok` without hitting the backend — this is what the Kubernetes probes and the ALB's own health check (Step 18) check.
 - `location /api/`, `location = /health`, and `location = /ready` proxy those paths to `http://launchboard-backend:8000/...`, the backend's Kubernetes Service DNS name.
 - `location / { try_files $uri $uri/ /index.html; }` falls back to `index.html` for any unmatched path, which is required for React Router to handle direct navigation to client-side routes.
 
@@ -674,48 +791,305 @@ Reference:
 - Dockerfile reference: https://docs.docker.com/reference/dockerfile/
 - Nginx unprivileged image: https://hub.docker.com/r/nginxinc/nginx-unprivileged
 
-## Step 12: Create The Kind Cluster Config
+## Step 14: Create The EKS Cluster
 
 ```bash
-vim deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/kind-config.yaml
+vim deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/cluster/eksctl-cluster.yaml
 ```
 
 Paste:
 
 ```yaml
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-name: launchboard-jenkins
-nodes:
-  - role: control-plane
-    kubeadmConfigPatches:
-      - |
-        kind: InitConfiguration
-        nodeRegistration:
-          kubeletExtraArgs:
-            node-labels: ingress-ready=true
-    extraPortMappings:
-      - containerPort: 80
-        hostPort: 80
-        protocol: TCP
-      - containerPort: 443
-        hostPort: 443
-        protocol: TCP
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: devops-launchboard-phase-7-jenkins
+  region: YOUR_AWS_REGION
+  version: "1.34"
+
+availabilityZones:
+  - YOUR_AWS_REGIONa
+  - YOUR_AWS_REGIONb
+
+iam:
+  withOIDC: true
+
+vpc:
+  clusterEndpoints:
+    publicAccess: true
+    privateAccess: true
+  nat:
+    gateway: Single
+
+managedNodeGroups:
+  - name: launchboard-workers
+    instanceType: t3.medium
+    desiredCapacity: 2
+    minSize: 2
+    maxSize: 4
+    privateNetworking: true
+    volumeSize: 30
+    volumeType: gp3
+    amiFamily: AmazonLinux2023
+    labels:
+      workload: launchboard
+    tags:
+      Project: devops-launchboard
+      Environment: phase-7-jenkins
+      Owner: student
+
+cloudWatch:
+  clusterLogging:
+    enableTypes:
+      - api
+      - audit
+      - authenticator
+      - controllerManager
+      - scheduler
+
+addons:
+  - name: aws-ebs-csi-driver
+    wellKnownPolicies:
+      ebsCSIController: true
+```
+
+Replace `YOUR_AWS_REGION` in three places. For example, `us-east-1`, `us-east-1a`, `us-east-1b`.
+
+Line explanation:
+
+- `metadata.name` is the cluster name. Using `devops-launchboard-phase-7-jenkins` instead of Phase 8's `devops-launchboard-phase-8` or the sibling `phase-7-cicd-EKS` guide's `devops-launchboard-phase-7` lets all three coexist in the same AWS account without colliding.
+- `iam.withOIDC: true` creates an OpenID Connect (OIDC) provider for the cluster. This is the foundation of IAM Roles for Service Accounts (IRSA): it lets Kubernetes service accounts assume IAM roles without storing AWS credentials in the cluster. The EBS CSI driver and the Load Balancer Controller (Step 17) both need this to authenticate with AWS APIs.
+- `vpc.nat.gateway: Single` creates one NAT Gateway instead of one per availability zone, trading some redundancy for a meaningfully lower hourly cost in a lab.
+- `managedNodeGroups` defines the EC2 worker nodes that actually run your Pods. `desiredCapacity: 2` with `minSize: 2`/`maxSize: 4` gives the backend's HPA (Step 18) room to schedule extra Pods under load.
+- `cloudWatch.clusterLogging.enableTypes` turns on control plane log streams (API server, audit, authenticator, controller manager, scheduler) so you can debug cluster-level problems in CloudWatch Logs.
+- `addons.aws-ebs-csi-driver` with `wellKnownPolicies.ebsCSIController: true` tells eksctl to create an IAM role with the `AmazonEBSCSIDriverPolicy` and attach it to the EBS CSI driver's service account via IRSA. PostgreSQL's PVC (Step 18) needs this driver to provision a real EBS volume.
+
+Create the cluster (20 to 40 minutes):
+
+```bash
+eksctl create cluster -f deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/cluster/eksctl-cluster.yaml
+kubectl get nodes
+```
+
+Expected: 2 nodes `Ready`.
+
+Why this step exists:
+
+Unlike the Kind-backed Jenkins guide, where the pipeline itself created the local cluster on its very first run, an EKS cluster takes 20 to 40 minutes to provision and is not something you want a CI pipeline creating on every build. This is a one-time, manual infrastructure step, the same way Phase 8 treats EKS cluster creation as separate from application deployment.
+
+Reference:
+
+- eksctl: https://eksctl.io/
+- Amazon EKS: https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html
+
+## Step 15: Create ECR Repositories
+
+ECR stores the Docker images Jenkins builds and pushes. Create the lifecycle policy first, then the repositories.
+
+```bash
+vim deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/ecr/lifecycle-policy.json
+```
+
+Paste:
+
+```json
+{
+  "rules": [
+    {
+      "rulePriority": 1,
+      "description": "Keep the latest 10 tagged images",
+      "selection": {
+        "tagStatus": "tagged",
+        "tagPatternList": ["*"],
+        "countType": "imageCountMoreThan",
+        "countNumber": 10
+      },
+      "action": {
+        "type": "expire"
+      }
+    },
+    {
+      "rulePriority": 2,
+      "description": "Expire untagged images after 7 days",
+      "selection": {
+        "tagStatus": "untagged",
+        "countType": "sinceImagePushed",
+        "countUnit": "days",
+        "countNumber": 7
+      },
+      "action": {
+        "type": "expire"
+      }
+    }
+  ]
+}
 ```
 
 Line explanation:
 
-- `name: launchboard-jenkins` names the Kind cluster. Using a name distinct from the main Phase 7 guide's `launchboard-cicd` cluster means both can coexist on the same machine if you have done both guides.
-- `node-labels: ingress-ready=true` is a label the Nginx Ingress Controller's Kind-specific manifest looks for to decide which node to schedule onto.
-- `extraPortMappings` maps the Kind container's ports 80 and 443 to the same ports on the EC2 host, so traffic to the EC2 instance's public IP on port 80 reaches the Ingress Controller running inside Kind.
+- `rulePriority: 1` is evaluated first. ECR evaluates rules in priority order and applies the first matching rule to each image.
+- `tagStatus: "tagged"` with `tagPatternList: ["*"]` selects every tagged image, regardless of what the tag looks like. Every image Jenkins pushes here is already scoped to this one repository, so there is no need to filter by a tag prefix the way phases that share a repository across builds do.
+- `countType: "imageCountMoreThan"` with `countNumber: 10` means: if there are more than 10 images matching this rule, expire the oldest ones until only 10 remain. This keeps your last 10 builds available for rollback.
+- `rulePriority: 2` catches images that have no tag (failed or interrupted pushes). `sinceImagePushed` with `countNumber: 7` expires them after 7 days.
+- `action.type: "expire"` deletes the matching images.
 
-This file is not applied directly with a `kind create cluster` command from you — the Jenkins pipeline in Step 13 creates the cluster itself, the first time it runs.
+Create the repositories and attach the policy:
+
+```bash
+aws ecr create-repository --repository-name launchboard-backend \
+  --region "$AWS_REGION" --image-scanning-configuration scanOnPush=true
+aws ecr create-repository --repository-name launchboard-frontend \
+  --region "$AWS_REGION" --image-scanning-configuration scanOnPush=true
+
+aws ecr put-lifecycle-policy --repository-name launchboard-backend \
+  --region "$AWS_REGION" \
+  --lifecycle-policy-text file://deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/ecr/lifecycle-policy.json
+aws ecr put-lifecycle-policy --repository-name launchboard-frontend \
+  --region "$AWS_REGION" \
+  --lifecycle-policy-text file://deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/ecr/lifecycle-policy.json
+```
+
+Command explanation:
+
+- `aws ecr create-repository --image-scanning-configuration scanOnPush=true` creates each repository and turns on automatic vulnerability scanning every time an image is pushed.
+- `aws ecr put-lifecycle-policy --lifecycle-policy-text file://...` attaches the JSON policy you just wrote to each repository.
+
+Verify:
+
+```bash
+aws ecr describe-repositories --region "$AWS_REGION" \
+  --query "repositories[].repositoryName"
+```
+
+Expected:
+
+```text
+[
+    "launchboard-backend",
+    "launchboard-frontend"
+]
+```
 
 Reference:
 
-- Kind configuration: https://kind.sigs.k8s.io/docs/user/configuration/
+- ECR lifecycle policies: https://docs.aws.amazon.com/AmazonECR/latest/userguide/LifecyclePolicies.html
+- ECR image scanning: https://docs.aws.amazon.com/AmazonECR/latest/userguide/image-scanning.html
 
-## Step 13: Create The Kubernetes Manifests
+## Step 16: Map The Jenkins IAM User Into The Cluster's RBAC
+
+IAM authentication and Kubernetes RBAC authorization are two separate systems. The IAM user that ran `eksctl create cluster` in Step 14 (your own `ubuntu`-session credentials from Step 6) automatically receives `system:masters` access to the new cluster. No other IAM principal can run `kubectl` against this cluster until you explicitly grant it access — including the dedicated Jenkins IAM user you are about to create in Step 19.
+
+Create the Jenkins-specific IAM user now, before mapping it, so you have its ARN:
+
+```bash
+aws iam create-user --user-name devops-launchboard-jenkins
+aws iam attach-user-policy --user-name devops-launchboard-jenkins \
+  --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
+```
+
+Create a minimal custom policy for the one EKS permission this user needs (just enough to resolve cluster connection details, not to act inside the cluster — that comes from the RBAC mapping below):
+
+```bash
+cat > /tmp/eks-describe-policy.json << 'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["eks:DescribeCluster", "eks:ListClusters"],
+      "Resource": "*"
+    }
+  ]
+}
+EOF
+
+aws iam create-policy --policy-name devops-launchboard-jenkins-eks-describe \
+  --policy-document file:///tmp/eks-describe-policy.json
+
+aws iam attach-user-policy --user-name devops-launchboard-jenkins \
+  --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/devops-launchboard-jenkins-eks-describe"
+
+aws iam create-access-key --user-name devops-launchboard-jenkins
+```
+
+Copy the `AccessKeyId` and `SecretAccessKey` from the output — you paste them into a Jenkins credential in Step 19. They are shown only once.
+
+Now map this user's IAM identity into the cluster's Kubernetes RBAC:
+
+```bash
+eksctl create iamidentitymapping \
+  --cluster "$CLUSTER_NAME" \
+  --region "$AWS_REGION" \
+  --arn "arn:aws:iam::${ACCOUNT_ID}:user/devops-launchboard-jenkins" \
+  --group system:masters \
+  --username jenkins
+```
+
+Command explanation:
+
+- `aws iam create-user` creates a dedicated identity for Jenkins, separate from the broad `AdministratorAccess` user you configured for yourself in Step 1 and Step 6. This is the same reasoning as the dedicated GitHub deploy key in Step 23: never give an automated service your own personal credentials.
+- `AmazonEC2ContainerRegistryPowerUser` is an AWS-managed policy that grants push and pull access to ECR, which is all Jenkins needs there.
+- The custom `devops-launchboard-jenkins-eks-describe` policy grants only `eks:DescribeCluster`/`eks:ListClusters` — the IAM-level permission `aws eks update-kubeconfig` needs to write a working kubeconfig file. It does **not** grant any permission to run `kubectl` commands inside the cluster; that authorization comes entirely from Kubernetes RBAC, which is a separate layer.
+- `eksctl create iamidentitymapping --group system:masters` adds an entry to the cluster's `aws-auth` ConfigMap that says: "whoever authenticates as this IAM ARN should be treated as a member of the `system:masters` Kubernetes group," which can do anything in the cluster. `system:masters` is a lab simplification — production setups map CI identities to a narrower custom Role scoped to one namespace.
+
+Production note:
+
+Granting `system:masters` to a CI credential is broad. For production, create a Kubernetes `Role`/`ClusterRole` limited to the verbs and resources the deploy pipeline actually uses (`get`, `list`, `create`, `update`, `patch`, `delete` on Deployments, Services, Jobs, ConfigMaps, and Secrets in one namespace) and bind the IAM identity mapping to that Role instead of to `system:masters`.
+
+Reference:
+
+- Managing IAM identities for your cluster: https://docs.aws.amazon.com/eks/latest/userguide/grant-k8s-access.html
+- IAM and Kubernetes RBAC: https://docs.aws.amazon.com/eks/latest/userguide/cluster-auth.html
+
+## Step 17: Install AWS Load Balancer Controller
+
+```bash
+cd ~
+curl -o aws-load-balancer-controller-policy.json \
+  https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
+
+aws iam create-policy \
+  --policy-name AWSLoadBalancerControllerIAMPolicyPhase7Jenkins \
+  --policy-document file://aws-load-balancer-controller-policy.json
+
+eksctl create iamserviceaccount \
+  --cluster "$CLUSTER_NAME" \
+  --namespace kube-system \
+  --name aws-load-balancer-controller \
+  --attach-policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicyPhase7Jenkins" \
+  --approve \
+  --region "$AWS_REGION"
+
+helm repo add eks https://aws.github.io/eks-charts
+helm repo update
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  --namespace kube-system \
+  --set clusterName="$CLUSTER_NAME" \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=aws-load-balancer-controller
+
+kubectl -n kube-system rollout status deployment/aws-load-balancer-controller
+```
+
+Command explanation:
+
+- `curl -o aws-load-balancer-controller-policy.json ...` downloads the AWS-maintained IAM policy document listing every permission the controller needs to create and manage Application Load Balancers and Target Groups on your behalf.
+- `aws iam create-policy` registers that policy in your account under a phase-specific name, so it does not collide with the same policy created by Phase 8 or the sibling `phase-7-cicd-EKS` guide.
+- `eksctl create iamserviceaccount` creates three things: an IAM role with the specified policy, a Kubernetes ServiceAccount in `kube-system`, and a trust relationship between them via the cluster's OIDC provider (created by `iam.withOIDC: true` in Step 14). This is IRSA: the controller Pod gets temporary AWS credentials through this ServiceAccount, with no access keys stored in the cluster.
+- `helm install aws-load-balancer-controller` deploys the controller. `--set serviceAccount.create=false` tells Helm not to create its own ServiceAccount because `eksctl` already created one with the IAM role attached.
+- `kubectl rollout status` waits until the controller Deployment is ready before you move on — the Ingress resource you apply in Step 18 will not get an ALB provisioned until this controller is running and watching for Ingress objects with `ingressClassName: alb`.
+
+Why this step exists:
+
+Kubernetes does not know how to create an AWS Application Load Balancer on its own. This controller watches for Ingress resources cluster-wide and translates them into real ALBs, Target Groups, and listener rules through the AWS API. It replaces the role the Nginx Ingress Controller played in the Kind-backed version of this guide.
+
+Reference:
+
+- AWS Load Balancer Controller: https://kubernetes-sigs.github.io/aws-load-balancer-controller/
+- IAM roles for service accounts: https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html
+
+## Step 18: Create The Kubernetes Manifests
 
 All manifests go inside `deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/`.
 
@@ -737,6 +1111,29 @@ metadata:
 
 A Namespace is a logical boundary inside Kubernetes; every other resource below sets `namespace: devops-launchboard` to belong to it.
 
+### storageclass.yaml
+
+```bash
+vim deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/storageclass.yaml
+```
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  type: gp3
+  encrypted: "true"
+```
+
+- `provisioner: ebs.csi.aws.com` is the EBS CSI driver installed as a cluster addon in Step 14. Unlike Kind's built-in `local-path` provisioner, EKS has no default StorageClass, so this one must be created explicitly before the PostgreSQL PVC below can be satisfied.
+- `volumeBindingMode: WaitForFirstConsumer` delays creating the actual EBS volume until a Pod that uses the PVC is scheduled, so the volume is created in the same availability zone as that Pod — EBS volumes cannot be attached across availability zones.
+- `parameters.encrypted: "true"` encrypts the volume at rest using the AWS-managed EBS key, a baseline security practice with no extra setup cost.
+
 ### configmap.yaml
 
 ```bash
@@ -752,13 +1149,13 @@ metadata:
 data:
   APP_NAME: DevOps LaunchBoard API
   APP_ENV: production
-  CORS_ORIGINS: http://YOUR_EC2_PUBLIC_IP
+  CORS_ORIGINS: http://YOUR_ALB_DNS_NAME
   SEED_DEMO_DATA: "true"
   POSTGRES_DB: launchboard
   POSTGRES_USER: launchboard_user
 ```
 
-This file is for reference only — the Jenkins pipeline actually creates this ConfigMap itself from the `PUBLIC_APP_URL` build parameter, so `CORS_ORIGINS` ends up correct without manual editing. `CORS_ORIGINS` tells the FastAPI backend which browser origin may call the API; if it does not match the URL in your browser's address bar, the browser blocks the API responses.
+This file is for reference only — the Jenkins pipeline actually creates this ConfigMap itself, first with a placeholder `CORS_ORIGINS` value and then again with the real ALB DNS name once the load balancer exists (Step 20 explains both stages). `CORS_ORIGINS` tells the FastAPI backend which browser origin may call the API; if it does not match the URL in your browser's address bar, the browser blocks the API responses.
 
 ### secret.example.yaml
 
@@ -795,12 +1192,13 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: gp3
   resources:
     requests:
       storage: 5Gi
 ```
 
-No `storageClassName` is set, so Kind's built-in `local-path` provisioner (the cluster's default StorageClass) creates the volume from the node's local disk. This is the same approach used in Phase 6's Kind scenario; it is fine for a single-node teaching cluster, but the data does not survive deleting the Kind cluster itself.
+`storageClassName: gp3` points at the StorageClass created above, so the EBS CSI driver provisions a real, encrypted EBS volume for PostgreSQL. Unlike the Kind-backed version of this guide, this data survives deleting and recreating Pods — it is only lost if you delete the PVC itself or the whole EKS cluster.
 
 ### launchboard-postgres-deployment.yaml
 
@@ -887,7 +1285,7 @@ spec:
             claimName: launchboard-postgres-pvc
 ```
 
-- `strategy.type: Recreate` terminates the existing Pod before creating a new one, required for a single-writer database that holds an exclusive lock on its volume.
+- `strategy.type: Recreate` terminates the existing Pod before creating a new one, required for a single-writer database that holds an exclusive lock on its EBS volume — a `RollingUpdate` would try to attach the same `ReadWriteOnce` volume to two Pods at once and fail.
 - `image: postgres:16-alpine` is the official upstream image — Jenkins never builds this one, only the backend and frontend images.
 - `env` reads `POSTGRES_DB`/`POSTGRES_USER` from the ConfigMap and `POSTGRES_PASSWORD` from the Secret, exactly what the official Postgres image's entrypoint needs to create the database on first start.
 - `readinessProbe`/`livenessProbe` run `pg_isready` inside the container rather than an HTTP check, since PostgreSQL is not an HTTP service.
@@ -914,7 +1312,7 @@ spec:
       targetPort: 5432
 ```
 
-`launchboard-db` becomes the DNS name other Pods use to reach PostgreSQL; the `DATABASE_URL` in the Secret depends on this exact name. `ClusterIP` keeps the database unreachable from outside the cluster.
+`launchboard-db` becomes the DNS name other Pods use to reach PostgreSQL; the `DATABASE_URL` in the Secret depends on this exact name. `ClusterIP` keeps the database unreachable from outside the cluster — there is no path to it through the ALB at all.
 
 ### launchboard-migration-job.yaml
 
@@ -938,7 +1336,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: migrate
-          image: launchboard-backend:IMAGE_TAG_PLACEHOLDER
+          image: ECR_REGISTRY_PLACEHOLDER/launchboard-backend:IMAGE_TAG_PLACEHOLDER
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -963,7 +1361,7 @@ spec:
               memory: 256Mi
 ```
 
-- `image: launchboard-backend:IMAGE_TAG_PLACEHOLDER` is a literal placeholder string, not a real tag. The Jenkins pipeline's "Stamp Image Tag Into Manifests" stage replaces `IMAGE_TAG_PLACEHOLDER` with the actual Git commit SHA before applying this file — explained fully in Step 14.
+- `image: ECR_REGISTRY_PLACEHOLDER/launchboard-backend:IMAGE_TAG_PLACEHOLDER` has two literal placeholder strings, not a real image reference. The Jenkins pipeline's "Stamp Image Tag Into Manifests" stage replaces `ECR_REGISTRY_PLACEHOLDER` with the real `ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com` registry hostname and `IMAGE_TAG_PLACEHOLDER` with the real Git commit SHA before applying this file — explained fully in Step 20. The Kind-backed version of this guide only needed to stamp the tag, because images stayed on the local machine; the EKS version also needs the full registry path, because EKS worker nodes pull images over the network from ECR.
 - A Job runs its Pod once to completion and stops, unlike a Deployment. `restartPolicy: OnFailure` retries only on failure, not after success.
 - The `until python -c "import socket; ..."` loop blocks until PostgreSQL accepts TCP connections, preventing `alembic upgrade head` from running before the database is ready.
 
@@ -1004,7 +1402,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: backend
-          image: launchboard-backend:IMAGE_TAG_PLACEHOLDER
+          image: ECR_REGISTRY_PLACEHOLDER/launchboard-backend:IMAGE_TAG_PLACEHOLDER
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -1044,7 +1442,7 @@ spec:
               memory: 384Mi
 ```
 
-- `image: launchboard-backend:IMAGE_TAG_PLACEHOLDER` gets stamped with the real commit SHA by Jenkins, exactly like the migration Job above. This is the rollback mechanism in disguise: every build produces a uniquely tagged image, so each deployment creates a new ReplicaSet referencing a specific version. `kubectl rollout undo` then has a real previous version to go back to — if the tag never changed, rollback would point at the same image bytes and do nothing.
+- `image: ECR_REGISTRY_PLACEHOLDER/launchboard-backend:IMAGE_TAG_PLACEHOLDER` gets both placeholders stamped with the real registry and commit SHA by Jenkins, exactly like the migration Job above. This is the rollback mechanism in disguise: every build produces a uniquely tagged image pushed to ECR, so each deployment creates a new ReplicaSet referencing a specific version. `kubectl rollout undo` then has a real previous version to go back to — if the tag never changed, rollback would point at the same image bytes and do nothing.
 - `runAsUser: 10001` and `runAsGroup: 10001` must match the `--uid 10001 --gid 10001` pinned in the Dockerfile, or the Pod fails with `CreateContainerConfigError` because the kubelet cannot verify a name-based `USER app` against `runAsNonRoot`.
 - `rollingUpdate.maxSurge: 1` / `maxUnavailable: 0` updates Pods with zero downtime: Kubernetes never removes an old Pod until its replacement passes its readiness probe.
 - `command` waits for PostgreSQL, then `exec`s into Uvicorn so it becomes PID 1 and receives termination signals directly, which is what makes rollouts and graceful shutdowns work correctly.
@@ -1111,7 +1509,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: frontend
-          image: launchboard-frontend:IMAGE_TAG_PLACEHOLDER
+          image: ECR_REGISTRY_PLACEHOLDER/launchboard-frontend:IMAGE_TAG_PLACEHOLDER
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -1137,7 +1535,7 @@ spec:
               memory: 128Mi
 ```
 
-`runAsUser: 101` matches the nginx user baked into the `nginxinc/nginx-unprivileged` image, the same pattern as the backend's pinned UID 10001 but for a different base image with a different built-in user.
+`runAsUser: 101` matches the nginx user baked into the `nginxinc/nginx-unprivileged` image, the same pattern as the backend's pinned UID 10001 but for a different base image with a different built-in user. Like the backend Deployment, both placeholders in `image:` are stamped by Jenkins before this file is applied.
 
 ### launchboard-frontend-service.yaml
 
@@ -1176,10 +1574,13 @@ metadata:
   name: launchboard-ingress
   namespace: devops-launchboard
   annotations:
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-7-jenkins
 spec:
-  ingressClassName: nginx
+  ingressClassName: alb
   rules:
     - http:
         paths:
@@ -1192,7 +1593,46 @@ spec:
                   number: 80
 ```
 
-`ingressClassName: nginx` tells Kubernetes the Nginx Ingress Controller (installed automatically by the Jenkins pipeline in Step 14) should handle this resource. All traffic routes to the frontend Service; the frontend's own Nginx then proxies API paths to the backend.
+- `ingressClassName: alb` tells Kubernetes the AWS Load Balancer Controller installed in Step 17 — not an in-cluster Nginx Ingress Controller — should handle this resource.
+- `alb.ingress.kubernetes.io/scheme: internet-facing` provisions a public ALB with a public DNS name, since this lab has no VPN or private network back to your laptop.
+- `alb.ingress.kubernetes.io/target-type: ip` routes ALB traffic directly to Pod IP addresses rather than to EC2 instance ports, which works correctly with the AWS VPC CNI used by EKS.
+- `alb.ingress.kubernetes.io/healthcheck-path: /healthz` points the ALB's own health check at the frontend's lightweight `/healthz` endpoint, the same one Kubernetes' own readiness probe uses.
+- `alb.ingress.kubernetes.io/load-balancer-name` gives the ALB a predictable name in the EC2 Console instead of an autogenerated one, and keeps it distinct from the ALB created by the sibling `phase-7-cicd-EKS` guide or by Phase 8.
+- All traffic routes to the frontend Service; the frontend's own Nginx then proxies API paths to the backend, exactly as it did behind the Nginx Ingress Controller in the Kind-backed version.
+
+### hpa.yaml
+
+```bash
+vim deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/hpa.yaml
+```
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: launchboard-backend
+  namespace: devops-launchboard
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: launchboard-backend
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+- `scaleTargetRef` points the HPA at the `launchboard-backend` Deployment.
+- `minReplicas: 2`/`maxReplicas: 5` lets the backend scale up under load and back down when idle, something a single-node Kind cluster could not meaningfully demonstrate but a multi-node EKS cluster can.
+- `averageUtilization: 70` triggers scale-up once average CPU usage across backend Pods crosses 70% of the `resources.requests.cpu` value set on the Deployment.
+
+This is new in the EKS-backed version of this guide — the Kind-backed version did not include an HPA, since a single-node local cluster has little room to demonstrate autoscaling.
 
 ### kustomization.yaml
 
@@ -1205,6 +1645,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - namespace.yaml
+  - storageclass.yaml
   - configmap.yaml
   - pvc.yaml
   - launchboard-postgres-deployment.yaml
@@ -1215,15 +1656,45 @@ resources:
   - launchboard-frontend-deployment.yaml
   - launchboard-frontend-service.yaml
   - ingress.yaml
+  - hpa.yaml
 ```
 
-Lists every manifest so a single `kubectl apply -k` applies them all in order. `secret.example.yaml` is deliberately not listed — the Jenkins pipeline creates the real Secret separately with `kubectl create secret`, the same reasoning every other phase in this repository follows for credentials.
+Lists every manifest so a single `kubectl apply -k` applies them all in order. `secret.example.yaml` is deliberately not listed — the Jenkins pipeline creates the real Secret separately with `kubectl create secret`, the same reasoning every other phase in this repository follows for credentials. `configmap.yaml` is listed even though Jenkins also creates it directly with `kubectl create configmap`, because `kubectl apply -k` running against an already-existing, identically-named ConfigMap is a safe no-op — Kubernetes simply reconciles the two definitions instead of erroring out.
 
 Reference:
 
 - Kustomize documentation: https://kustomize.io/
+- AWS Load Balancer Controller Ingress annotations: https://kubernetes-sigs.github.io/aws-load-balancer-controller/latest/guide/ingress/annotations/
 
-## Step 14: Create The Jenkins Deploy Pipeline File
+## Step 19: Add The AWS Credential To Jenkins
+
+In Jenkins, add the access key from Step 16 as a credential:
+
+```text
+Jenkins
+Manage Jenkins
+Credentials
+System
+Global credentials (unrestricted)
+Add Credentials
+Kind: Username with password
+Scope: Global
+Username: paste the AccessKeyId from Step 16
+Password: paste the SecretAccessKey from Step 16
+ID: aws-jenkins-credentials
+```
+
+Click **Create**.
+
+Why this step exists:
+
+The Jenkinsfile in Step 20 references this credential by its ID (`aws-jenkins-credentials`) to populate `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` as shell environment variables for the duration of each pipeline run. Jenkins masks both values in the UI and in console logs, the same protection a GitHub Actions Secret gives you, and "Username with password" is a built-in Jenkins credential type — no extra plugin is required beyond what the suggested plugin set from Step 10 already installed.
+
+Reference:
+
+- Jenkins credentials: https://www.jenkins.io/doc/book/using/using-credentials/
+
+## Step 20: Create The Jenkins Deploy Pipeline File
 
 ```bash
 vim deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/Jenkinsfile
@@ -1236,14 +1707,16 @@ pipeline {
   agent any
 
   parameters {
-    string(name: 'PUBLIC_APP_URL', defaultValue: 'http://127.0.0.1', description: 'Public browser URL for CORS (your EC2 public IP, e.g. http://YOUR_EC2_PUBLIC_IP)')
     password(name: 'DB_PASSWORD', defaultValue: 'CHANGE_ME_STRONG_PASSWORD', description: 'PostgreSQL password for this lab')
   }
 
   environment {
-    KIND_CLUSTER = 'launchboard-jenkins'
+    AWS_CREDS = credentials('aws-jenkins-credentials')
+    AWS_ACCESS_KEY_ID = "${AWS_CREDS_USR}"
+    AWS_SECRET_ACCESS_KEY = "${AWS_CREDS_PSW}"
+    AWS_REGION = 'YOUR_AWS_REGION'
+    CLUSTER_NAME = 'devops-launchboard-phase-7-jenkins'
     NAMESPACE = 'devops-launchboard'
-    PUBLIC_APP_URL = "${params.PUBLIC_APP_URL}"
     DB_PASSWORD = "${params.DB_PASSWORD}"
   }
 
@@ -1274,36 +1747,28 @@ pipeline {
       steps {
         script {
           env.IMAGE_TAG = sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()
+          env.ACCOUNT_ID = sh(script: 'aws sts get-caller-identity --query Account --output text', returnStdout: true).trim()
+          env.ECR_REGISTRY = "${env.ACCOUNT_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com"
         }
         echo "Image tag for this build: ${env.IMAGE_TAG}"
+        echo "ECR registry: ${env.ECR_REGISTRY}"
       }
     }
 
-    stage('Create Kind Cluster If Missing') {
+    stage('Update Kubeconfig') {
       steps {
         sh '''
-          if ! kind get clusters | grep -q "^${KIND_CLUSTER}$"; then
-            kind create cluster --name "${KIND_CLUSTER}" \
-              --config deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/kind-config.yaml
-          else
-            echo "Cluster ${KIND_CLUSTER} already exists, reusing it."
-          fi
-          kubectl cluster-info --context "kind-${KIND_CLUSTER}"
+          aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region "${AWS_REGION}"
+          kubectl get nodes
         '''
       }
     }
 
-    stage('Install Nginx Ingress Controller If Missing') {
+    stage('Log In To ECR') {
       steps {
         sh '''
-          if ! kubectl get namespace ingress-nginx >/dev/null 2>&1; then
-            kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/kind/deploy.yaml
-            sleep 10
-          fi
-          kubectl wait --namespace ingress-nginx \
-            --for=condition=ready pod \
-            --selector=app.kubernetes.io/component=controller \
-            --timeout=180s
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
         '''
       }
     }
@@ -1312,19 +1777,19 @@ pipeline {
       steps {
         sh '''
           docker build -f deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/Dockerfile.backend \
-            -t "launchboard-backend:${IMAGE_TAG}" .
+            -t "${ECR_REGISTRY}/launchboard-backend:${IMAGE_TAG}" .
           docker build -f deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/Dockerfile.frontend \
             --build-arg VITE_API_URL= \
-            -t "launchboard-frontend:${IMAGE_TAG}" .
+            -t "${ECR_REGISTRY}/launchboard-frontend:${IMAGE_TAG}" .
         '''
       }
     }
 
-    stage('Load Images Into Kind') {
+    stage('Push Images To ECR') {
       steps {
         sh '''
-          kind load docker-image "launchboard-backend:${IMAGE_TAG}" --name "${KIND_CLUSTER}"
-          kind load docker-image "launchboard-frontend:${IMAGE_TAG}" --name "${KIND_CLUSTER}"
+          docker push "${ECR_REGISTRY}/launchboard-backend:${IMAGE_TAG}"
+          docker push "${ECR_REGISTRY}/launchboard-frontend:${IMAGE_TAG}"
         '''
       }
     }
@@ -1332,7 +1797,7 @@ pipeline {
     stage('Stamp Image Tag Into Manifests') {
       steps {
         sh '''
-          sed -i "s|IMAGE_TAG_PLACEHOLDER|${IMAGE_TAG}|g" \
+          sed -i "s|ECR_REGISTRY_PLACEHOLDER|${ECR_REGISTRY}|g; s|IMAGE_TAG_PLACEHOLDER|${IMAGE_TAG}|g" \
             deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/launchboard-backend-deployment.yaml \
             deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/launchboard-frontend-deployment.yaml \
             deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/launchboard-migration-job.yaml
@@ -1340,15 +1805,16 @@ pipeline {
       }
     }
 
-    stage('Deploy To Kind') {
+    stage('Deploy To EKS') {
       steps {
         sh 'kubectl apply -f deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/namespace.yaml'
+        sh 'kubectl apply -f deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/storageclass.yaml'
         sh '''
           kubectl create configmap launchboard-config \
             --namespace "${NAMESPACE}" \
             --from-literal=APP_NAME="DevOps LaunchBoard API" \
             --from-literal=APP_ENV=production \
-            --from-literal=CORS_ORIGINS="${PUBLIC_APP_URL}" \
+            --from-literal=CORS_ORIGINS="http://placeholder.invalid" \
             --from-literal=SEED_DEMO_DATA=true \
             --from-literal=POSTGRES_DB=launchboard \
             --from-literal=POSTGRES_USER=launchboard_user \
@@ -1370,16 +1836,51 @@ pipeline {
       }
     }
 
+    stage('Wait For ALB And Fix CORS') {
+      steps {
+        script {
+          def albDns = ''
+          for (int i = 0; i < 30; i++) {
+            albDns = sh(
+              script: "kubectl -n ${env.NAMESPACE} get ingress launchboard-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true",
+              returnStdout: true
+            ).trim()
+            if (albDns) {
+              break
+            }
+            echo "Waiting for ALB hostname... (${i + 1}/30)"
+            sleep(10)
+          }
+          if (!albDns) {
+            error 'ALB hostname did not appear within 5 minutes. Check the aws-load-balancer-controller logs.'
+          }
+          env.ALB_DNS = albDns
+        }
+        sh '''
+          kubectl create configmap launchboard-config \
+            --namespace "${NAMESPACE}" \
+            --from-literal=APP_NAME="DevOps LaunchBoard API" \
+            --from-literal=APP_ENV=production \
+            --from-literal=CORS_ORIGINS="http://${ALB_DNS}" \
+            --from-literal=SEED_DEMO_DATA=true \
+            --from-literal=POSTGRES_DB=launchboard \
+            --from-literal=POSTGRES_USER=launchboard_user \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n "${NAMESPACE}" rollout restart deployment/launchboard-backend
+          kubectl -n "${NAMESPACE}" rollout status deployment/launchboard-backend --timeout=180s
+        '''
+      }
+    }
+
     stage('Verify Application') {
       steps {
         sh '''
-          sleep 5
-          curl -fsS http://127.0.0.1/healthz
-          curl -fsS http://127.0.0.1/health
-          curl -fsS http://127.0.0.1/ready
-          curl -fsS http://127.0.0.1/api/summary | head -c 400
+          curl -fsS "http://${ALB_DNS}/healthz"
+          curl -fsS "http://${ALB_DNS}/health"
+          curl -fsS "http://${ALB_DNS}/ready"
+          curl -fsS "http://${ALB_DNS}/api/summary" | head -c 400
           echo ""
-          echo "Deployment of ${IMAGE_TAG} verified."
+          echo "Deployment of ${IMAGE_TAG} verified at http://${ALB_DNS}"
         '''
       }
     }
@@ -1397,26 +1898,33 @@ pipeline {
 }
 ```
 
+Replace `YOUR_AWS_REGION` on the `AWS_REGION` line with your real region before committing this file in Step 22.
+
 Line explanation:
 
-- `pipeline { agent any }` is a declarative Jenkins Pipeline. `agent any` runs every stage directly on the Jenkins controller itself — appropriate here because Docker, Kind, and kubectl are all installed on this one EC2 instance and there are no separate build agents.
-- `parameters { string(...) password(...) }` makes this a parameterized build: the Jenkins UI shows a form with these two fields before each run. `password(...)` masks the value in the UI and in logs, the same protection a GitHub Actions Secret gives you.
-- `environment { ... }` defines variables available to every `sh` step as shell environment variables, including the two parameters re-exposed under names the shell scripts use directly.
+- `pipeline { agent any }` is a declarative Jenkins Pipeline. `agent any` runs every stage directly on the Jenkins controller itself — appropriate here because Docker, AWS CLI, eksctl, and kubectl are all installed on this one EC2 instance and there are no separate build agents.
+- `parameters { password(...) }` makes this a parameterized build: the Jenkins UI shows a form with this field before each run. `password(...)` masks the value in the UI and in logs. There is no `PUBLIC_APP_URL` parameter in this version — the "Wait For ALB And Fix CORS" stage discovers the correct URL automatically on every run, removing a manual step the Kind-backed version needed.
+- `AWS_CREDS = credentials('aws-jenkins-credentials')` binds the Jenkins credential created in Step 19. Jenkins automatically exposes it as two additional variables, `AWS_CREDS_USR` and `AWS_CREDS_PSW`, which the next two lines re-map to the exact environment variable names (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) that the AWS CLI looks for automatically.
+- `CLUSTER_NAME` must match the `metadata.name` in `cluster/eksctl-cluster.yaml` from Step 14.
 - `stage('Backend Checks')` and `stage('Frontend Checks')` mirror the `build-and-test.yml` GitHub Actions workflow from the main Phase 7 guide: install dependencies, lint, smoke-test the backend's FastAPI app import, lint and build the frontend.
-- `stage('Set Image Tag')` runs `git rev-parse --short=7 HEAD` to get the short commit SHA Jenkins just checked out, storing it in `env.IMAGE_TAG`. This is the exact same uniqueness mechanism the main Phase 7 GitHub Actions workflow uses (`${GITHUB_SHA::7}`), just read a different way because Jenkins does not provide a SHA environment variable by default the way GitHub Actions does.
-- `stage('Create Kind Cluster If Missing')` and `stage('Install Nginx Ingress Controller If Missing')` are idempotent: they check whether the cluster/controller already exists before creating them, so re-running the pipeline never fails because "the cluster already exists." This means the very first pipeline run bootstraps the entire cluster from nothing, and every later run simply reuses it.
-- `stage('Build Images')` and `stage('Load Images Into Kind')` build both images tagged with the commit SHA, then copy them into the Kind node's internal container runtime — Kind clusters do not share the host's Docker images, so without this step every Pod would fail with `ImagePullBackOff`.
-- `stage('Stamp Image Tag Into Manifests')` replaces the literal string `IMAGE_TAG_PLACEHOLDER` in three YAML files with the real commit SHA using `sed -i`, directly in the Jenkins workspace's checked-out copy of those files, immediately before applying them.
-- `stage('Deploy To Kind')` creates the namespace, creates or updates the ConfigMap and Secret from the build parameters (`--dry-run=client -o yaml | kubectl apply -f -` is the standard "create or update" idiom in kubectl, since plain `kubectl create` fails if the resource already exists), deletes any previous migration Job (Kubernetes Jobs are immutable, so a stale one must be deleted before applying a new one), applies the full kustomization, and waits for every rollout in dependency order.
-- `stage('Verify Application')` curls the health, readiness, and summary endpoints through the Ingress on port 80, the same verification the main Phase 7 guide performs.
-- `post { always { ... } }` runs after every build, success or failure. It restores the three manifest files back to their committed `IMAGE_TAG_PLACEHOLDER` state with `git checkout --`, undoing the `sed -i` from the stamp stage. Without this, the placeholder would be permanently replaced with a stale tag in the Jenkins workspace, and the *next* pipeline run's `sed` command would silently do nothing because the placeholder string would no longer exist.
+- `stage('Set Image Tag')` runs `git rev-parse --short=7 HEAD` to get the short commit SHA Jenkins just checked out, and `aws sts get-caller-identity` to get the AWS account ID, then builds the full ECR registry hostname (`ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com`) from both. The commit SHA tagging is the exact same uniqueness mechanism the main Phase 7 GitHub Actions workflow uses (`${GITHUB_SHA::7}`).
+- `stage('Update Kubeconfig')` runs `aws eks update-kubeconfig`, which uses the `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` environment variables set above to call the EKS API and write a working kubeconfig to `/var/lib/jenkins/.kube/config` (since pipeline stages run as the `jenkins` Linux user). Every `kubectl` command in later stages uses this file implicitly.
+- `stage('Log In To ECR')` exchanges the same AWS credentials for a short-lived Docker registry password via `aws ecr get-login-password`, valid for 12 hours, then feeds it to `docker login` over stdin so the password never appears in a process listing or log line.
+- `stage('Build Images')` builds both images tagged with the full ECR registry path and commit SHA in one step, instead of a separate "tag" step — `docker build -t` accepts the final destination tag directly.
+- `stage('Push Images To ECR')` pushes both images. This replaces the Kind-backed version's "Load Images Into Kind" stage: EKS worker nodes pull images over the network from a registry, they do not share the Jenkins box's local Docker image cache the way a Kind node does.
+- `stage('Stamp Image Tag Into Manifests')` replaces both literal placeholder strings, `ECR_REGISTRY_PLACEHOLDER` and `IMAGE_TAG_PLACEHOLDER`, in three YAML files with the real registry hostname and commit SHA using a single `sed -i` with two substitution expressions, directly in the Jenkins workspace's checked-out copy of those files, immediately before applying them.
+- `stage('Deploy To EKS')` creates the namespace and StorageClass, creates or updates the ConfigMap (with a throwaway placeholder `CORS_ORIGINS` value, corrected two stages later) and Secret from the build parameters (`--dry-run=client -o yaml | kubectl apply -f -` is the standard "create or update" idiom in kubectl, since plain `kubectl create` fails if the resource already exists), deletes any previous migration Job (Kubernetes Jobs are immutable, so a stale one must be deleted before applying a new one), applies the full kustomization, and waits for every rollout in dependency order.
+- `stage('Wait For ALB And Fix CORS')` is new in this version. It polls `kubectl get ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'` every 10 seconds for up to 5 minutes, since the AWS Load Balancer Controller takes a couple of minutes to provision a real ALB and is not instant the way Kind's port-mapped Nginx Ingress was. Once a hostname appears, it recreates the ConfigMap with the real `CORS_ORIGINS` value and restarts the backend Deployment so the running Pods pick up the corrected environment variable — ConfigMap changes never propagate to already-running Pods on their own.
+- `stage('Verify Application')` curls the health, readiness, and summary endpoints through the ALB's own DNS name, the same verification the main Phase 7 guide performs against its own public IP.
+- `post { always { ... } }` runs after every build, success or failure. It restores the three manifest files back to their committed placeholder state with `git checkout --`, undoing the `sed -i` from the stamp stage. Without this, the placeholders would be permanently replaced with a stale value in the Jenkins workspace, and the *next* pipeline run's `sed` command would silently do nothing because the placeholder strings would no longer exist.
 
 Reference:
 
 - Jenkins Pipeline syntax: https://www.jenkins.io/doc/book/pipeline/syntax/
 - Jenkins declarative pipeline parameters: https://www.jenkins.io/doc/book/pipeline/syntax/#parameters
+- AWS CLI environment variables: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-envvars.html
 
-## Step 15: Create The Jenkins Rollback Pipeline File
+## Step 21: Create The Jenkins Rollback Pipeline File
 
 ```bash
 vim deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/Jenkinsfile.rollback
@@ -1433,10 +1941,23 @@ pipeline {
   }
 
   environment {
+    AWS_CREDS = credentials('aws-jenkins-credentials')
+    AWS_ACCESS_KEY_ID = "${AWS_CREDS_USR}"
+    AWS_SECRET_ACCESS_KEY = "${AWS_CREDS_PSW}"
+    AWS_REGION = 'YOUR_AWS_REGION'
+    CLUSTER_NAME = 'devops-launchboard-phase-7-jenkins'
     NAMESPACE = 'devops-launchboard'
   }
 
   stages {
+    stage('Update Kubeconfig') {
+      steps {
+        sh '''
+          aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region "${AWS_REGION}"
+        '''
+      }
+    }
+
     stage('Show Rollout History') {
       steps {
         sh 'kubectl -n "${NAMESPACE}" rollout history deployment/${DEPLOYMENT}'
@@ -1467,11 +1988,17 @@ pipeline {
 
     stage('Verify Application') {
       steps {
+        script {
+          env.ALB_DNS = sh(
+            script: "kubectl -n ${env.NAMESPACE} get ingress launchboard-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'",
+            returnStdout: true
+          ).trim()
+        }
         sh '''
-          curl -fsS http://127.0.0.1/healthz
-          curl -fsS http://127.0.0.1/health
-          curl -fsS http://127.0.0.1/ready
-          echo "Rollback of ${DEPLOYMENT} verified."
+          curl -fsS "http://${ALB_DNS}/healthz"
+          curl -fsS "http://${ALB_DNS}/health"
+          curl -fsS "http://${ALB_DNS}/ready"
+          echo "Rollback of ${DEPLOYMENT} verified at http://${ALB_DNS}"
         '''
       }
     }
@@ -1479,20 +2006,24 @@ pipeline {
 }
 ```
 
+Replace `YOUR_AWS_REGION` on the `AWS_REGION` line with your real region before committing this file in Step 22.
+
 Line explanation:
 
 - `parameters { choice(...) }` renders a dropdown in the Jenkins UI with exactly two valid values, preventing a typo'd Deployment name from being passed to `kubectl`.
-- `kubectl rollout undo` switches the Deployment back to its previous ReplicaSet. Because every build in the deploy pipeline tags images with a unique commit SHA, the previous ReplicaSet still references a real, different image — so this rollback actually changes what is running, not just touching the same bytes again.
-- The image is still present inside the Kind node from when it was originally loaded, so the rolled-back Pods start instantly with no rebuild or re-pull.
+- The `environment` block reuses the exact same `aws-jenkins-credentials` Jenkins credential and the same kubeconfig pattern as the deploy pipeline, since this is a separate Jenkins job with its own fresh workspace and its own need to authenticate to the cluster.
+- `stage('Update Kubeconfig')` runs first because this pipeline can be triggered on its own, at any time, independent of a deploy run — it cannot assume a kubeconfig already exists in this workspace.
+- `kubectl rollout undo` switches the Deployment back to its previous ReplicaSet. Because every build in the deploy pipeline tags images with a unique commit SHA pushed to ECR, the previous ReplicaSet still references a real, different image — so this rollback actually changes what is running, not just touching the same bytes again.
+- `stage('Verify Application')` looks up the ALB's current DNS name with the same `kubectl get ingress -o jsonpath` lookup the deploy pipeline uses, rather than assuming a fixed URL, since the ALB's hostname does not change between deploys but this job has no other record of it.
 
-Note: this file is a separate Pipeline job from the deploy pipeline (Step 17 covers creating that second job), so that rollback can run on demand without rebuilding or redeploying anything.
+Note: this file is a separate Pipeline job from the deploy pipeline (Step 27 covers creating that second job), so that rollback can run on demand without rebuilding or redeploying anything.
 
-## Step 16: Commit And Push
+## Step 22: Commit And Push
 
 ```bash
 cd /opt/devops-launchboard/app-source
 git add .dockerignore deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins
-git commit -m "Add Phase 7 Jenkins CI/CD from scratch"
+git commit -m "Convert Phase 7 Jenkins CI/CD from Kind to Amazon EKS"
 git push origin main
 ```
 
@@ -1500,9 +2031,9 @@ Why this step exists:
 
 The Jenkins jobs you create in the next step check out this exact path from your GitHub repository, so the Jenkinsfiles and supporting manifests must exist on `main` before Jenkins can run them.
 
-## Step 17: Create A Jenkins-Specific GitHub Deploy Key
+## Step 23: Create A Jenkins-Specific GitHub Deploy Key
 
-Jenkins needs its own way to clone the repository — reusing your personal SSH key from Step 6 would mix a human credential with an automated one, which is bad practice even in a lab.
+Jenkins needs its own way to clone the repository — reusing your personal SSH key from Step 8 would mix a human credential with an automated one, which is bad practice even in a lab.
 
 ```bash
 cd ~
@@ -1546,13 +2077,13 @@ cat ~/jenkins_deploy_key
 
 Why this step exists:
 
-When you configure the Pipeline job in the next step to check out from `git@github.com:ashraful2430/N-tier-application.git`, Jenkins needs a credential with permission to do that over SSH. This credential is scoped only to Jenkins and only allows reading this one repository.
+When you configure the Pipeline job in the next step to check out from `git@github.com:ashraful2430/N-tier-application.git`, Jenkins needs a credential with permission to do that over SSH. This credential is scoped only to Jenkins and only allows reading this one repository — a separate concern entirely from the `aws-jenkins-credentials` credential from Step 19, which only allows talking to AWS.
 
 Reference:
 
 - Jenkins credentials: https://www.jenkins.io/doc/book/using/using-credentials/
 
-## Step 18: Create The Jenkins Deploy Pipeline Job
+## Step 24: Create The Jenkins Deploy Pipeline Job
 
 In Jenkins:
 
@@ -1586,45 +2117,54 @@ Why **Poll SCM** instead of a webhook: a GitHub webhook needs GitHub to reach Je
 
 Why this step exists:
 
-This is the Jenkins equivalent of the main Phase 7 guide's `deploy-k8s.yml` GitHub Actions workflow: a build of this job runs every stage in the Jenkinsfile from Step 14, end to end, against this Kind cluster.
+This is the Jenkins equivalent of the main Phase 7 guide's `deploy-k8s.yml` GitHub Actions workflow: a build of this job runs every stage in the Jenkinsfile from Step 20, end to end, against the EKS cluster created in Step 14.
 
 Reference:
 
 - Jenkins Pipeline from SCM: https://www.jenkins.io/doc/book/pipeline/getting-started/#defining-a-pipeline-in-scm
 - Jenkins Poll SCM cron syntax: https://www.jenkins.io/doc/book/pipeline/syntax/#cron-syntax
 
-## Step 19: Run The Pipeline For The First Time
+## Step 25: Run The Pipeline For The First Time
 
 ```text
 Dashboard
 launchboard-jenkins-deploy
 Build with Parameters
-PUBLIC_APP_URL: http://YOUR_EC2_PUBLIC_IP
 DB_PASSWORD: choose a strong password
 Build
 ```
 
 Click the running build number, then **Console Output** to watch every stage execute live.
 
-Expected: the build ends with `Finished: SUCCESS`. The first run takes 5 to 10 minutes because it also creates the Kind cluster and installs the Nginx Ingress Controller; later runs are faster because both steps become no-ops.
+Expected: the build ends with `Finished: SUCCESS`. The whole run typically takes 4 to 7 minutes — most of that is the "Wait For ALB And Fix CORS" stage polling for the new Application Load Balancer to finish provisioning. Unlike the Kind-backed version of this guide, this run does not create the cluster itself (it was already created in Step 14), so there is no 5-to-10-minute first-run penalty for cluster bootstrap.
 
 If the build fails, see Troubleshooting below before continuing.
 
-## Step 20: Verify The App
+## Step 26: Verify The App
 
-From the EC2 terminal:
+Get the ALB DNS name from the EC2 terminal:
 
 ```bash
-curl -I http://127.0.0.1
-curl -s http://127.0.0.1/health | jq
-curl -s http://127.0.0.1/ready | jq
-curl -s http://127.0.0.1/api/summary | jq
+kubectl -n devops-launchboard get ingress launchboard-ingress \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+echo ""
+```
+
+Curl it directly:
+
+```bash
+ALB_DNS=$(kubectl -n devops-launchboard get ingress launchboard-ingress \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+curl -I "http://${ALB_DNS}"
+curl -s "http://${ALB_DNS}/health" | jq
+curl -s "http://${ALB_DNS}/ready" | jq
+curl -s "http://${ALB_DNS}/api/summary" | jq
 ```
 
 Open in a browser:
 
 ```text
-http://YOUR_EC2_PUBLIC_IP
+http://YOUR_ALB_DNS_NAME
 ```
 
 Expected:
@@ -1635,7 +2175,9 @@ Dashboard data appears.
 No CORS errors in the browser console.
 ```
 
-## Step 21: Create The Jenkins Rollback Pipeline Job
+Unlike the Kind-backed version, do not expect the app at the Jenkins EC2's own public IP — there is no application traffic on this box at all. The URL you open is always the ALB's own DNS name.
+
+## Step 27: Create The Jenkins Rollback Pipeline Job
 
 ```text
 Dashboard
@@ -1659,7 +2201,7 @@ Pipeline:
 
 Click **Save**, then click **Build Now** once with the default parameter. Jenkins needs one initial run to discover the `choice` parameter declared in the Jenkinsfile before showing it as a "Build with Parameters" form on later runs — this is normal Jenkins behavior for any Pipeline-from-SCM job, not specific to this lab.
 
-## Step 22: Test The Full CI/CD Loop
+## Step 28: Test The Full CI/CD Loop
 
 Make a visible change:
 
@@ -1671,18 +2213,18 @@ vim deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/configmap.yaml
 Change `APP_NAME`:
 
 ```yaml
-  APP_NAME: DevOps LaunchBoard API via Jenkins v2
+  APP_NAME: DevOps LaunchBoard API via Jenkins on EKS v2
 ```
 
 Commit and push:
 
 ```bash
 git add deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/configmap.yaml
-git commit -m "test Jenkins CI/CD loop"
+git commit -m "test Jenkins CI/CD loop on EKS"
 git push origin main
 ```
 
-Within 5 minutes (the Poll SCM schedule from Step 18), Jenkins detects the new commit and starts a build automatically. Watch it under:
+Within 5 minutes (the Poll SCM schedule from Step 24), Jenkins detects the new commit and starts a build automatically. Watch it under:
 
 ```text
 Dashboard
@@ -1691,7 +2233,7 @@ launchboard-jenkins-deploy
 
 No SSH session, no manual `kubectl` command, no manual "Build Now" click was needed for this deployment.
 
-## Step 23: Test Rollback
+## Step 29: Test Rollback
 
 ```text
 Dashboard
@@ -1701,7 +2243,7 @@ DEPLOYMENT: launchboard-backend
 Build
 ```
 
-Watch the console output: it shows the rollout history, rolls back, waits, and verifies. Repeat with `launchboard-frontend` if you want to test that Deployment too.
+Watch the console output: it updates the kubeconfig, shows the rollout history, rolls back, waits, and verifies against the ALB. Repeat with `launchboard-frontend` if you want to test that Deployment too.
 
 ## Logs And Debugging
 
@@ -1724,12 +2266,14 @@ kubectl -n devops-launchboard logs deployment/launchboard-frontend
 kubectl -n devops-launchboard get events --sort-by=.metadata.creationTimestamp
 ```
 
-Docker and Kind checks:
+EKS and AWS checks:
 
 ```bash
-docker images | grep launchboard
-kind get clusters
 kubectl get nodes
+eksctl get cluster --region "$AWS_REGION"
+aws ecr describe-images --repository-name launchboard-backend --region "$AWS_REGION"
+kubectl -n kube-system get pods | grep aws-load-balancer-controller
+kubectl -n kube-system logs deployment/aws-load-balancer-controller --tail=50
 ```
 
 ## Troubleshooting
@@ -1746,7 +2290,7 @@ Your IP address changed since the security group rule was created.
 
 ### Problem 2: Pipeline Fails With "permission denied" On Docker Commands
 
-The `jenkins` user is not in the `docker` group, or Jenkins was not restarted after Step 9.
+The `jenkins` user is not in the `docker` group, or Jenkins was not restarted after Step 11.
 
 ```bash
 groups jenkins
@@ -1756,7 +2300,7 @@ sudo systemctl restart jenkins
 
 ### Problem 3: Pipeline Fails At Checkout With "Permission denied (publickey)"
 
-The Jenkins credential from Step 17 does not match the deploy key added to GitHub, or the deploy key was added to the wrong repository.
+The Jenkins credential from Step 23 does not match the deploy key added to GitHub, or the deploy key was added to the wrong repository.
 
 ```bash
 sudo -u jenkins ssh -T git@github.com -i /var/lib/jenkins/.ssh/known_hosts 2>&1 || true
@@ -1764,33 +2308,63 @@ sudo -u jenkins ssh -T git@github.com -i /var/lib/jenkins/.ssh/known_hosts 2>&1 
 
 Re-check that the public key pasted into GitHub matches `cat ~/jenkins_deploy_key.pub`, and that the private key pasted into the Jenkins credential matches `cat ~/jenkins_deploy_key`.
 
-### Problem 4: Build Stuck Or Fails At "Create Kind Cluster If Missing"
+### Problem 4: Pipeline Fails At "Update Kubeconfig" With "ResourceNotFoundException" Or A Region Error
+
+The `CLUSTER_NAME` or `AWS_REGION` value hardcoded in the Jenkinsfile (Step 20) does not match the cluster's actual name or region from Step 14.
 
 ```bash
-sudo -u jenkins kind get clusters
-sudo -u jenkins docker ps
+eksctl get cluster --region "$AWS_REGION"
 ```
 
-If a previous failed build left a half-created cluster, delete it and let the next build recreate it cleanly:
+Fix the values in the Jenkinsfile, commit, and push.
+
+### Problem 5: kubectl Commands Fail With "error: You must be logged in to the server (Unauthorized)"
+
+The IAM identity mapping from Step 16 is missing, or maps the wrong ARN. The IAM user behind the `aws-jenkins-credentials` Jenkins credential (Step 19) must exactly match the ARN mapped into the cluster's RBAC.
 
 ```bash
-sudo -u jenkins kind delete cluster --name launchboard-jenkins
+eksctl get iamidentitymapping --cluster "$CLUSTER_NAME" --region "$AWS_REGION"
 ```
 
-### Problem 5: Pods Show ImagePullBackOff
+If the entry is missing or wrong, re-run the `eksctl create iamidentitymapping` command from Step 16 with the correct ARN.
 
-The image was built but never loaded into the Kind node, or the manifest still has the literal placeholder string. Check:
+### Problem 6: docker push To ECR Fails With "no basic auth credentials"
+
+The ECR login token from `aws ecr get-login-password` is only valid for 12 hours and is re-fetched on every pipeline run by the "Log In To ECR" stage, so this almost always means that stage did not run, or ran against the wrong region.
+
+```bash
+ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+aws ecr get-login-password --region "$AWS_REGION" \
+  | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+```
+
+### Problem 7: Pods Show ImagePullBackOff
+
+The image was pushed to the wrong account, region, or repository name, the ECR repositories from Step 15 were never created, or a manifest still has a literal placeholder string. Check:
 
 ```bash
 kubectl -n devops-launchboard describe pod POD_NAME | tail -10
-grep -r IMAGE_TAG_PLACEHOLDER deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/
+grep -rE "ECR_REGISTRY_PLACEHOLDER|IMAGE_TAG_PLACEHOLDER" deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/
+aws ecr describe-repositories --region "$AWS_REGION" --query "repositories[].repositoryName"
 ```
 
-If `grep` finds the placeholder still present after a build ran, the "Stamp Image Tag Into Manifests" stage did not run before "Deploy To Kind" — check the build's Console Output for the order stages actually executed in.
+If `grep` finds either placeholder still present after a build ran, the "Stamp Image Tag Into Manifests" stage did not run before "Deploy To EKS" — check the build's Console Output for the order stages actually executed in.
 
-### Problem 6: Second Build's "Stamp Image Tag" Stage Silently Does Nothing
+### Problem 8: "Wait For ALB And Fix CORS" Stage Times Out
 
-The `post { always { git checkout -- ... } }` block from Step 14 did not run on a previous failed build (for example, the build was manually aborted), so the placeholder is already gone from the workspace. Manually restore it:
+The AWS Load Balancer Controller from Step 17 is not running, crashed, or lacks IRSA permissions.
+
+```bash
+kubectl -n kube-system get pods | grep aws-load-balancer-controller
+kubectl -n kube-system logs deployment/aws-load-balancer-controller --tail=50
+kubectl -n devops-launchboard describe ingress launchboard-ingress
+```
+
+`kubectl describe ingress` shows Kubernetes Events at the bottom, which usually name the exact AWS API error (commonly a missing IAM permission on the controller's IRSA role).
+
+### Problem 9: Second Build's "Stamp Image Tag" Stage Silently Does Nothing
+
+The `post { always { git checkout -- ... } }` block from Step 20 did not run on a previous failed build (for example, the build was manually aborted), so the placeholders are already gone from the workspace. Manually restore them:
 
 ```bash
 cd /opt/devops-launchboard/app-source
@@ -1799,33 +2373,69 @@ git checkout -- deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/la
   deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/k8s/launchboard-migration-job.yaml
 ```
 
-### Problem 7: CORS Errors In Browser
+### Problem 10: CORS Errors In Browser
+
+Should be rare in this version, since "Wait For ALB And Fix CORS" recomputes `CORS_ORIGINS` from the live ALB hostname on every run. If it still happens:
 
 ```bash
 kubectl -n devops-launchboard get configmap launchboard-config -o jsonpath='{.data.CORS_ORIGINS}'
 ```
 
-Must exactly match the URL in the browser address bar. Re-run the deploy pipeline with the correct `PUBLIC_APP_URL` build parameter.
+Compare this against the exact URL in the browser address bar. If they differ, re-run the deploy pipeline — the backend Pods may not have picked up a recent ConfigMap change if the rollout restart step itself failed partway through.
 
 ## Cleanup
 
-Delete the Kubernetes app:
+Delete the Kubernetes app and load balancer (wait 2-3 minutes for ALB deletion to finish):
 
 ```bash
 kubectl delete namespace devops-launchboard
 ```
 
-Delete the Kind cluster:
+Delete the AWS Load Balancer Controller:
 
 ```bash
-sudo -u jenkins kind delete cluster --name launchboard-jenkins
+helm uninstall aws-load-balancer-controller --namespace kube-system
 ```
 
-Remove the two Jenkins jobs:
+Delete the EKS cluster (10 to 20 minutes):
+
+```bash
+eksctl delete cluster --name devops-launchboard-phase-7-jenkins --region "$AWS_REGION"
+```
+
+Delete the ECR repositories:
+
+```bash
+aws ecr delete-repository --repository-name launchboard-backend --region "$AWS_REGION" --force
+aws ecr delete-repository --repository-name launchboard-frontend --region "$AWS_REGION" --force
+```
+
+Delete the Load Balancer Controller IAM policy:
+
+```bash
+aws iam delete-policy \
+  --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicyPhase7Jenkins"
+```
+
+Delete the Jenkins-specific IAM user from Step 16:
+
+```bash
+aws iam list-access-keys --user-name devops-launchboard-jenkins
+aws iam delete-access-key --user-name devops-launchboard-jenkins --access-key-id THE_ACCESS_KEY_ID
+aws iam detach-user-policy --user-name devops-launchboard-jenkins \
+  --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
+aws iam detach-user-policy --user-name devops-launchboard-jenkins \
+  --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/devops-launchboard-jenkins-eks-describe"
+aws iam delete-policy --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/devops-launchboard-jenkins-eks-describe"
+aws iam delete-user --user-name devops-launchboard-jenkins
+```
+
+Remove the two Jenkins jobs and the AWS credential:
 
 ```text
 Dashboard > launchboard-jenkins-deploy > Delete Pipeline
 Dashboard > launchboard-jenkins-rollback > Delete Pipeline
+Manage Jenkins > Credentials > aws-jenkins-credentials > Delete
 ```
 
 Remove the GitHub deploy key:
@@ -1844,12 +2454,22 @@ sudo apt remove -y jenkins
 
 Terminate the EC2 instance from the AWS Console.
 
+Check the AWS Console for leftover resources before you stop paying attention to this account:
+
+```text
+EC2 > Load Balancers, Target Groups, Volumes
+VPC > NAT Gateways, Elastic IPs
+CloudWatch > Log Groups
+```
+
 ## Production Checklist
 
 ```text
-[ ] EC2 server created with port 8080 restricted to your IP
+[ ] IAM user with AdministratorAccess created for lab setup
+[ ] EC2 server created with port 8080 restricted to your IP, no ports 80/443 open
 [ ] Docker installed and verified
-[ ] kubectl and Kind installed
+[ ] AWS CLI configured and verified
+[ ] kubectl, eksctl, and Helm installed
 [ ] GitHub SSH key created and tested (for your own manual clone)
 [ ] Repository cloned
 [ ] Java and Jenkins installed
@@ -1858,18 +2478,22 @@ Terminate the EC2 instance from the AWS Console.
 [ ] jenkins system user verified to run docker ps successfully
 [ ] Phase folders and root .dockerignore created
 [ ] Dockerfile.backend, Dockerfile.frontend, nginx-frontend.conf created
-[ ] kind-config.yaml created
+[ ] EKS cluster created and 2 nodes Ready
+[ ] ECR repositories created with lifecycle policy
+[ ] Jenkins-specific IAM user created and mapped into cluster RBAC
+[ ] AWS Load Balancer Controller installed and rolled out
 [ ] All Kubernetes manifests created in k8s/
-[ ] Jenkinsfile and Jenkinsfile.rollback created
+[ ] AWS credential added to Jenkins
+[ ] Jenkinsfile and Jenkinsfile.rollback created with correct region/cluster name
 [ ] Changes committed and pushed to main
 [ ] Separate Jenkins-only GitHub deploy key created and added as a Jenkins credential
 [ ] launchboard-jenkins-deploy Pipeline job created with Poll SCM
 [ ] First pipeline run succeeded end to end
-[ ] App verified in browser with no CORS errors
+[ ] App verified in browser via the ALB DNS name with no CORS errors
 [ ] launchboard-jenkins-rollback Pipeline job created
 [ ] Full CI/CD loop tested with a real code push
 [ ] Rollback tested from the Jenkins UI
-[ ] Cleanup plan understood
+[ ] Cleanup plan understood, AWS Budget reviewed
 ```
 
 ## Reference Documentation
@@ -1883,10 +2507,15 @@ Terminate the EC2 instance from the AWS Console.
 | Jenkins Poll SCM cron syntax | https://www.jenkins.io/doc/book/pipeline/syntax/#cron-syntax |
 | Jenkins built-in steps reference | https://www.jenkins.io/doc/pipeline/steps/ |
 | Docker Engine Ubuntu install | https://docs.docker.com/engine/install/ubuntu/ |
-| Kind quick start | https://kind.sigs.k8s.io/docs/user/quick-start/ |
+| Amazon EKS | https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html |
+| eksctl | https://eksctl.io/ |
+| ECR lifecycle policies | https://docs.aws.amazon.com/AmazonECR/latest/userguide/LifecyclePolicies.html |
+| Managing IAM identities for your cluster | https://docs.aws.amazon.com/eks/latest/userguide/grant-k8s-access.html |
+| AWS Load Balancer Controller | https://kubernetes-sigs.github.io/aws-load-balancer-controller/ |
 | Kustomize documentation | https://kustomize.io/ |
 | Kubernetes Deployments | https://kubernetes.io/docs/concepts/workloads/controllers/deployment/ |
 | kubectl rollout | https://kubernetes.io/docs/reference/kubectl/generated/kubectl_rollout/ |
+| Horizontal Pod Autoscaling | https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/ |
 
 ## What To Do Next
 
@@ -1898,4 +2527,4 @@ Phase 8: EKS
 
 Why:
 
-This phase taught CI/CD with a self-hosted Jenkins server against a local Kind cluster, the Jenkins-flavored equivalent of the main Phase 7 guide's GitHub Actions pipeline. Phase 8 moves the Kubernetes platform itself to AWS EKS so you can learn managed Kubernetes, cloud networking, and cloud-native deployment — independent of which CI tool triggers it.
+This phase taught CI/CD with a self-hosted Jenkins server against a real Amazon EKS cluster, the Jenkins-flavored equivalent of the main Phase 7 guide's GitHub Actions pipeline and the sibling `phase-7-cicd-EKS` guide's Docker-Hub-and-EKS pipeline. Phase 8 goes deeper into EKS-specific topics on their own — ECR as a private registry, OIDC authentication, EBS CSI driver details, and production EKS operations — independent of which CI tool triggers the deployment.
