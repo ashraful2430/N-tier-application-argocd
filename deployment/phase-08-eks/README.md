@@ -1839,9 +1839,9 @@ Verify:
 
 ```bash
 aws ecr describe-images --repository-name launchboard-backend --region "$AWS_REGION" \
-  --query 'imageDetails[*].[imageTags,imageSizeInBytes]' --output table
+  --query 'imageDetails[?imageTags!=null].[imageTags,imageSizeInBytes]' --output table
 aws ecr describe-images --repository-name launchboard-frontend --region "$AWS_REGION" \
-  --query 'imageDetails[*].[imageTags,imageSizeInBytes]' --output table
+  --query 'imageDetails[?imageTags!=null].[imageTags,imageSizeInBytes]' --output table
 ```
 
 Command explanation:
@@ -1849,6 +1849,7 @@ Command explanation:
 - `docker build` compiles the images locally on the workstation. The commands are the same as Phase 6 — only the `-f` path changes.
 - `docker tag` creates an additional name for the same image. Docker requires the full registry URL in the tag for `docker push` to know where to send it. The format `ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/REPO:TAG` is the standard ECR image reference.
 - `docker push` uploads the image layers to ECR. On the first push, all layers are uploaded. On subsequent pushes, Docker only uploads layers that changed, which makes rebuilds after small code changes very fast.
+- `--query 'imageDetails[?imageTags!=null]...'` filters out untagged image entries before selecting columns. Modern `docker buildx` pushes an extra attestation manifest (build provenance metadata) alongside the real image, and ECR stores it as a separate, untagged entry in the same repository. Without this filter, `aws ecr describe-images` would also list that untagged entry with `imageTags` as `null`, and the AWS CLI's table renderer crashes with `Row should have 2 elements, instead it has 1` because not every row has the same shape.
 
 Reference:
 
@@ -2257,7 +2258,23 @@ aws elbv2 describe-load-balancers --region "$AWS_REGION" --query 'LoadBalancers[
 
 ## Troubleshooting
 
-### Problem 1: EKS Cluster Creation Fails
+### Problem 1: A Command Fails With "Invalid endpoint" Or Uses An Empty Account ID/Region
+
+```text
+aws: [ERROR]: Invalid endpoint: https://api.ecr..amazonaws.com
+```
+
+The double dot (`ecr..amazonaws.com`) is the tell: `$AWS_REGION` is empty in the current shell. The same applies if a command silently behaves as though `$ACCOUNT_ID` or `$CLUSTER_NAME` were never set. These are ordinary shell variables created with `export` in Step 6 (or wherever you first set them) — they only last for that one SSH session. Reconnecting over SSH, opening a new terminal tab, or rebooting the EC2 instance all start a fresh shell with none of them set.
+
+Re-export them and retry the command that failed:
+
+```bash
+export AWS_REGION=YOUR_AWS_REGION
+export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+echo "Account: $ACCOUNT_ID  Region: $AWS_REGION"
+```
+
+### Problem 2: EKS Cluster Creation Fails
 
 ```bash
 eksctl utils describe-stacks --region "$AWS_REGION" --cluster devops-launchboard-phase-8
@@ -2266,7 +2283,7 @@ aws cloudformation describe-stack-events --stack-name eksctl-devops-launchboard-
 
 Common causes: missing IAM permissions (the error says which permission is needed), region typo in the config, service quota too low (check EC2 instance limits), or VPC/subnet creation failure. If a partial stack exists after a failure, delete it with `eksctl delete cluster --name devops-launchboard-phase-8 --region $AWS_REGION` before retrying.
 
-### Problem 2: Pods Show ImagePullBackOff
+### Problem 3: Pods Show ImagePullBackOff
 
 ```bash
 kubectl -n devops-launchboard describe pod POD_NAME | tail -10
@@ -2275,7 +2292,7 @@ aws ecr describe-images --repository-name launchboard-backend --region "$AWS_REG
 
 Common causes: image was not pushed to ECR, wrong account ID in the manifest, wrong region, wrong tag, or the ECR repository does not exist. Compare the image URL in the Pod events with what `aws ecr describe-images` shows. They must match exactly.
 
-### Problem 3: Ingress Has No Address After 5 Minutes
+### Problem 4: Ingress Has No Address After 5 Minutes
 
 ```bash
 kubectl -n devops-launchboard describe ingress launchboard-ingress
@@ -2284,7 +2301,7 @@ kubectl -n kube-system logs deployment/aws-load-balancer-controller --tail=50
 
 Common causes: the AWS Load Balancer Controller is not installed or not running, the controller's IAM policy is missing a permission (check the logs for `AccessDenied`), the VPC subnets are missing the discovery tags (`kubernetes.io/role/elb: 1` on public subnets — eksctl sets these automatically, but verify if you modified the VPC), or the `kubernetes.io/ingress.class: alb` annotation is missing from the Ingress.
 
-### Problem 4: PVC Is Pending
+### Problem 5: PVC Is Pending
 
 ```bash
 kubectl -n devops-launchboard describe pvc launchboard-postgres-pvc
@@ -2294,7 +2311,7 @@ kubectl get pods -n kube-system | grep ebs
 
 Common causes: the EBS CSI driver is not installed (the add-on section in `eksctl-cluster.yaml` was removed or the add-on failed), the StorageClass `gp3` was not created (check `kubectl get sc`), or the IRSA role for the CSI driver is missing (the driver Pod logs will show `AccessDenied`).
 
-### Problem 5: ALB Returns 502 Bad Gateway
+### Problem 6: ALB Returns 502 Bad Gateway
 
 The ALB is created but returns errors. This means traffic reaches the ALB but the ALB cannot reach healthy targets.
 
@@ -2305,7 +2322,7 @@ kubectl -n devops-launchboard describe ingress launchboard-ingress
 
 Common causes: the frontend Pods are not Ready (readiness probe failing), the `healthcheck-path` or `healthcheck-port` annotations do not match the frontend container's actual health endpoint, or the security group on the worker nodes does not allow traffic from the ALB's security group. Check the target group health in the AWS Console: EC2 > Target Groups > find the target group > Targets tab.
 
-### Problem 6: CORS Errors In Browser
+### Problem 7: CORS Errors In Browser
 
 The frontend loads but API calls fail with `Access to fetch ... has been blocked by CORS policy`.
 
