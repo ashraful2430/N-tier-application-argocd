@@ -197,6 +197,13 @@ ssh -i devops-launchboard-key.pem ubuntu@YOUR_WORKSTATION_PUBLIC_IP
 
 This machine is the admin workstation only. The application and observability tools run on EKS worker nodes.
 
+Reference:
+
+- Launch EC2 instance: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EC2_GetStarted.html
+- Ubuntu on AWS: https://ubuntu.com/aws
+- Create EC2 key pair: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/create-key-pairs.html
+- SSH into EC2: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/AccessingInstancesLinux.html
+
 ## Step 2: Install Base Tools
 
 ```bash
@@ -205,6 +212,12 @@ sudo apt update
 sudo apt upgrade -y
 sudo apt install -y git curl wget vim unzip jq ca-certificates gnupg lsb-release
 ```
+
+Reference:
+
+- git documentation: https://git-scm.com/doc
+- jq manual: https://jqlang.github.io/jq/manual/
+- vim documentation: https://www.vim.org/docs.php
 
 ## Step 3: Install Docker
 
@@ -234,6 +247,12 @@ Verify:
 docker --version
 docker info
 ```
+
+Reference:
+
+- Install Docker Engine on Ubuntu: https://docs.docker.com/engine/install/ubuntu/
+- Docker post-installation steps for Linux: https://docs.docker.com/engine/install/linux-postinstall/
+- docker usermod explanation: https://docs.docker.com/engine/install/linux-postinstall/#manage-docker-as-a-non-root-user
 
 ## Step 4: Install AWS CLI, kubectl, eksctl, And Helm
 
@@ -275,11 +294,10 @@ Helm:
 
 ```bash
 cd ~
-curl -fsSL https://baltocdn.com/helm/signing.asc | sudo gpg --dearmor -o /usr/share/keyrings/helm.gpg
-sudo apt install -y apt-transport-https
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
-sudo apt update
-sudo apt install -y helm
+curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+chmod 700 get_helm.sh
+./get_helm.sh
+rm get_helm.sh
 ```
 
 Verify:
@@ -303,6 +321,7 @@ Command explanation:
 Reference:
 
 - Install AWS CLI: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+- Install kubectl on Linux: https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/
 - eksctl install: https://eksctl.io/installation/
 - Helm install: https://helm.sh/docs/intro/install/
 
@@ -353,6 +372,13 @@ cd /opt/devops-launchboard
 git clone git@github.com:ashraful2430/N-tier-application.git app-source
 cd app-source
 ```
+
+Reference:
+
+- Generate an SSH key: https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent
+- Add SSH key to GitHub account: https://docs.github.com/en/authentication/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account
+- GitHub deploy keys (read-only SSH access to one repo): https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys#deploy-keys
+- SSH config file: https://linux.die.net/man/5/ssh_config
 
 ## Step 6: Create Working Folders
 
@@ -1331,6 +1357,13 @@ What this command creates: `eksctl create cluster -f` reads the config from Step
 
 If cluster creation fails, run `eksctl utils describe-stacks --region $AWS_REGION --cluster devops-launchboard-phase-9` and read the CloudFormation events — they show the real cause, usually a missing IAM permission, a region typo, or an EC2 instance quota that is too low.
 
+Reference:
+
+- eksctl create cluster: https://eksctl.io/usage/creating-and-managing-clusters/
+- EKS getting started: https://docs.aws.amazon.com/eks/latest/userguide/getting-started-eksctl.html
+- AWS CloudFormation troubleshooting: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/troubleshooting.html
+- EC2 service quotas: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-resource-limits.html
+
 ## Step 9: Create ECR Repositories And Push Images
 
 Create one repository per service:
@@ -1519,6 +1552,13 @@ curl -s "http://$ALB_DNS/api/summary" | jq
 
 The application is now running. Everything from this point forward adds observability on top of it.
 
+Reference:
+
+- kubectl create secret: https://kubernetes.io/docs/concepts/configuration/secret/#creating-a-secret
+- kubectl apply with Kustomize: https://kubectl.docs.kubernetes.io/references/kubectl/apply/
+- kubectl rollout restart: https://kubernetes.io/docs/reference/kubectl/generated/kubectl_rollout/kubectl_rollout_restart/
+- CORS explained: https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
+
 ## Step 12: Create Observability Namespace
 
 All observability tools live in a separate namespace to keep them isolated from the application.
@@ -1549,6 +1589,11 @@ Verify:
 ```bash
 kubectl get namespace observability
 ```
+
+Reference:
+
+- Kubernetes Namespaces: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+- kubectl apply: https://kubernetes.io/docs/reference/kubectl/generated/kubectl_apply/
 
 ## Step 13: Install Prometheus And Grafana
 
