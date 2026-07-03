@@ -2551,35 +2551,36 @@ Reference:
 
 Sealed Secrets takes a different approach: you encrypt the secret locally with a public key, commit the encrypted version to Git, and the Sealed Secrets controller inside the cluster decrypts it. This enables GitOps for secrets — the encrypted `SealedSecret` YAML is safe to commit because only the controller's private key (which never leaves the cluster) can decrypt it.
 
-Install the controller:
-
-```bash
-helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets
-helm repo update
-
-helm install sealed-secrets sealed-secrets/sealed-secrets --namespace kube-system
-```
-
-This installs the Sealed Secrets controller into the cluster. The controller holds a private key (generated automatically on first install) and is the only thing that can decrypt a `SealedSecret` back into a normal Kubernetes `Secret` — encryption happens client-side with the matching public key, so the plaintext never has to leave your workstation unencrypted except in the temporary file created below.
-
-Install the `kubeseal` CLI on the workstation:
+Install the controller and the `kubeseal` CLI. Both come from the project's GitHub releases — the same source, so the versions always match. (Do not use the old `bitnami-labs.github.io/sealed-secrets` Helm repository; it is no longer reliably hosted and returns 404.)
 
 ```bash
 KUBESEAL_VERSION=$(curl -s https://api.github.com/repos/bitnami-labs/sealed-secrets/releases/latest \
   | jq -r .tag_name | sed 's/v//')
+echo "Installing Sealed Secrets v${KUBESEAL_VERSION}"
 
+kubectl apply -f "https://github.com/bitnami-labs/sealed-secrets/releases/download/v${KUBESEAL_VERSION}/controller.yaml"
+kubectl -n kube-system rollout status deployment/sealed-secrets-controller --timeout=120s
+```
+
+This installs the Sealed Secrets controller into `kube-system`. The controller holds a private key (generated automatically on first install) and is the only thing that can decrypt a `SealedSecret` back into a normal Kubernetes `Secret` — encryption happens client-side with the matching public key, so the plaintext never has to leave your workstation unencrypted except in the temporary file created below.
+
+Now the CLI, using the same version variable:
+
+```bash
 curl -OL "https://github.com/bitnami-labs/sealed-secrets/releases/download/v${KUBESEAL_VERSION}/kubeseal-${KUBESEAL_VERSION}-linux-amd64.tar.gz"
 
 tar -xzf kubeseal-*.tar.gz kubeseal
 sudo mv kubeseal /usr/local/bin/kubeseal
 rm kubeseal-*.tar.gz
+kubeseal --version
 ```
 
 Line explanation:
 
-- `curl -s .../releases/latest` queries the GitHub API for the latest Sealed Secrets release; `jq -r .tag_name` extracts just the tag (for example `v0.27.0`); `sed 's/v//'` strips the leading `v` so the variable holds a bare version number usable in a filename.
-- The second `curl` downloads the matching `kubeseal` CLI binary release archive — `kubeseal` is the client-side tool that talks to the controller's public key endpoint; it is a separate binary from the controller itself, run on your workstation rather than in the cluster.
-- `tar -xzf ... kubeseal` extracts only the `kubeseal` binary from the archive, `sudo mv` puts it on the PATH, and `rm` cleans up the downloaded archive.
+- `curl -s .../releases/latest` queries the GitHub API for the latest Sealed Secrets release; `jq -r .tag_name` extracts just the tag (for example `v0.27.0`); `sed 's/v//'` strips the leading `v` so the variable holds a bare version number usable in filenames.
+- `controller.yaml` is the official all-in-one install manifest (CRD, RBAC, Deployment, Service) published with every release. Installing the controller and the CLI from the same release tag guarantees they are compatible.
+- The manifest names the Deployment `sealed-secrets-controller` in `kube-system` — exactly what the `kubeseal` CLI looks for by default, so no `--controller-name`/`--controller-namespace` flags are needed later.
+- `kubeseal` is the client-side tool that fetches the controller's public key and encrypts locally; it runs on your workstation, never in the cluster.
 
 Create a normal Secret YAML locally (never commit this file):
 
