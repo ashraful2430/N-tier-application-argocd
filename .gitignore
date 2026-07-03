@@ -11,3 +11,9 @@ dist/
 screenshots/
 *.log
 *.tsbuildinfo
+
+terraform.tfvars
+*.tfstate
+*.tfstate.*
+.terraform/
+
