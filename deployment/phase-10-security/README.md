@@ -2554,11 +2554,11 @@ Sealed Secrets takes a different approach: you encrypt the secret locally with a
 Install the controller and the `kubeseal` CLI. Both come from the project's GitHub releases — the same source, so the versions always match. (Do not use the old `bitnami-labs.github.io/sealed-secrets` Helm repository; it is no longer reliably hosted and returns 404.)
 
 ```bash
-KUBESEAL_VERSION=$(curl -sI https://github.com/bitnami-labs/sealed-secrets/releases/latest \
-  | grep -i '^location:' | sed 's|.*/tag/v||' | tr -d '\r')
+KUBESEAL_VERSION=$(curl -sIL -o /dev/null -w '%{url_effective}' \
+  https://github.com/bitnami/sealed-secrets/releases/latest | sed 's|.*/tag/v||')
 echo "Installing Sealed Secrets v${KUBESEAL_VERSION}"
 
-kubectl apply -f "https://github.com/bitnami-labs/sealed-secrets/releases/download/v${KUBESEAL_VERSION}/controller.yaml"
+kubectl apply -f "https://github.com/bitnami/sealed-secrets/releases/download/v${KUBESEAL_VERSION}/controller.yaml"
 kubectl -n kube-system rollout status deployment/sealed-secrets-controller --timeout=120s
 ```
 
@@ -2567,7 +2567,7 @@ This installs the Sealed Secrets controller into `kube-system`. The controller h
 Now the CLI, using the same version variable:
 
 ```bash
-curl -OL "https://github.com/bitnami-labs/sealed-secrets/releases/download/v${KUBESEAL_VERSION}/kubeseal-${KUBESEAL_VERSION}-linux-amd64.tar.gz"
+curl -OL "https://github.com/bitnami/sealed-secrets/releases/download/v${KUBESEAL_VERSION}/kubeseal-${KUBESEAL_VERSION}-linux-amd64.tar.gz"
 
 tar -xzf kubeseal-*.tar.gz kubeseal
 sudo mv kubeseal /usr/local/bin/kubeseal
@@ -2577,7 +2577,7 @@ kubeseal --version
 
 Line explanation:
 
-- The version discovery uses the GitHub **website** redirect instead of the GitHub API: `curl -sI` fetches only the response headers of `/releases/latest`, whose `Location:` header points at the tagged release (for example `.../releases/tag/v0.27.0`). `sed` strips everything up to `/tag/v`, and `tr -d '\r'` removes the carriage return that HTTP headers end with — without it the variable carries an invisible character and the download URL returns 404. The API route (`api.github.com/.../releases/latest` piped to `jq -r .tag_name`) also works but is rate-limited to 60 unauthenticated requests per hour per IP, which fails with a `null` version on busy or shared IPs.
+- The version discovery follows the release redirects to their final destination: `curl -sIL` follows every redirect (`-L`), `-o /dev/null -w '%{url_effective}'` discards the body and prints only the **final URL**, which ends in `/releases/tag/vX.Y.Z`; `sed` strips everything up to `/tag/v`. Following all redirects matters because the project moved from `bitnami-labs/sealed-secrets` to `bitnami/sealed-secrets` — the first redirect points at the new repository, not at a version tag, so reading only the first `Location:` header returns garbage. The GitHub API route (`api.github.com/.../releases/latest` piped to `jq -r .tag_name`) also works but is rate-limited to 60 unauthenticated requests per hour per IP, which fails with a `null` version on busy or shared IPs.
 - `controller.yaml` is the official all-in-one install manifest (CRD, RBAC, Deployment, Service) published with every release. Installing the controller and the CLI from the same release tag guarantees they are compatible.
 - The manifest names the Deployment `sealed-secrets-controller` in `kube-system` — exactly what the `kubeseal` CLI looks for by default, so no `--controller-name`/`--controller-namespace` flags are needed later.
 - `kubeseal` is the client-side tool that fetches the controller's public key and encrypts locally; it runs on your workstation, never in the cluster.
@@ -2614,7 +2614,7 @@ The controller watches for `SealedSecret` resources, decrypts the one you just a
 
 Reference:
 
-- Sealed Secrets: https://github.com/bitnami-labs/sealed-secrets
+- Sealed Secrets: https://github.com/bitnami/sealed-secrets
 
 ## Step 19: Optional — Vault Policy Example
 
@@ -3069,7 +3069,7 @@ Terminate the workstation EC2.
 | SonarQube | https://docs.sonarsource.com/sonarqube-server/ |
 | AWS Secrets Manager | https://docs.aws.amazon.com/secretsmanager/ |
 | External Secrets Operator | https://external-secrets.io/latest/ |
-| Sealed Secrets | https://github.com/bitnami-labs/sealed-secrets |
+| Sealed Secrets | https://github.com/bitnami/sealed-secrets |
 | Vault on Kubernetes | https://developer.hashicorp.com/vault/docs/platform/k8s |
 
 ## What To Do Next
