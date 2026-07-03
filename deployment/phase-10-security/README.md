@@ -2290,9 +2290,58 @@ aws iam create-policy \
   --policy-document file://deployment/phase-10-security/secrets-management/aws-secrets-manager-policy.json
 ```
 
+### See How Secrets Manager Works Before Wiring It To Kubernetes
+
+The secret exists in AWS now — use it from the CLI the way applications and operators do, so Step 17's sync is not a black box.
+
+**1. Retrieve the secret value** (this is the API call the External Secrets Operator will make on your behalf):
+
+```bash
+aws secretsmanager get-secret-value   --secret-id devops-launchboard/phase-10/database   --region "$AWS_REGION"   --query SecretString --output text | jq
+```
+
+Expected: the JSON object with both keys. Two things to notice:
+
+- You addressed the secret by **name**, not the full ARN with the random `-4iO45e`-style suffix — both work.
+- This call succeeded because *your* IAM user is an admin. The policy you created above is not attached to anything yet; it becomes real in Step 17 when it is attached to the operator's IAM role. That separation — the value lives here, *who may read it* is pure IAM — is the whole model.
+
+**2. Look at the metadata** (what `secretsmanager:DescribeSecret` in the policy grants — note there is no value in this output):
+
+```bash
+aws secretsmanager describe-secret   --secret-id devops-launchboard/phase-10/database   --region "$AWS_REGION" | jq '{Name, ARN, VersionIdsToStages, LastChangedDate, RotationEnabled}'
+```
+
+`VersionIdsToStages` shows one version labeled `AWSCURRENT`. `RotationEnabled: false` — rotation Lambdas are the production feature this lab does not set up.
+
+**3. Update the value and see version history** — the feature plain Kubernetes Secrets do not have. Write a new version (same values, one added demo key):
+
+```bash
+aws secretsmanager put-secret-value   --secret-id devops-launchboard/phase-10/database   --secret-string '{"POSTGRES_PASSWORD":"CHANGE_ME_STRONG_PASSWORD","DATABASE_URL":"postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard","DEMO_NOTE":"added in step 16"}'   --region "$AWS_REGION"
+
+aws secretsmanager list-secret-version-ids   --secret-id devops-launchboard/phase-10/database   --region "$AWS_REGION" | jq '.Versions[] | {VersionStages, CreatedDate}'
+```
+
+Expected: two versions — the new one is `AWSCURRENT`, the original moved to `AWSPREVIOUS`. Prove the old value is still retrievable (your undo button after a bad rotation):
+
+```bash
+aws secretsmanager get-secret-value   --secret-id devops-launchboard/phase-10/database   --version-stage AWSPREVIOUS   --region "$AWS_REGION"   --query SecretString --output text | jq
+```
+
+The `AWSPREVIOUS` output has no `DEMO_NOTE` key — that is the pre-update value, one API call away. Now put the secret back to exactly the original two keys so Step 17 syncs clean data:
+
+```bash
+aws secretsmanager put-secret-value   --secret-id devops-launchboard/phase-10/database   --secret-string '{"POSTGRES_PASSWORD":"CHANGE_ME_STRONG_PASSWORD","DATABASE_URL":"postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard"}'   --region "$AWS_REGION"
+```
+
+(Use your real password in all three `put-secret-value` commands, matching what you stored originally.)
+
+**What you now know before Step 17:** the value lives encrypted in AWS with version history; reading it is a single IAM-gated API call; and the policy file scopes that call to exactly one secret. Step 17 automates the `get-secret-value` call from inside the cluster — the operator, running with an IAM role that carries *only* your policy, keeps a Kubernetes Secret in sync with `AWSCURRENT`.
+
 Reference:
 
 - AWS Secrets Manager: https://docs.aws.amazon.com/secretsmanager/
+- get-secret-value CLI: https://docs.aws.amazon.com/cli/latest/reference/secretsmanager/get-secret-value.html
+- Secret versions and staging labels: https://docs.aws.amazon.com/secretsmanager/latest/userguide/getting-started.html#term_version
 - Secrets Manager pricing: https://aws.amazon.com/secrets-manager/pricing/
 
 ## Step 17: Optional — External Secrets Operator
