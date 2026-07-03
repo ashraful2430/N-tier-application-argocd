@@ -1691,6 +1691,59 @@ kubectl -n devops-launchboard describe resourcequota launchboard-quota
 kubectl -n devops-launchboard describe limitrange launchboard-default-limits
 ```
 
+In the ResourceQuota output, read the **Used** vs **Hard** columns — the running app already consumes part of the budget, and every new Pod is checked against the remainder.
+
+### See Them Work
+
+**1. LimitRange rejects an oversized container** — ask for more CPU than the `max` allows:
+
+```bash
+kubectl -n devops-launchboard run greedy-pod --image=busybox:1.36 --restart=Never   --overrides='{"spec":{"containers":[{"name":"greedy-pod","image":"busybox:1.36","command":["sleep","300"],"resources":{"requests":{"cpu":"3"},"limits":{"cpu":"3"}}}]}}'
+```
+
+Expected — rejected at admission, before any scheduling happens:
+
+```text
+Error from server (Forbidden): pods "greedy-pod" is forbidden:
+maximum cpu usage per Container is 2, but limit is 3
+```
+
+**2. LimitRange injects defaults into a "lazy" Pod** — create one with no resources section at all, then inspect what it actually got:
+
+```bash
+kubectl -n devops-launchboard run lazy-pod --image=busybox:1.36 --restart=Never -- sleep 120
+kubectl -n devops-launchboard get pod lazy-pod -o jsonpath='{.spec.containers[0].resources}' | jq
+```
+
+Expected:
+
+```json
+{
+  "limits": {
+    "cpu": "500m",
+    "memory": "512Mi"
+  },
+  "requests": {
+    "cpu": "100m",
+    "memory": "128Mi"
+  }
+}
+```
+
+You wrote none of that — the LimitRange's `defaultRequest` and `default` were stamped in at admission. This is why no Pod in the namespace can ever be "unaccounted for" by the scheduler or run without a memory ceiling.
+
+**3. Watch the quota ledger update:**
+
+```bash
+kubectl -n devops-launchboard describe resourcequota launchboard-quota
+```
+
+The `Used` column now includes `lazy-pod`'s injected values. Clean up:
+
+```bash
+kubectl -n devops-launchboard delete pod lazy-pod
+```
+
 Reference:
 
 - ResourceQuota: https://kubernetes.io/docs/concepts/policy/resource-quotas/
@@ -2278,7 +2331,7 @@ vim deployment/phase-10-security/secrets-management/external-secret.example.yaml
 Paste:
 
 ```yaml
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: SecretStore
 metadata:
   name: aws-secrets-manager
@@ -2293,7 +2346,7 @@ spec:
           serviceAccountRef:
             name: launchboard-secrets-reader
 ---
-apiVersion: external-secrets.io/v1beta1
+apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: launchboard-secret
@@ -2354,10 +2407,96 @@ Restart the backend to pick up the new Secret:
 kubectl -n devops-launchboard rollout restart deployment/launchboard-backend
 ```
 
+### See It Work: Ownership, Self-Healing, And Rotation
+
+Setting up the sync is half the lesson. These three demos show *why* companies run this instead of `kubectl create secret`.
+
+**1. Inspect what ESO actually created:**
+
+```bash
+kubectl -n devops-launchboard describe externalsecret launchboard-secret
+kubectl -n devops-launchboard get secret launchboard-secret -o yaml | head -20
+```
+
+In the `describe` output, read the `Status` section: `SecretSynced` with a `refreshTime` — the last time ESO compared AWS to the cluster. In the Secret's YAML, note the `ownerReferences` pointing at the ExternalSecret and the `reconcile.external-secrets.io/*` annotations: this Secret is machine-managed now, and the labels prove it to anyone who inspects the cluster later.
+
+**2. Self-healing — delete the Secret and watch it come back:**
+
+`creationPolicy: Owner` means ESO owns the target Secret. Prove it:
+
+```bash
+kubectl -n devops-launchboard delete secret launchboard-secret
+kubectl -n devops-launchboard get secret launchboard-secret -w
+```
+
+Within seconds (the deletion triggers an immediate reconcile), the Secret reappears — recreated from AWS. Press Ctrl+C. Compare this to Step 9's manual Secret: if someone deleted that one, the app would fail its next restart and nobody would know why. With ESO, the source of truth is AWS and the cluster copy is disposable.
+
+**3. Rotation — change the value in AWS and watch it propagate:**
+
+A real company rotates credentials on a schedule. Simulate it with a harmless demo key so the running database is not affected (see the warning below for why). First add the key to the AWS secret — **keep your real POSTGRES_PASSWORD and DATABASE_URL values unchanged**, only add the third key:
+
+```bash
+aws secretsmanager put-secret-value   --secret-id devops-launchboard/phase-10/database   --secret-string '{"POSTGRES_PASSWORD":"YOUR_CURRENT_PASSWORD","DATABASE_URL":"postgresql+asyncpg://launchboard_user:YOUR_CURRENT_PASSWORD@launchboard-db:5432/launchboard","ROTATION_DEMO":"version-1"}'   --region "$AWS_REGION"
+```
+
+- `put-secret-value` writes a **new version** of the secret; Secrets Manager keeps the previous version retrievable (this version history is one of its selling points over plain Kubernetes Secrets).
+
+Tell the ExternalSecret to sync this key too — add one entry to its `data` list:
+
+```bash
+vim deployment/phase-10-security/secrets-management/external-secret.example.yaml
+```
+
+Add under the existing two `data` entries:
+
+```yaml
+    - secretKey: ROTATION_DEMO
+      remoteRef:
+        key: devops-launchboard/phase-10/database
+        property: ROTATION_DEMO
+```
+
+Apply and confirm the new key arrived:
+
+```bash
+kubectl apply -f deployment/phase-10-security/secrets-management/external-secret.example.yaml
+kubectl -n devops-launchboard get secret launchboard-secret -o jsonpath='{.data.ROTATION_DEMO}' | base64 -d; echo
+```
+
+Expected: `version-1`. Now rotate it in AWS:
+
+```bash
+aws secretsmanager put-secret-value   --secret-id devops-launchboard/phase-10/database   --secret-string '{"POSTGRES_PASSWORD":"YOUR_CURRENT_PASSWORD","DATABASE_URL":"postgresql+asyncpg://launchboard_user:YOUR_CURRENT_PASSWORD@launchboard-db:5432/launchboard","ROTATION_DEMO":"version-2"}'   --region "$AWS_REGION"
+```
+
+With `refreshInterval: 1h` you would wait up to an hour — instead, force an immediate reconcile with the annotation ESO watches for:
+
+```bash
+kubectl -n devops-launchboard annotate externalsecret launchboard-secret   force-sync=$(date +%s) --overwrite
+
+kubectl -n devops-launchboard get secret launchboard-secret -o jsonpath='{.data.ROTATION_DEMO}' | base64 -d; echo
+```
+
+Expected: `version-2`. You changed a value in AWS and the cluster followed — no kubectl access to the secret value was ever needed. That is the rotation pipeline.
+
+**The last mile — Pods do not see rotated values until they restart.** `envFrom` injects Secret values as environment variables **at container start**; a running Pod keeps the old values forever. After any real rotation:
+
+```bash
+kubectl -n devops-launchboard rollout restart deployment/launchboard-backend
+```
+
+Production teams automate this with a tool like Stakater Reloader (watches Secrets, triggers rollouts) or by mounting secrets as files, which do update in place.
+
+**Why we used a demo key instead of rotating POSTGRES_PASSWORD for real:** the running PostgreSQL container initialized its data volume with the old password and does not re-read the Secret — rotating only the Secret would make the backend fail authentication. A real database rotation is a *coordinated* change: Secrets Manager's built-in rotation Lambdas update the database user's password and the secret value together, then applications pick up the new value on their next restart. That coordination is exactly why companies use a secrets platform with rotation support instead of hand-managed Kubernetes Secrets.
+
+Clean up the demo key when done (optional): remove the `ROTATION_DEMO` entry from both the AWS secret JSON and the ExternalSecret, re-apply, and force-sync again.
+
 Reference:
 
 - External Secrets Operator: https://external-secrets.io/latest/
 - ESO AWS provider: https://external-secrets.io/latest/provider/aws-secrets-manager/
+- Secrets Manager rotation: https://docs.aws.amazon.com/secretsmanager/latest/userguide/rotating-secrets.html
+- Stakater Reloader: https://github.com/stakater/Reloader
 
 ## Step 18: Optional — Sealed Secrets
 
@@ -2535,10 +2674,86 @@ kubectl -n vault port-forward svc/vault 8200:8200 --address 0.0.0.0 &
 
 Open `http://YOUR_WORKSTATION_IP:8200` and log in with the root token.
 
+### Use It Like A Real Team: Store A Secret, Apply The Policy, Prove Least Privilege
+
+The policy file you wrote above does nothing until it is loaded into Vault and attached to a credential. This walkthrough is the core Vault workflow every company uses: root sets up the paths and policies, applications get tokens that can read only their own path.
+
+All commands run inside `vault-0`. First authenticate the CLI in the Pod with the root token:
+
+```bash
+kubectl -n vault exec -it vault-0 -- sh
+vault login YOUR_ROOT_TOKEN
+```
+
+**1. Enable the key-value secrets engine and store the database credentials:**
+
+```bash
+vault secrets enable -path=secret kv-v2
+vault kv put secret/devops-launchboard/phase-10/database   POSTGRES_PASSWORD="CHANGE_ME_STRONG_PASSWORD"   DATABASE_URL="postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard"
+vault kv get secret/devops-launchboard/phase-10/database
+```
+
+- `kv-v2` is the versioned key-value engine: every `kv put` creates a new version, and old versions remain readable — the same version-history property you saw in AWS Secrets Manager.
+- Note the path in the policy file says `secret/data/...` while the CLI says `secret/...` — kv-v2 inserts `data/` into the API path automatically; policies are written against the API path.
+
+**2. Load the policy** (paste the policy content into the Pod since the file lives on the workstation):
+
+```bash
+vault policy write launchboard-read - <<EOF
+path "secret/data/devops-launchboard/phase-10/*" {
+  capabilities = ["read", "list"]
+}
+path "secret/metadata/devops-launchboard/phase-10/*" {
+  capabilities = ["read", "list"]
+}
+EOF
+vault policy read launchboard-read
+```
+
+**3. Create a token that carries only this policy** — this token is what an application would hold instead of the root token:
+
+```bash
+vault token create -policy=launchboard-read -ttl=1h
+```
+
+- `-ttl=1h` makes the credential expire in one hour. Expiring, renewable leases are Vault's core idea: a leaked token is only useful until its lease runs out.
+
+Copy the `token` value from the output.
+
+**4. Prove least privilege — switch to the app token and test both directions:**
+
+```bash
+vault login YOUR_APP_TOKEN
+
+vault kv get secret/devops-launchboard/phase-10/database
+```
+
+Expected: the secret is returned — reading its own path works. Now try to step outside the path and try to write:
+
+```bash
+vault kv put secret/other-team/api-key value=steal-me
+vault kv put secret/devops-launchboard/phase-10/database POSTGRES_PASSWORD=hacked
+```
+
+Expected — both fail:
+
+```text
+Error writing data to secret/data/other-team/api-key: ... permission denied
+Error writing data to secret/data/devops-launchboard/phase-10/database: ... permission denied
+```
+
+The token can read exactly one path prefix and nothing else — not other teams' secrets, and not even *write* its own. That is the `capabilities = ["read", "list"]` line enforced. Exit the Pod shell with `exit`.
+
+**5. See the audit trail idea (optional):** back as root (`vault login YOUR_ROOT_TOKEN`), enable file audit logging with `vault audit enable file file_path=/vault/audit/audit.log` — from then on every request, including the two `permission denied` attempts above, is logged with the token's identity. The audit log is written to the `auditStorage` EBS volume the Helm values provisioned.
+
+What a real company adds on top of this workflow: applications do not receive tokens by hand — they authenticate with the **Kubernetes auth method** (the Pod's ServiceAccount token is exchanged for a Vault token carrying the right policy, the same trust pattern as IRSA), and the Vault Agent Injector you installed (`injector.enabled: true`) writes secrets straight into the Pod's filesystem via annotations. Those are the natural next experiments from here.
+
 Reference:
 
 - Vault on Kubernetes: https://developer.hashicorp.com/vault/docs/platform/k8s
 - Vault policies: https://developer.hashicorp.com/vault/docs/concepts/policies
+- Vault KV v2 engine: https://developer.hashicorp.com/vault/docs/secrets/kv/kv-v2
+- Vault Kubernetes auth: https://developer.hashicorp.com/vault/docs/auth/kubernetes
 
 ## Step 20: Verify All Security Controls
 
@@ -2573,6 +2788,27 @@ curl -s "http://$ALB_DNS/api/summary" | jq
 Expected: all controls active, app still functional, deployer cannot delete namespaces, privileged Pods are rejected.
 
 ## Troubleshooting
+
+### ExternalSecret/SecretStore rejected: no matches for kind in version "external-secrets.io/v1beta1"
+
+```text
+resource mapping not found ... no matches for kind "SecretStore" in version "external-secrets.io/v1beta1"
+ensure CRDs are installed first
+```
+
+The manifest uses the old `v1beta1` API version, which current External Secrets Operator releases no longer serve — the CRDs are installed, just under `external-secrets.io/v1`. Confirm what your installed CRDs serve:
+
+```bash
+kubectl get crd externalsecrets.external-secrets.io -o jsonpath='{.spec.versions[*].name}'; echo
+```
+
+Fix by updating the apiVersion in the manifest (both the SecretStore and the ExternalSecret) and re-applying:
+
+```bash
+sed -i "s|external-secrets.io/v1beta1|external-secrets.io/v1|g"   deployment/phase-10-security/secrets-management/external-secret.example.yaml
+kubectl apply -f deployment/phase-10-security/secrets-management/external-secret.example.yaml
+kubectl -n devops-launchboard get externalsecret
+```
 
 ### Migration Job stuck in CreateContainerConfigError, backend in CrashLoopBackOff
 
