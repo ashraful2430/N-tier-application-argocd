@@ -1,0 +1,2 @@
+[app_servers]
+launchboard-app ansible_host=YOUR_APP_SERVER_PUBLIC_IP

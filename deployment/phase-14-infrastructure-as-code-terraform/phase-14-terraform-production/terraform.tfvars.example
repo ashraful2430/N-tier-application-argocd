@@ -1,0 +1,8 @@
+aws_region  = "us-east-1"
+db_password = "CHANGE_ME_STRONG_PASSWORD"
+
+# Everything below has sensible defaults - override only if needed
+# project_name         = "launchboard-phase-14"
+# instance_type        = "t3.small"
+# asg_desired_capacity = 2
+# image_tag            = "phase-14"

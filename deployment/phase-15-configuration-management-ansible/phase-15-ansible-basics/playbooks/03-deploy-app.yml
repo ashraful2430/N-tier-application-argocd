@@ -1,0 +1,36 @@
+---
+- name: Deploy DevOps LaunchBoard with Docker Compose
+  hosts: app_servers
+
+  tasks:
+    - name: Clone the application repository
+      ansible.builtin.git:
+        repo: "{{ app_repo }}"
+        dest: "{{ app_dir }}"
+        version: main
+        force: true
+
+    - name: Write the Compose environment file
+      ansible.builtin.template:
+        src: ../templates/launchboard.env.j2
+        dest: "{{ compose_dir }}/.env"
+        mode: "0600"
+
+    - name: Build and start the application stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ compose_dir }}"
+        build: always
+        state: present
+
+    - name: Wait for the backend to answer health checks
+      ansible.builtin.uri:
+        url: "http://127.0.0.1/health"
+        status_code: 200
+      register: health_result
+      retries: 12
+      delay: 10
+      until: health_result.status == 200
+
+    - name: Show the app URL
+      ansible.builtin.debug:
+        msg: "App is up at http://{{ ansible_host }}"

@@ -2153,4 +2153,12 @@ Disaster recovery labs create snapshots, S3 objects, clusters, nodes, and load b
 
 ## Next Step
 
-Review the full deployment track and run a game-day exercise where students follow the runbooks without help.
+Run a game-day exercise where students follow the runbooks without help, then move to:
+
+```text
+Phase 13: Performance And Load Validation
+```
+
+Why:
+
+After proving the platform can recover from failure, the next question is whether it can handle real traffic - Phase 13 load-tests the deployment with k6 and validates the autoscaler before anything is called production-ready.

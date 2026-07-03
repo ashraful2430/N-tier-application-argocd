@@ -1,0 +1,15 @@
+---
+# Secret indirection: the real value lives encrypted in vault.yml
+db_password: "{{ vault_db_password }}"
+
+# Derived connection values - no IPs are hardcoded anywhere but the inventory
+db_host: "{{ hostvars[groups['database'][0]].private_ip }}"
+database_url: "postgresql+asyncpg://launchboard_user:{{ db_password }}@{{ db_host }}:5432/launchboard"
+lb_public_ip: "{{ hostvars[groups['loadbalancer'][0]].ansible_host }}"
+cors_origins: "http://{{ lb_public_ip }}"
+
+# App source
+app_repo: https://github.com/ashraful2430/N-tier-application.git
+app_dir: /opt/launchboard
+app_version: main
+image_tag: phase-15

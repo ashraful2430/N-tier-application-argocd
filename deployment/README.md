@@ -1,6 +1,6 @@
 # DevOps LaunchBoard Deployment Guide
 
-This `deployment/` directory is the production deployment branch guide for the DevOps LaunchBoard N-tier application. It is written for students who are learning how a real project moves from a local machine to Docker, Kubernetes, AWS EKS, monitoring, security, release strategies, and disaster recovery.
+This `deployment/` directory is the production deployment branch guide for the DevOps LaunchBoard N-tier application. It is written for students who are learning how a real project moves from a local machine to Docker, Kubernetes, AWS EKS, monitoring, security, release strategies, disaster recovery, performance validation, Terraform, and Ansible — ending with a production capstone that combines everything.
 
 The application has three main services:
 
@@ -32,8 +32,9 @@ Start with `phase-0-setup`, then move phase by phase. Each phase has its own REA
 | `phase-11-advanced-deployments` | Safer releases | Practice blue-green, canary, and feature flags |
 | `phase-12-disaster-recovery` | Recovery | Back up, restore, test failover, and run incident playbooks |
 | `phase-13-performance-and-load-validation` | Performance validation | Run smoke, load, stress, and soak tests before calling the app production-ready |
-| `phase-14-disaster-recovery` | Full disaster recovery | Practice backup, restore, cluster rebuild, incident response, and recovery runbooks |
-| `phase-15-performance-and-load-validation` | Full performance validation | Validate production readiness with smoke, load, stress, soak, HPA, and report writing |
+| `phase-14-infrastructure-as-code-terraform` | Infrastructure as code | Learn Terraform basics on one EC2, then a production VPC/ALB/ASG/RDS deployment with modules and remote state |
+| `phase-15-configuration-management-ansible` | Configuration management | Learn Ansible basics on one server, then a production multi-tier rolling deployment with roles and Vault |
+| `phase-16-production-capstone` | Production capstone | Combine EKS, security, autoscaling, monitoring, backups, and load validation into one production-grade deployment |
 
 ## Values Students Must Replace
 
@@ -84,7 +85,7 @@ Local Docker and local Kubernetes are usually free. AWS labs can create real cha
 
 ## Recommended Teaching Flow
 
-For beginners, spend more time on phases 0, 1, 2, 3, 4, and 6. For intermediate students, focus on phases 7, 8, 9, and 10. For production-readiness discussions, use phases 11, 12, 13, 14, and 15.
+For beginners, spend more time on phases 0, 1, 2, 3, 4, and 6. For intermediate students, focus on phases 7, 8, 9, and 10. For production-readiness discussions, use phases 11, 12, and 13. For infrastructure automation, use phases 14 (Terraform) and 15 (Ansible). Finish with the phase 16 capstone, which combines everything.
 
 ## Core Documentation URLs
 

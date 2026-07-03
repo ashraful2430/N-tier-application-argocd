@@ -1,0 +1,32 @@
+---
+- name: Install Nginx
+  ansible.builtin.apt:
+    name: nginx
+    update_cache: true
+    state: present
+
+- name: Remove the default site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Write the load balancer configuration
+  ansible.builtin.template:
+    src: launchboard-lb.conf.j2
+    dest: /etc/nginx/sites-available/launchboard
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable the load balancer site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/launchboard
+    dest: /etc/nginx/sites-enabled/launchboard
+    state: link
+  notify: Reload nginx
+
+- name: Enable and start Nginx
+  ansible.builtin.service:
+    name: nginx
+    enabled: true
+    state: started

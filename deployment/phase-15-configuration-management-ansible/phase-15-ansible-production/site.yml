@@ -1,0 +1,26 @@
+---
+- name: Baseline every server
+  hosts: all
+  roles:
+    - common
+
+- name: Install Docker where containers run
+  hosts: app_servers:database
+  roles:
+    - docker
+
+- name: Set up the database tier
+  hosts: database
+  roles:
+    - postgres
+
+- name: Deploy the app tier (one server at a time)
+  hosts: app_servers
+  serial: 1
+  roles:
+    - app
+
+- name: Set up the load balancer tier
+  hosts: loadbalancer
+  roles:
+    - loadbalancer

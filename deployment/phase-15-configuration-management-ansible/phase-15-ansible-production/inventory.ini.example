@@ -1,0 +1,9 @@
+[loadbalancer]
+launchboard-lb ansible_host=LB_PUBLIC_IP private_ip=LB_PRIVATE_IP
+
+[app_servers]
+launchboard-app-1 ansible_host=APP1_PUBLIC_IP private_ip=APP1_PRIVATE_IP
+launchboard-app-2 ansible_host=APP2_PUBLIC_IP private_ip=APP2_PRIVATE_IP
+
+[database]
+launchboard-db ansible_host=DB_PUBLIC_IP private_ip=DB_PRIVATE_IP

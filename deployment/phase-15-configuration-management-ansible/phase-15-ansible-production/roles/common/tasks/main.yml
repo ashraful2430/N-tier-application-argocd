@@ -1,0 +1,20 @@
+---
+- name: Update apt cache and upgrade packages
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: safe
+    cache_valid_time: 3600
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - git
+      - curl
+      - vim
+      - unzip
+      - ca-certificates
+    state: present
+
+- name: Set the timezone to UTC
+  community.general.timezone:
+    name: Etc/UTC

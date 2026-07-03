@@ -1,0 +1,24 @@
+---
+- name: Create the PostgreSQL data volume
+  community.docker.docker_volume:
+    name: launchboard-postgres-data
+
+- name: Run the PostgreSQL container
+  community.docker.docker_container:
+    name: launchboard-db
+    image: postgres:16-alpine
+    restart_policy: unless-stopped
+    ports:
+      - "5432:5432"
+    env:
+      POSTGRES_DB: launchboard
+      POSTGRES_USER: launchboard_user
+      POSTGRES_PASSWORD: "{{ db_password }}"
+    volumes:
+      - launchboard-postgres-data:/var/lib/postgresql/data
+
+- name: Wait for PostgreSQL to accept connections
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 5432
+    timeout: 60

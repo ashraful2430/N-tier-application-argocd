@@ -1997,4 +1997,12 @@ Performance labs can create cloud charges through EKS, EC2, EBS, ALB, ECR, Cloud
 
 ## Next Step
 
-Review all deployment phases and choose which architecture best matches the project size, team skill, cost target, and production risk.
+Move to:
+
+```text
+Phase 14: Infrastructure As Code With Terraform
+```
+
+Why:
+
+Every phase so far created infrastructure by hand (console clicks) or with per-tool CLIs (`eksctl`, `aws`). Terraform makes infrastructure itself reviewable, repeatable code - the first lab teaches the fundamentals on a single EC2 instance, the second deploys the app the way a real company does: custom VPC, Auto Scaling Group behind an ALB, and RDS, all from `terraform apply`.

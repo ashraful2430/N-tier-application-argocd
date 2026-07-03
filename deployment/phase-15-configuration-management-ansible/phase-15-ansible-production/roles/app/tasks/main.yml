@@ -1,0 +1,81 @@
+---
+- name: Clone the application repository
+  ansible.builtin.git:
+    repo: "{{ app_repo }}"
+    dest: "{{ app_dir }}"
+    version: "{{ app_version }}"
+    force: true
+
+- name: Build the backend image
+  community.docker.docker_image:
+    name: launchboard-backend
+    tag: "{{ image_tag }}"
+    source: build
+    force_source: true
+    build:
+      path: "{{ app_dir }}"
+      dockerfile: "{{ app_dir }}/deployment/phase-04-docker-compose/Dockerfile.backend"
+
+- name: Build the frontend image
+  community.docker.docker_image:
+    name: launchboard-frontend
+    tag: "{{ image_tag }}"
+    source: build
+    force_source: true
+    build:
+      path: "{{ app_dir }}"
+      dockerfile: "{{ app_dir }}/deployment/phase-04-docker-compose/Dockerfile.frontend"
+      args:
+        VITE_API_URL: ""
+
+- name: Create the app Docker network
+  community.docker.docker_network:
+    name: launchboard
+
+- name: Run database migrations (first app server in the batch only)
+  community.docker.docker_container:
+    name: launchboard-migrate
+    image: "launchboard-backend:{{ image_tag }}"
+    command: ["alembic", "upgrade", "head"]
+    networks:
+      - name: launchboard
+    env:
+      DATABASE_URL: "{{ database_url }}"
+    detach: false
+    cleanup: true
+  run_once: true
+
+- name: Start the backend container
+  community.docker.docker_container:
+    name: launchboard-backend
+    image: "launchboard-backend:{{ image_tag }}"
+    restart_policy: unless-stopped
+    recreate: true
+    networks:
+      - name: launchboard
+    env:
+      DATABASE_URL: "{{ database_url }}"
+      APP_NAME: "DevOps LaunchBoard API"
+      APP_ENV: "production"
+      CORS_ORIGINS: "{{ cors_origins }}"
+      SEED_DEMO_DATA: "true"
+
+- name: Start the frontend container
+  community.docker.docker_container:
+    name: launchboard-frontend
+    image: "launchboard-frontend:{{ image_tag }}"
+    restart_policy: unless-stopped
+    recreate: true
+    networks:
+      - name: launchboard
+    ports:
+      - "80:8080"
+
+- name: Wait for this server to answer health checks
+  ansible.builtin.uri:
+    url: "http://127.0.0.1/health"
+    status_code: 200
+  register: health_result
+  retries: 12
+  delay: 10
+  until: health_result.status == 200

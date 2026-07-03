@@ -1,0 +1,6 @@
+---
+- name: Rolling redeploy of the app tier
+  hosts: app_servers
+  serial: 1
+  roles:
+    - app
