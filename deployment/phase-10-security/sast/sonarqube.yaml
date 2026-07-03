@@ -48,7 +48,7 @@ spec:
             runAsUser: 0
       containers:
         - name: sonarqube
-          image: sonarqube:10-community
+          image: sonarqube:community
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

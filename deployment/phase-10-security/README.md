@@ -1109,6 +1109,7 @@ spec:
         app: launchboard-backend
     spec:
       securityContext:
+        runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
         fsGroup: 10001
@@ -2005,7 +2006,7 @@ spec:
             runAsUser: 0
       containers:
         - name: sonarqube
-          image: sonarqube:10-community
+          image: sonarqube:community
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -2057,13 +2058,111 @@ kubectl -n security rollout status deployment/sonarqube --timeout=300s
 kubectl -n security port-forward svc/sonarqube 9000:9000 --address 0.0.0.0 &
 ```
 
-Add port 9000 to the workstation security group, then open `http://YOUR_WORKSTATION_IP:9000`. Default login: `admin` / `admin` (you will be prompted to change the password on first login).
+Add port 9000 to the workstation security group, then open `http://YOUR_WORKSTATION_IP:9000`.
+
+**Default login: `admin` / `admin`** — SonarQube forces you to set a new password on first login. If the page reloads back to the login screen later, just log in again with your new password; sessions are short-lived by default.
+
+Two banners you may see in the UI, and what they mean:
+
+- **Red: "You're running a version of SonarQube that is no longer active"** — the image tag points at an end-of-life release. The manifest above uses `sonarqube:community`, the actively maintained Community Build line, so a fresh deploy should not show this. If you deployed with an older pinned tag (like `sonarqube:10-community`), fix it by updating the image in `sonarqube.yaml` and redeploying **from scratch** — SonarQube does not support upgrading the embedded database between versions, and this lab's data is throwaway anyway:
+
+```bash
+vim deployment/phase-10-security/sast/sonarqube.yaml
+kubectl delete -f deployment/phase-10-security/sast/sonarqube.yaml
+kubectl apply -f deployment/phase-10-security/sast/sonarqube.yaml
+kubectl -n security rollout status deployment/sonarqube --timeout=300s
+```
+
+(Deleting the manifest removes the PVC too, wiping the old version's data — you will set the admin password and recreate the project again.)
+
+- **Yellow: "Embedded database should be used for evaluation purposes only"** — expected and fine for this lab. SonarQube is running on its built-in H2 database instead of an external PostgreSQL. For a real company deployment you would point it at a dedicated PostgreSQL (RDS) via the `SONAR_JDBC_URL`, `SONAR_JDBC_USERNAME`, and `SONAR_JDBC_PASSWORD` environment variables — H2 does not scale and cannot be migrated or upgraded. For learning the scan-and-review workflow, the embedded database is exactly what it is for.
 
 SonarQube lives in the `security` namespace, separate from the application, because it is a platform tool, not part of the app.
+
+### Run Your First Analysis
+
+Deploying SonarQube is only half the lesson — now scan the actual backend code and read the results.
+
+**1. Create the project in the UI:**
+
+1. Log in, then click **Create Project** (or Projects > Create Project) > **Local project**.
+2. Project display name: `launchboard-backend`, project key: `launchboard-backend`, main branch: `main`. Click Next.
+3. For "baseline for new code," pick **Use the global setting** and create the project.
+4. When asked how to analyze, choose **Locally**.
+5. Generate a token (name it `launchboard-scan`, any expiry). **Copy it now** — it is shown once, like an AWS secret key.
+
+**2. Run the scanner from the workstation:**
+
+The scanner is a one-off Docker container, the same pattern as Trivy and Semgrep earlier in this phase. It reads the source code, computes issues, and uploads the results to the SonarQube server — the server never sees your code repository directly.
+
+```bash
+cd /opt/devops-launchboard/app-source
+
+docker run --rm --network host \
+  -e SONAR_HOST_URL="http://127.0.0.1:9000" \
+  -e SONAR_TOKEN="YOUR_GENERATED_TOKEN" \
+  -v "$PWD/backend:/usr/src" \
+  sonarsource/sonar-scanner-cli \
+  -Dsonar.projectKey=launchboard-backend \
+  -Dsonar.sources=app \
+  -Dsonar.python.version=3.12
+```
+
+Command explanation:
+
+- `--network host` lets the container reach `127.0.0.1:9000` — the port-forward you opened on the workstation. Without it, `localhost` inside the container would be the container itself.
+- `SONAR_TOKEN` authenticates the upload; the token you generated is scoped to analysis, not admin actions.
+- `-v "$PWD/backend:/usr/src"` mounts the backend source at the scanner's expected input path.
+- `-Dsonar.sources=app` scans the application package (skipping `alembic/`, tests, and config clutter for a focused first run).
+- `-Dsonar.python.version=3.12` tells the Python analyzer which language rules apply.
+
+The scan takes 1-2 minutes and ends with `EXECUTION SUCCESS` plus a link to the dashboard.
+
+**3. Read the results — what each section teaches:**
+
+Open Projects > launchboard-backend:
+
+- **Overview** shows the Quality Gate (Passed/Failed) and counts for Security, Reliability, and Maintainability. On a first scan of a small FastAPI app, expect a **Passed** gate with zero or few open issues — the interesting learning is in the sections below, not the headline.
+- **Issues** lists every finding with a severity and an "effort" estimate (SonarQube's guess at fix time). Click one: the rule explanation shows *why* it matters and a compliant code example. This rule-with-education format is SonarQube's main value over a plain linter.
+- **Security Hotspots** are not confirmed vulnerabilities — they are "a human must review this" markers (for example, any use of CORS configuration or a `0.0.0.0` bind, both of which are *intentional* in this app). Open one, read the risk description, and practice the review workflow: mark it **Safe** with a justification comment. That review trail is what auditors look for in real teams.
+- **Measures > Coverage** shows 0% — expected, because we did not upload a test coverage report. In a real pipeline, pytest's `coverage.xml` is passed with `-Dsonar.python.coverage.reportPaths`.
+
+**4. See the Quality Gate actually fail (the whole point of the tool):**
+
+The default "Sonar way" gate evaluates **new code** — code changed since the previous scan. Prove it works by introducing a deliberately bad change:
+
+```bash
+vim /opt/devops-launchboard/app-source/backend/app/bad_example.py
+```
+
+Paste:
+
+```python
+import subprocess
+
+
+def run_backup(host):
+    password = "SuperSecret123"
+    subprocess.call("pg_dump -h " + host + " -U admin", shell=True)
+    return password
+```
+
+Re-run the same `docker run ... sonar-scanner-cli` command, then refresh the dashboard: the Quality Gate flips to **Failed**, with new issues flagged — a hardcoded credential and a command built from string concatenation with `shell=True` (command injection). This is exactly what would block a pull request in a real pipeline: in CI, the scanner exits non-zero when the gate fails (add `-Dsonar.qualitygate.wait=true`), and the merge is stopped.
+
+Clean up the planted file and re-scan to return to green:
+
+```bash
+rm /opt/devops-launchboard/app-source/backend/app/bad_example.py
+```
+
+Re-run the scanner once more and confirm the gate is **Passed** again.
 
 Reference:
 
 - SonarQube documentation: https://docs.sonarsource.com/sonarqube-server/
+- SonarScanner CLI: https://docs.sonarsource.com/sonarqube-server/latest/analyzing-source-code/scanners/sonarscanner/
+- Quality Gates: https://docs.sonarsource.com/sonarqube-server/latest/instance-administration/analysis-functions/quality-gates/
+- Security Hotspots: https://docs.sonarsource.com/sonarqube-server/latest/user-guide/security-hotspots/
 
 ## Step 16: AWS Secrets Manager
 
