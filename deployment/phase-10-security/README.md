@@ -2554,8 +2554,8 @@ Sealed Secrets takes a different approach: you encrypt the secret locally with a
 Install the controller and the `kubeseal` CLI. Both come from the project's GitHub releases — the same source, so the versions always match. (Do not use the old `bitnami-labs.github.io/sealed-secrets` Helm repository; it is no longer reliably hosted and returns 404.)
 
 ```bash
-KUBESEAL_VERSION=$(curl -s https://api.github.com/repos/bitnami-labs/sealed-secrets/releases/latest \
-  | jq -r .tag_name | sed 's/v//')
+KUBESEAL_VERSION=$(curl -sI https://github.com/bitnami-labs/sealed-secrets/releases/latest \
+  | grep -i '^location:' | sed 's|.*/tag/v||' | tr -d '\r')
 echo "Installing Sealed Secrets v${KUBESEAL_VERSION}"
 
 kubectl apply -f "https://github.com/bitnami-labs/sealed-secrets/releases/download/v${KUBESEAL_VERSION}/controller.yaml"
@@ -2577,7 +2577,7 @@ kubeseal --version
 
 Line explanation:
 
-- `curl -s .../releases/latest` queries the GitHub API for the latest Sealed Secrets release; `jq -r .tag_name` extracts just the tag (for example `v0.27.0`); `sed 's/v//'` strips the leading `v` so the variable holds a bare version number usable in filenames.
+- The version discovery uses the GitHub **website** redirect instead of the GitHub API: `curl -sI` fetches only the response headers of `/releases/latest`, whose `Location:` header points at the tagged release (for example `.../releases/tag/v0.27.0`). `sed` strips everything up to `/tag/v`, and `tr -d '\r'` removes the carriage return that HTTP headers end with — without it the variable carries an invisible character and the download URL returns 404. The API route (`api.github.com/.../releases/latest` piped to `jq -r .tag_name`) also works but is rate-limited to 60 unauthenticated requests per hour per IP, which fails with a `null` version on busy or shared IPs.
 - `controller.yaml` is the official all-in-one install manifest (CRD, RBAC, Deployment, Service) published with every release. Installing the controller and the CLI from the same release tag guarantees they are compatible.
 - The manifest names the Deployment `sealed-secrets-controller` in `kube-system` — exactly what the `kubeseal` CLI looks for by default, so no `--controller-name`/`--controller-namespace` flags are needed later.
 - `kubeseal` is the client-side tool that fetches the controller's public key and encrypts locally; it runs on your workstation, never in the cluster.

@@ -182,7 +182,8 @@ Command explanation:
 - If `sudo apt update` fails with a GPG or "clearsigned file" error (the same class of problem as the Helm apt repo in Phase 9), fall back to the direct binary download:
 
 ```bash
-TERRAFORM_VERSION=$(curl -s https://api.github.com/repos/hashicorp/terraform/releases/latest | jq -r '.tag_name' | tr -d 'v')
+TERRAFORM_VERSION=$(curl -sI https://github.com/hashicorp/terraform/releases/latest \
+  | grep -i '^location:' | sed 's|.*/tag/v||' | tr -d '\r')
 curl -LO "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
 unzip "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
 sudo mv terraform /usr/local/bin/terraform
