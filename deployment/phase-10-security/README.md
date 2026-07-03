@@ -1041,6 +1041,8 @@ spec:
       restartPolicy: OnFailure
       securityContext:
         runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -2462,6 +2464,40 @@ curl -s "http://$ALB_DNS/api/summary" | jq
 Expected: all controls active, app still functional, deployer cannot delete namespaces, privileged Pods are rejected.
 
 ## Troubleshooting
+
+### Migration Job stuck in CreateContainerConfigError, backend in CrashLoopBackOff
+
+```bash
+kubectl -n devops-launchboard describe pod -l app=launchboard-migrate | grep -A3 "Events:"
+```
+
+If the event says `container has runAsNonRoot and image has non-numeric user (app), cannot verify user is non-root`:
+
+The Job's Pod sets `runAsNonRoot: true` but no numeric `runAsUser`. The backend image's Dockerfile ends with `USER app` — a user *name* — and the kubelet can only verify non-root by number, so it refuses to create the container. (The backend Deployment works because it sets `runAsUser: 10001` explicitly.)
+
+The backend CrashLoopBackOff (uvicorn exit code 3) is a knock-on effect: the migration never ran, the schema does not exist, and the app fails at startup. Fix the Job and the backend heals on its next restart.
+
+Fix: add the numeric UID/GID to the Job's Pod securityContext:
+
+```yaml
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+```
+
+Jobs are immutable once created, so delete and re-apply:
+
+```bash
+vim deployment/phase-10-security/app-k8s/launchboard-migration-job.yaml
+kubectl -n devops-launchboard delete job launchboard-migrate
+kubectl apply -f deployment/phase-10-security/app-k8s/launchboard-migration-job.yaml
+kubectl -n devops-launchboard wait --for=condition=complete job/launchboard-migrate --timeout=300s
+kubectl -n devops-launchboard rollout restart deployment/launchboard-backend
+kubectl -n devops-launchboard rollout status deployment/launchboard-backend --timeout=180s
+```
 
 ### Pods rejected after Pod Security labels
 
