@@ -60,6 +60,13 @@ spec:
             limits:
               cpu: "2"
               memory: 4Gi
+          readinessProbe:
+            httpGet:
+              path: /api/system/status
+              port: 9000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 24
           volumeMounts:
             - name: sonarqube-data
               mountPath: /opt/sonarqube/data

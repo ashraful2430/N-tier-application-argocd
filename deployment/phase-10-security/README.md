@@ -2018,6 +2018,13 @@ spec:
             limits:
               cpu: "2"
               memory: 4Gi
+          readinessProbe:
+            httpGet:
+              path: /api/system/status
+              port: 9000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 24
           volumeMounts:
             - name: sonarqube-data
               mountPath: /opt/sonarqube/data
@@ -2048,6 +2055,7 @@ Line explanation:
 - `securityContext.fsGroup: 1000` sets the group that owns the mounted volume, matching the UID the SonarQube image runs its process as.
 - `initContainers` runs `chown -R 1000:1000` on the data directory as root (`runAsUser: 0`, scoped only to this init container) before the main container starts as a non-root user. This exists because a fresh EBS volume is owned by `root` by default, and the SonarQube process — running as UID 1000 — cannot write to it otherwise. This is one of the few legitimate reasons to run any container as root in this phase.
 - `resources.requests.memory: 2Gi` / `limits.memory: 4Gi` reflect SonarQube's real footprint: it runs an embedded Elasticsearch instance for its search index, which alone typically needs 1+ GB.
+- `readinessProbe` on `/api/system/status` keeps the Pod out of the Service (and makes `rollout status` wait) until SonarQube's web server actually answers. SonarQube takes 1 to 3 minutes to boot because the embedded Elasticsearch starts first — without this probe, `rollout status` reports success the moment the container starts, and an immediate port-forward hits `connection refused`. `failureThreshold: 24` with `periodSeconds: 10` allows up to 4 extra minutes on slow nodes.
 
 Apply and access:
 
@@ -2057,6 +2065,8 @@ kubectl -n security rollout status deployment/sonarqube --timeout=300s
 
 kubectl -n security port-forward svc/sonarqube 9000:9000 --address 0.0.0.0 &
 ```
+
+`rollout status` takes 2 to 4 minutes — that is SonarQube booting its embedded Elasticsearch, not a problem. If you want to watch it: `kubectl -n security logs deployment/sonarqube -f` and wait for the line `SonarQube is operational`. If a port-forward ever dies with `bind: address already in use`, an older port-forward is still holding the port — run `pkill -f "port-forward"` and start it again.
 
 Add port 9000 to the workstation security group, then open `http://YOUR_WORKSTATION_IP:9000`.
 
