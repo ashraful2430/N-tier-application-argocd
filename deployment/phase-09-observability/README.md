@@ -2093,7 +2093,6 @@ data:
         Tag               kube.*
         Path              /var/log/containers/*.log
         Parser            cri
-        DB                /var/log/flb_kube.db
         Mem_Buf_Limit     5MB
         Skip_Long_Lines   On
         Refresh_Interval  10
@@ -2213,7 +2212,7 @@ roleRef:
 Line explanation for the ConfigMap:
 
 - `[SERVICE]` configures Fluent Bit globally. `Flush 5` sends buffered logs to the output every 5 seconds. `Daemon off` keeps Fluent Bit in the foreground (required in containers). `HTTP_Server On` exposes a health check endpoint on port 2020.
-- `[INPUT]` with `Name tail` reads log files by tailing them (like `tail -f`). `Path /var/log/containers/*.log` matches all container log files on the node. `Parser cri` uses the CRI log format parser defined in `parsers.conf` because EKS nodes use containerd, which writes CRI-format logs. `DB /var/log/flb_kube.db` is an SQLite database that tracks which file offsets Fluent Bit has already read. On restart, it resumes from where it left off instead of re-reading everything. `Mem_Buf_Limit 5MB` caps the in-memory buffer per input to prevent runaway memory usage from a log flood.
+- `[INPUT]` with `Name tail` reads log files by tailing them (like `tail -f`). `Path /var/log/containers/*.log` matches all container log files on the node. `Parser cri` uses the CRI log format parser defined in `parsers.conf` because EKS nodes use containerd, which writes CRI-format logs — not Docker JSON format. `Mem_Buf_Limit 5MB` caps the in-memory buffer per input to prevent runaway memory usage from a log flood. The `DB` option (an SQLite file that tracks read offsets so restarts do not re-ship old entries) is intentionally omitted here: the `/var/log` hostPath volume is mounted read-only so Fluent Bit cannot write to it, and a production-style offset database would require a separate writable volume — unnecessary complexity for a learning lab.
 - `[FILTER]` with `Name kubernetes` enriches each log entry with Kubernetes metadata: the Pod name, namespace, container name, labels, and annotations. It queries the Kubernetes API to get this information (using the ServiceAccount token mounted automatically). `Merge_Log On` tries to parse the log body as JSON and merge the parsed fields into the top-level record. This is useful for structured logging: if your FastAPI backend logs JSON, each field becomes a searchable field in Elasticsearch.
 - `[OUTPUT]` with `Name es` sends logs to Elasticsearch. `Host elasticsearch` uses the Service DNS name. `Logstash_Format On` creates daily indices named `k8s-logs-YYYY.MM.DD`, which is the standard pattern for time-series log data in Elasticsearch. `Suppress_Type_Name On` is required for Elasticsearch 8.x, which no longer supports document type names.
 - The `parsers.conf` defines the CRI log format parser. CRI logs have the format `TIMESTAMP STREAM LOGTAG MESSAGE`, for example: `2026-06-17T10:30:45.123456789Z stdout F INFO: Request received`. The regex captures each field.
@@ -2530,7 +2529,28 @@ Common causes: PVC not bound (EBS CSI driver missing or StorageClass not created
 kubectl -n observability logs daemonset/fluent-bit
 ```
 
-Common causes: Elasticsearch is not reachable (check that the `elasticsearch` Service exists and the Pod is Running), or the Fluent Bit config has a syntax error (check the ConfigMap content).
+**If the logs show `cannot open database /var/log/flb_kube.db`:**
+
+The config has a `DB /var/log/flb_kube.db` line in the `[INPUT]` block. The `/var/log` hostPath volume is mounted read-only so Fluent Bit cannot create that file. Remove the `DB` line from the ConfigMap and re-apply:
+
+```bash
+vim deployment/phase-09-observability/elk-stack/fluent-bit.yaml
+```
+
+Delete this line from the `[INPUT]` block:
+
+```text
+        DB                /var/log/flb_kube.db
+```
+
+Then apply and wait:
+
+```bash
+kubectl apply -f deployment/phase-09-observability/elk-stack/fluent-bit.yaml
+kubectl -n observability rollout status daemonset/fluent-bit --timeout=120s
+```
+
+**Other common causes:** Elasticsearch is not reachable (check that the `elasticsearch` Service exists and the Pod is Running), or the Fluent Bit config has a syntax error (check the ConfigMap with `kubectl -n observability get configmap fluent-bit-config -o yaml`).
 
 ### Problem 4: Kibana Shows No Logs
 
