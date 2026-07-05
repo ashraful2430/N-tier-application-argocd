@@ -1,0 +1,21 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: launchboard-backend
+  namespace: devops-launchboard
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: launchboard-backend
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: launchboard-frontend
+  namespace: devops-launchboard
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: launchboard-frontend

@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: launchboard-test-alert
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: launchboard.test
+      rules:
+        - alert: LaunchboardTestAlert
+          expr: vector(1)
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Test alert from the Phase 11 lab - alert delivery works"

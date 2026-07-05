@@ -66,6 +66,10 @@ Important production idea:
 
 Backups are not useful until restore is tested. This phase focuses on both backup and restore.
 
+## Database Note: Why Still A Pod And Not RDS?
+
+This phase runs PostgreSQL as a Pod on an EBS volume, even though the production answer is a managed database. That is deliberate: this phase's lessons need a database *inside* the cluster — in fact it is most of the point: Velero's EBS volume snapshots, the pg_dump CronJob, and the restore drills all exist to protect in-cluster state. With RDS, AWS does this for you (automated snapshots, point-in-time recovery — the capstone shows that division); this phase teaches what that convenience is replacing, which is exactly what you need to understand to trust it. The managed-database pattern has its own homes in this track — Phase 9 (Terraform production) provisions RDS as code, and Phase 16 (capstone) runs the full Kubernetes stack against RDS with the security groups, `DB_HOST` wiring, and backup division of labor spelled out. If you want RDS here, the capstone's "Create The Database First" section is a drop-in recipe: create the instance, remove the postgres Deployment/Service/PVC from the kustomization, point `DATABASE_URL` and the wait loops at the RDS endpoint.
+
 ## Recommended AWS Setup
 
 | Item | Recommended Value |

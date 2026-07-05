@@ -10,7 +10,8 @@
 | Backup namespace | `velero` |
 | Entry point | ALB DNS name (`kubectl -n devops-launchboard get ingress`) |
 | Image registry | ECR `launchboard-backend` / `launchboard-frontend` |
-| Backups | Velero daily at 03:00 UTC, 7-day retention, EBS snapshots included |
+| Database | Amazon RDS PostgreSQL `launchboard-phase-16` (private, cluster-SG only) |
+| Backups | Velero daily 03:00 UTC (k8s objects) + RDS automated daily snapshots and PITR (data) |
 
 ## First Response To Any Incident
 
@@ -43,13 +44,14 @@ kubectl -n devops-launchboard logs deployment/launchboard-backend --previous --t
 ## Situation 3: Database Down Or Data Problem
 
 ```bash
-kubectl -n devops-launchboard logs deployment/launchboard-db --tail=50
-kubectl -n devops-launchboard get pvc
+aws rds describe-db-instances --db-instance-identifier launchboard-phase-16 \
+  --query 'DBInstances[0].{Status:DBInstanceStatus,AZ:AvailabilityZone}' --output table
 ```
 
-- Pod Pending with unbound PVC: EBS CSI driver issue — `kubectl get pods -n kube-system | grep ebs`.
-- `initdb ... not empty`: the PGDATA subdirectory setting is missing from the Deployment.
-- Data loss/corruption: restore from Velero (Situation 5).
+- Status not `available`: check RDS Console > Events for the instance (failover, maintenance, storage full).
+- Status `available` but backend cannot connect: verify the DB security group still allows 5432 from the cluster SG, and that `DB_HOST` in the ConfigMap matches the current endpoint.
+- Bad data / bad migration: restore from an RDS snapshot or point-in-time recovery — this creates a NEW instance; update `DB_HOST` and `DATABASE_URL` to its endpoint, then restart the backend (Situation 6 flow, but for the DB endpoint).
+- CPU/connection pressure: RDS Console > Monitoring; `db.t3.micro` is a lab size — scaling the instance class is a modify-and-reboot operation.
 
 ## Situation 4: Rollback A Bad Deployment
 
@@ -78,7 +80,7 @@ velero restore describe RESTORE_NAME
 kubectl -n devops-launchboard get pods
 ```
 
-The PostgreSQL PVC is restored from its EBS snapshot; expect 5-10 minutes for everything to become Ready. The ALB is recreated by the controller — the DNS name changes, so update `CORS_ORIGINS` in the ConfigMap and restart the backend (see Situation 6).
+No volume restore is involved — the data lives in RDS, which namespace deletion never touched; the app reconnects to it as Pods come up. The ALB is recreated by the controller — the DNS name changes, so update `CORS_ORIGINS` in the ConfigMap and restart the backend (see Situation 6).
 
 ## Situation 6: ALB DNS Changed (after restore or Ingress recreation)
 
@@ -106,6 +108,7 @@ eksctl scale nodegroup --cluster devops-launchboard-phase-16 --name launchboard-
 
 ```text
 [ ] velero backup get - last daily backup Completed
+[ ] aws rds describe-db-snapshots shows yesterday's automated snapshot
 [ ] One test restore performed this month
 [ ] Grafana: no sustained CPU > 80% or memory > 85% on nodes
 [ ] kubectl get pods -A | grep -v Running - investigate anything else

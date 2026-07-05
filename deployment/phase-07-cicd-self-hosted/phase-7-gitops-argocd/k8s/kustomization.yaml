@@ -4,6 +4,9 @@ resources:
   - namespace.yaml
   - storageclass.yaml
   - configmap.yaml
+  - pvc.yaml
+  - launchboard-postgres-deployment.yaml
+  - launchboard-postgres-service.yaml
   - launchboard-migration-job.yaml
   - launchboard-backend-deployment.yaml
   - launchboard-backend-service.yaml

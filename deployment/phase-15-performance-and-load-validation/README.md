@@ -74,6 +74,10 @@ Performance testing is not only about high traffic. It is about proving what the
 | Stress test | Finds the breaking point | Increase to 100 users |
 | Soak test | Finds slow leaks over time | 15 users for 30 minutes |
 
+## Database Note: Why Still A Pod And Not RDS?
+
+This phase runs PostgreSQL as a Pod on an EBS volume, even though the production answer is a managed database. That is deliberate: this phase's lessons need a database *inside* the cluster, because the load tests exercise the whole stack including database CPU and I/O on the node — watching the database Pod saturate in Grafana during the stress test is one of this phase's best lessons. The managed-database pattern has its own homes in this track — Phase 9 (Terraform production) provisions RDS as code, and Phase 16 (capstone) runs the full Kubernetes stack against RDS with the security groups, `DB_HOST` wiring, and backup division of labor spelled out. If you want RDS here, the capstone's "Create The Database First" section is a drop-in recipe: create the instance, remove the postgres Deployment/Service/PVC from the kustomization, point `DATABASE_URL` and the wait loops at the RDS endpoint.
+
 ## Recommended AWS Setup
 
 | Item | Recommended Value |

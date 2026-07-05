@@ -8,4 +8,5 @@ data:
   APP_ENV: production
   CORS_ORIGINS: http://YOUR_ALB_DNS_NAME
   SEED_DEMO_DATA: "true"
-  DB_HOST: YOUR_RDS_ENDPOINT
+  POSTGRES_DB: launchboard
+  POSTGRES_USER: launchboard_user

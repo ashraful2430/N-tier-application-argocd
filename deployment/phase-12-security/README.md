@@ -60,6 +60,10 @@ Do not start here if:
 - You are not ready for AWS costs.
 - You want the fastest beginner deployment path.
 
+## Database Note: Why Still A Pod And Not RDS?
+
+This phase runs PostgreSQL as a Pod on an EBS volume, even though the production answer is a managed database. That is deliberate: this phase's lessons need a database *inside* the cluster, because hardening it is part of the point: the Pod gets the full securityContext treatment, its Secret flows through Secrets Manager and Vault, and the NetworkPolicies fence it in — none of which you could practice against a managed endpoint. The managed-database pattern has its own homes in this track — Phase 9 (Terraform production) provisions RDS as code, and Phase 16 (capstone) runs the full Kubernetes stack against RDS with the security groups, `DB_HOST` wiring, and backup division of labor spelled out. If you want RDS here, the capstone's "Create The Database First" section is a drop-in recipe: create the instance, remove the postgres Deployment/Service/PVC from the kustomization, point `DATABASE_URL` and the wait loops at the RDS endpoint.
+
 ## Cost Warning
 
 Same cost profile as Phase 8 and Phase 11. The security tools themselves (Pod Security Admission, RBAC, NetworkPolicy, ResourceQuota, LimitRange) are built into Kubernetes and cost nothing extra. Trivy and Semgrep run as one-off Docker containers and cost nothing. The optional SonarQube Deployment needs ~2 GB memory and a 20 GB PVC, which may require scaling to 3 worker nodes.
@@ -731,6 +735,78 @@ docker push $ECR_REGISTRY/launchboard-frontend:phase-12
 ```
 
 `docker tag <local-name> <new-name>` does not copy or rebuild anything — it adds a second name pointing at the same image bytes already on disk, this time including the ECR registry hostname `docker push` needs to know where to upload to.
+
+### Supply Chain: SBOM And Image Signing
+
+Scanning finds *known* vulnerabilities in an image. Two more supply-chain questions matter in production and in interviews: **what exactly is inside this image?** (SBOM) and **is this image really the one we built?** (signing). Both take five minutes with the two standard tools.
+
+**1. Generate an SBOM with syft.** A Software Bill of Materials is a machine-readable inventory of every package in the image — the document you grep the day the next Log4j-style vulnerability drops, to answer "are we affected?" in seconds instead of days:
+
+```bash
+VERSION=$(curl -sIL -o /dev/null -w '%{url_effective}' \
+  https://github.com/anchore/syft/releases/latest | sed 's|.*/tag/v||')
+curl -fsSL -o syft.tar.gz "https://github.com/anchore/syft/releases/download/v${VERSION}/syft_${VERSION}_linux_amd64.tar.gz"
+tar -xzf syft.tar.gz syft && sudo mv syft /usr/local/bin/syft && rm syft.tar.gz
+
+syft launchboard-backend:phase-12 -o spdx-json > backend-sbom.json
+jq '.packages | length' backend-sbom.json
+jq -r '.packages[].name' backend-sbom.json | grep -i sqlalchemy
+```
+
+- `-o spdx-json` writes the SPDX format — one of two industry standards (the other is CycloneDX; syft emits both). Regulated customers increasingly *require* an SBOM with every release.
+- The two `jq` queries show what you now have: a package count in the hundreds (OS packages + Python dependencies), and instant lookup of any library by name.
+- In a pipeline, the SBOM is generated at build time and stored next to the image (cosign can even attach it to the image in the registry: `cosign attest`).
+
+**2. Sign and verify with cosign.** Signing proves an image came from your build process and was not swapped or tampered with between push and deploy:
+
+```bash
+VERSION=$(curl -sIL -o /dev/null -w '%{url_effective}' \
+  https://github.com/sigstore/cosign/releases/latest | sed 's|.*/tag/v||')
+curl -fsSL -o cosign "https://github.com/sigstore/cosign/releases/download/v${VERSION}/cosign-linux-amd64"
+chmod +x cosign && sudo mv cosign /usr/local/bin/cosign
+
+cosign generate-key-pair
+```
+
+`generate-key-pair` asks for a passphrase and writes `cosign.key` (private — never commit, same rule as every secret in this phase) and `cosign.pub` (public — commit it, ship it to anyone who needs to verify). Sign the pushed image **by digest**, not by tag (tags can move; digests cannot):
+
+```bash
+BACKEND_DIGEST=$(aws ecr describe-images --repository-name launchboard-backend \
+  --image-ids imageTag=phase-12 --region "$AWS_REGION" \
+  --query 'imageDetails[0].imageDigest' --output text)
+
+cosign sign --key cosign.key "$ECR_REGISTRY/launchboard-backend@${BACKEND_DIGEST}"
+```
+
+The signature is stored **in ECR itself** as an OCI artifact next to the image (`aws ecr list-images --repository-name launchboard-backend` now shows an extra `sha256-....sig` tag). Now verify — this is the command a deploy pipeline runs before applying manifests:
+
+```bash
+cosign verify --key cosign.pub "$ECR_REGISTRY/launchboard-backend@${BACKEND_DIGEST}"
+```
+
+Expected: a JSON block with `"critical"` claims and `Verified OK`. Prove it actually checks something — verification against an unsigned image must fail:
+
+```bash
+FRONTEND_DIGEST=$(aws ecr describe-images --repository-name launchboard-frontend \
+  --image-ids imageTag=phase-12 --region "$AWS_REGION" \
+  --query 'imageDetails[0].imageDigest' --output text)
+cosign verify --key cosign.pub "$ECR_REGISTRY/launchboard-frontend@${FRONTEND_DIGEST}"
+```
+
+Expected: `Error: no signatures found` — the frontend was never signed. Sign it too before moving on:
+
+```bash
+cosign sign --key cosign.key "$ECR_REGISTRY/launchboard-frontend@${FRONTEND_DIGEST}"
+```
+
+**Where this goes in production:** the private key lives in a KMS key or CI secret (cosign supports `--key awskms:///alias/...` directly), CI signs every image it pushes, and an admission controller (sigstore policy-controller, or a Kyverno `verifyImages` policy) **rejects any Pod whose image lacks a valid signature** — closing the loop so unsigned images cannot run at all. Cosign also supports keyless signing via OIDC identities, which removes key management entirely; it needs an interactive or CI identity, which is why this lab uses the key pair.
+
+Reference:
+
+- syft: https://github.com/anchore/syft
+- cosign: https://docs.sigstore.dev/cosign/signing/overview/
+- SPDX: https://spdx.dev/
+- Kyverno verifyImages: https://kyverno.io/docs/policy-types/cluster-policy/verify-images/
 
 Reference:
 

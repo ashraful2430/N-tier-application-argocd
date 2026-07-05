@@ -43,3 +43,26 @@ spec:
       ports:
         - protocol: TCP
           port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-db-from-backend-and-migrate
+  namespace: devops-launchboard
+spec:
+  podSelector:
+    matchLabels:
+      app: launchboard-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: launchboard-backend
+        - podSelector:
+            matchLabels:
+              app: launchboard-migrate
+      ports:
+        - protocol: TCP
+          port: 5432

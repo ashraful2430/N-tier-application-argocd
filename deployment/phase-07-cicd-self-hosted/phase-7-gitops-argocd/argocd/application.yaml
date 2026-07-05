@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: launchboard
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ashraful2430/N-tier-application.git
+    targetRevision: deployment
+    path: deployment/phase-07-cicd-self-hosted/phase-7-gitops-argocd/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: devops-launchboard
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: launchboard-backend
+      jsonPointers:
+        - /spec/replicas

@@ -109,6 +109,10 @@ Do not use this exact lab architecture when:
 - You need production-grade tracing storage (Jaeger all-in-one uses in-memory storage).
 - You want managed observability services from the start (use Amazon Managed Prometheus, Amazon Managed Grafana, CloudWatch, or OpenSearch instead).
 
+## Database Note: Why Still A Pod And Not RDS?
+
+This phase runs PostgreSQL as a Pod on an EBS volume, even though the production answer is a managed database. That is deliberate: this phase's lessons need a database *inside* the cluster, because monitoring it is part of the point: its metrics flow through cAdvisor into Prometheus, its logs through Fluent Bit into Elasticsearch, and a database you cannot see is a database you cannot learn observability from. The managed-database pattern has its own homes in this track — Phase 9 (Terraform production) provisions RDS as code, and Phase 16 (capstone) runs the full Kubernetes stack against RDS with the security groups, `DB_HOST` wiring, and backup division of labor spelled out. If you want RDS here, the capstone's "Create The Database First" section is a drop-in recipe: create the instance, remove the postgres Deployment/Service/PVC from the kustomization, point `DATABASE_URL` and the wait loops at the RDS endpoint.
+
 ## Cost Warning
 
 This phase is more expensive than Phase 8 because the observability tools (especially Elasticsearch) need more memory. You need at least 2 × t3.medium workers, and 3 × t3.medium is recommended if Elasticsearch runs out of memory on 2 nodes.
@@ -152,6 +156,7 @@ deployment/phase-11-observability/
 |   +-- kustomization.yaml                     (groups app manifests)
 +-- helm/
 |   +-- kube-prometheus-stack-values.yaml      (Prometheus + Grafana Helm values)
+|   +-- test-alert-rule.yaml                   (fires a test alert to verify Slack delivery)
 +-- grafana/                                   (optional: reference dashboards and datasource provisioning, not created in this walkthrough)
 |   +-- dashboards/application-metrics.json
 |   +-- dashboards/infrastructure-metrics.json
@@ -1686,6 +1691,28 @@ prometheus:
 # Alertmanager configuration
 alertmanager:
   enabled: true
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: "null"
+      group_by: ["alertname", "namespace"]
+      routes:
+        - receiver: "null"
+          matchers:
+            - alertname = "Watchdog"
+        - receiver: slack-notifications
+          matchers:
+            - severity =~ "warning|critical"
+    receivers:
+      - name: "null"
+      - name: slack-notifications
+        slack_configs:
+          - api_url: YOUR_SLACK_WEBHOOK_URL
+            channel: "#alerts"
+            send_resolved: true
+            title: '{{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+            text: '{{ range .Alerts }}{{ .Annotations.summary }} {{ end }}'
   alertmanagerSpec:
     resources:
       requests:
@@ -1725,7 +1752,8 @@ Line explanation:
 - `storageSpec.volumeClaimTemplate` gives Prometheus a 10 GB gp3 encrypted EBS volume via the StorageClass you created in the app manifests. Prometheus data survives Pod restarts. Without this, a Prometheus restart loses all historical metrics.
 - `serviceMonitorSelectorNilUsesHelmValues: false` tells Prometheus to scrape ALL ServiceMonitors in ALL namespaces, not just ones in the `observability` namespace. This is important because your application Pods live in `devops-launchboard`. With the default value (`true`), Prometheus would only scrape monitors that match Helm's release labels, missing your app entirely.
 - `podMonitorSelectorNilUsesHelmValues: false` does the same for PodMonitors.
-- `alertmanager.enabled: true` installs Alertmanager. It receives alerts from Prometheus (like "backend Pod has restarted 5 times in 10 minutes") and can route them to external notification channels.
+- `alertmanager.enabled: true` installs Alertmanager. It receives alerts from Prometheus (like "backend Pod has restarted 5 times in 10 minutes") and routes them to notification channels.
+- `alertmanager.config` is the routing table. `route.receiver: "null"` is the default (unmatched alerts go nowhere), the `Watchdog` alert is explicitly kept on `"null"` (it fires *constantly by design* — it exists so external systems can detect a dead alerting pipeline; routing it to Slack would page you forever), and everything with `severity` warning or critical goes to the `slack-notifications` receiver. `send_resolved: true` sends a second message when the alert clears — without it, nobody knows the incident ended. Replace `YOUR_SLACK_WEBHOOK_URL` before installing (next section shows how to get one).
 - `nodeExporter.enabled: true` installs the node-exporter DaemonSet. One Pod per node, exposing hardware metrics.
 - `kubeStateMetrics.enabled: true` installs the kube-state-metrics Deployment, which generates metrics about Kubernetes object states.
 - `defaultRules.rules.etcd: false` and `kubeScheduler: false` disable alerting rules for etcd and the scheduler because on EKS the control plane is managed by AWS and these metrics endpoints are not exposed to scraping.
@@ -1823,6 +1851,96 @@ sum(rate(container_cpu_usage_seconds_total{namespace="devops-launchboard"}[5m]))
 ```
 
 This shows the CPU usage rate for each Pod in the `devops-launchboard` namespace over the last 5 minutes.
+
+### Route An Alert To Slack — Close The Operational Loop
+
+Dashboards are for when you are *looking*. Alerts are for when you are not. Installing Alertmanager without a receiver is the most common half-finished observability setup — this section finishes it: a real alert will arrive in a real channel.
+
+**1. Get a Slack incoming webhook** (5 minutes, free workspace is fine):
+
+1. Open https://api.slack.com/apps > Create New App > From scratch. Name it `launchboard-alerts`, pick your workspace.
+2. In the app: Incoming Webhooks > toggle **On** > Add New Webhook to Workspace > choose a channel (create `#alerts` first if you want).
+3. Copy the webhook URL (`https://hooks.slack.com/services/T.../B.../...`). Treat it like a password — anyone holding it can post to your channel.
+
+No Slack? https://webhook.site gives you a throwaway URL that displays every request it receives — paste that instead and you will see the alert JSON arrive in the browser.
+
+**2. Put the URL into the values and upgrade the release:**
+
+```bash
+vim deployment/phase-11-observability/helm/kube-prometheus-stack-values.yaml
+```
+
+Replace `YOUR_SLACK_WEBHOOK_URL` with your webhook, then:
+
+```bash
+helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  --namespace observability \
+  --values deployment/phase-11-observability/helm/kube-prometheus-stack-values.yaml \
+  --timeout 10m
+```
+
+`helm upgrade` re-renders the chart with the new values; only Alertmanager's config changes, so the app and Prometheus are untouched. (Because the webhook is now inside the values file, do not commit that change — or better, note that production setups keep it in a Secret referenced via `alertmanagerSpec.secrets`.)
+
+**3. Fire a test alert.** Waiting for something to actually break takes hours; instead create a rule that is always true:
+
+```bash
+vim deployment/phase-11-observability/helm/test-alert-rule.yaml
+```
+
+Paste:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: launchboard-test-alert
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: launchboard.test
+      rules:
+        - alert: LaunchboardTestAlert
+          expr: vector(1)
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Test alert from the Phase 11 lab - alert delivery works"
+```
+
+Line explanation:
+
+- `PrometheusRule` is a CRD the Prometheus Operator watches; creating one hot-loads the rule into Prometheus with no restart.
+- The `release: kube-prometheus-stack` label is **mandatory** — the operator only picks up rules matching its release selector. Forgetting this label is the #1 "my rule does nothing" cause.
+- `expr: vector(1)` is a PromQL expression that always returns 1, so the alert condition is always true. `for: 1m` means it must stay true for a minute before firing (real rules use this to ignore blips).
+- `severity: warning` is what routes it to Slack — it matches the `severity =~ "warning|critical"` matcher in the Alertmanager config.
+
+Apply and watch the pipeline work end to end:
+
+```bash
+kubectl apply -f deployment/phase-11-observability/helm/test-alert-rule.yaml
+```
+
+Timeline: within ~30s Prometheus loads the rule (see it under Status > Rules in the Prometheus UI); after 1 minute the alert enters `FIRING` (Alerts page turns red); within another ~30s Alertmanager groups it and posts to Slack. **Total: about 2 minutes to a message in your channel.**
+
+**4. Resolve it** and watch the second half:
+
+```bash
+kubectl delete -f deployment/phase-11-observability/helm/test-alert-rule.yaml
+```
+
+A few minutes later (the `resolve_timeout`), Slack gets the green **RESOLVED** message from `send_resolved: true`. You have now seen an alert's full life cycle: rule → pending → firing → routed → delivered → resolved.
+
+What fires without any custom rules: the chart's `defaultRules` include dozens of production alerts (`KubePodCrashLooping`, `KubeDeploymentReplicasMismatch`, `NodeFilesystemSpaceFillingUp`...) — all carrying `severity` labels, all now routed to your channel. Break the app on purpose (scale the backend to an image tag that does not exist) and `KubePodNotReady` will page you in ~15 minutes, exactly as it would in production.
+
+Reference:
+
+- Alertmanager configuration: https://prometheus.io/docs/alerting/latest/configuration/
+- Slack incoming webhooks: https://api.slack.com/messaging/webhooks
+- PrometheusRule CRD: https://prometheus-operator.dev/docs/api-reference/api/#monitoring.coreos.com/v1.PrometheusRule
+- Default runbooks for chart alerts: https://runbooks.prometheus-operator.dev/
 
 Reference:
 

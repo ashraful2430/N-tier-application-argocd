@@ -68,6 +68,28 @@ prometheus:
 # Alertmanager configuration
 alertmanager:
   enabled: true
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: "null"
+      group_by: ["alertname", "namespace"]
+      routes:
+        - receiver: "null"
+          matchers:
+            - alertname = "Watchdog"
+        - receiver: slack-notifications
+          matchers:
+            - severity =~ "warning|critical"
+    receivers:
+      - name: "null"
+      - name: slack-notifications
+        slack_configs:
+          - api_url: YOUR_SLACK_WEBHOOK_URL
+            channel: "#alerts"
+            send_resolved: true
+            title: '{{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
+            text: '{{ range .Alerts }}{{ .Annotations.summary }} {{ end }}'
   alertmanagerSpec:
     resources:
       requests:

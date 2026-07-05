@@ -25,7 +25,7 @@ Start with `phase-0-setup`, then move phase by phase. Each phase has its own REA
 | `phase-04-docker-compose` | Single-host stack | Run DB, migrations, API, and UI together |
 | `phase-05-docker-swarm` | Swarm orchestration | Deploy replicated services with secrets and rollback |
 | `phase-06-kubernetes-local` | Local Kubernetes | Learn Deployments, Services, Ingress, PVC, HPA |
-| `phase-07-cicd-self-hosted` | Automation | Test, scan, build, push, deploy, and rollback |
+| `phase-07-cicd-self-hosted` | Automation | Three delivery models: GitHub Actions, Jenkins on EKS, and GitOps with ArgoCD |
 | `phase-08-eks` | AWS Kubernetes | Provision EKS with eksctl and deploy app |
 | `phase-09-infrastructure-as-code-terraform` | Infrastructure as code | Learn Terraform basics on one EC2, then a production VPC/ALB/ASG/RDS deployment with modules and remote state |
 | `phase-10-configuration-management-ansible` | Configuration management | Learn Ansible basics on one server, then a production multi-tier rolling deployment with roles and Vault |
@@ -34,7 +34,7 @@ Start with `phase-0-setup`, then move phase by phase. Each phase has its own REA
 | `phase-13-advanced-deployments` | Safer releases | Practice blue-green, canary, and feature flags |
 | `phase-14-disaster-recovery` | Recovery | Back up, restore, test failover, and run incident playbooks |
 | `phase-15-performance-and-load-validation` | Performance validation | Run smoke, load, stress, and soak tests before calling the app production-ready |
-| `phase-16-production-capstone` | Production capstone | Combine EKS, security, autoscaling, monitoring, backups, and load validation into one production-grade deployment |
+| `phase-16-production-capstone` | Production capstone | Combine EKS, RDS, security, autoscaling, monitoring, backups, and load validation into one production-grade deployment |
 
 ## Values Students Must Replace
 

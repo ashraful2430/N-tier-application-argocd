@@ -39,10 +39,12 @@ Everything the journey taught, assembled into one deployment you could genuinely
                         Backend Service                  NetworkPolicy:
                                  |                       only frontend -> backend
                  Backend Pods 2-5 (FastAPI, HPA)    <--- PDB: min 1 always up
-                                 |                       only backend/migrate -> db
-                        PostgreSQL Pod
                                  |
-                    EBS gp3 encrypted volume (PVC)
+                                 |  :5432 (security group: cluster nodes only)
+                                 v
+                     Amazon RDS PostgreSQL 16
+              (private subnets, encrypted, automated
+                      daily backups, managed by AWS)
 
   ---------------- Operations layer ----------------
 
@@ -61,6 +63,7 @@ Everything the journey taught, assembled into one deployment you could genuinely
 | Container hygiene | Multi-stage builds, non-root, pinned UIDs, image scanning | 3, 12 |
 | Zero-downtime deploys | RollingUpdate, maxUnavailable 0, readiness gates | 6, 13 |
 | Self-healing | Deployments, liveness probes, managed node groups | 6, 8 |
+| Managed database | Amazon RDS PostgreSQL: automated backups, patching, storage growth | 9 |
 | Autoscaling | HPA 2-5 on CPU, node group 2-4 | 8, 15 |
 | Availability under maintenance | PodDisruptionBudgets | new here |
 | Network segmentation | Default-deny NetworkPolicies per tier | 12 |
@@ -70,7 +73,7 @@ Everything the journey taught, assembled into one deployment you could genuinely
 | Load validation | k6 load test with latency/error thresholds, HPA verified | 15 |
 | Operations | Written runbook with incident situations | 14 |
 
-Deliberately out of scope (each costs money or needs an org): custom domain + TLS (Route 53 + ACM), multi-AZ RDS instead of in-cluster PostgreSQL (Phase 9 production shows RDS), CI/CD automation (Phase 7 shows the Jenkins pipeline — this phase deploys manually so every step is visible one last time).
+Deliberately out of scope (each costs money or needs an org): custom domain + TLS (Route 53 + ACM — see Extensions for the exact steps), RDS Multi-AZ (one flag, roughly doubles the database cost; noted where it applies), CI/CD automation (Phase 7 shows the Jenkins and GitOps pipelines — this phase deploys manually so every step is visible one last time).
 
 ## Cost Warning
 
@@ -80,9 +83,10 @@ Deliberately out of scope (each costs money or needs an org): custom domain + TL
 | 2 × t3.medium workers | ~$0.08/hour |
 | NAT Gateway | ~$0.045/hour |
 | ALB | ~$0.02/hour |
+| RDS db.t3.micro (single-AZ) | ~$0.017/hour |
 | EBS volumes + snapshots, S3, ECR | ~$0.02/hour |
 
-Roughly **$0.27/hour** (~$2.20 for an 8-hour session). Delete everything after each session (Cleanup section). Create an AWS Budget first: Console > Billing > Budgets.
+Roughly **$0.29/hour** (~$2.40 for an 8-hour session). Delete everything after each session (Cleanup section). Create an AWS Budget first: Console > Billing > Budgets.
 
 ## Files Included In This Phase
 
@@ -98,9 +102,6 @@ deployment/phase-16-production-capstone/
 |   +-- storageclass.yaml                  (gp3 encrypted, WaitForFirstConsumer)
 |   +-- configmap.yaml
 |   +-- secret.example.yaml                (template only - real Secret via kubectl)
-|   +-- pvc.yaml
-|   +-- launchboard-postgres-deployment.yaml
-|   +-- launchboard-postgres-service.yaml
 |   +-- launchboard-migration-job.yaml
 |   +-- launchboard-backend-deployment.yaml
 |   +-- launchboard-backend-service.yaml
@@ -629,7 +630,91 @@ Reference:
 
 ## Step 7: Create And Deploy The Application Manifests
 
-All files go in `deployment/phase-16-production-capstone/app-k8s/`. These are the battle-tested manifests from phases 8 and 11-15 (deep line-by-line in the Phase 11 and Phase 15 guides) plus two capstone additions explained in full: `pdb.yaml` and `networkpolicies.yaml`.
+All files go in `deployment/phase-16-production-capstone/app-k8s/`. These are the battle-tested manifests from phases 8 and 11-15 (deep line-by-line in the Phase 11 and Phase 15 guides) with two capstone additions explained in full (`pdb.yaml`, `networkpolicies.yaml`) and one capstone **upgrade**: the database is Amazon RDS, not a Pod.
+
+### Create The Database First — Amazon RDS
+
+Every Kubernetes phase so far ran PostgreSQL as a single Pod on an EBS volume. That was the right way to *learn* storage (PVCs, StorageClasses, the EBS CSI driver, even the `lost+found`/PGDATA failure mode), but it is not how production runs a primary database: one Pod is a single point of failure, you patch PostgreSQL yourself, and backup/restore is entirely on you. RDS moves all of that to AWS — automated daily backups with point-in-time recovery, managed minor-version patching, storage autoscaling, and an optional standby in a second AZ that is literally one flag.
+
+The database must exist before the app deploys, and it must live in the cluster's VPC so Pods can reach it privately. Discover the cluster's network first:
+
+```bash
+VPC_ID=$(aws eks describe-cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" \
+  --query 'cluster.resourcesVpcConfig.vpcId' --output text)
+CLUSTER_SG=$(aws eks describe-cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" \
+  --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
+PRIVATE_SUBNETS=$(aws ec2 describe-subnets --region "$AWS_REGION" \
+  --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:kubernetes.io/role/internal-elb,Values=1" \
+  --query 'Subnets[].SubnetId' --output text)
+echo "VPC: $VPC_ID  ClusterSG: $CLUSTER_SG  Private subnets: $PRIVATE_SUBNETS"
+```
+
+Command explanation:
+
+- `resourcesVpcConfig.vpcId` is the VPC eksctl created for the cluster — RDS must live in the same one for private connectivity.
+- `clusterSecurityGroupId` is the security group **every worker node and Pod ENI carries**. Allowing database access "from this security group" therefore means "from anything running in the cluster" — the same SG-references-SG pattern as the Terraform and Ansible phases, and it survives node replacement and autoscaling.
+- The `kubernetes.io/role/internal-elb` tag is how eksctl marks the **private** subnets; the database goes where nothing public can route.
+
+Create the database security group and subnet group:
+
+```bash
+DB_SG=$(aws ec2 create-security-group --region "$AWS_REGION" \
+  --group-name launchboard-phase-16-db-sg \
+  --description "PostgreSQL from the EKS cluster only" \
+  --vpc-id "$VPC_ID" --query 'GroupId' --output text)
+
+aws ec2 authorize-security-group-ingress --region "$AWS_REGION" \
+  --group-id "$DB_SG" --protocol tcp --port 5432 --source-group "$CLUSTER_SG"
+
+aws rds create-db-subnet-group --region "$AWS_REGION" \
+  --db-subnet-group-name launchboard-phase-16-db-subnets \
+  --db-subnet-group-description "Private subnets for the capstone database" \
+  --subnet-ids $PRIVATE_SUBNETS
+```
+
+Create the instance (choose a strong master password — the same one you will put in the Kubernetes Secret):
+
+```bash
+aws rds create-db-instance --region "$AWS_REGION" \
+  --db-instance-identifier launchboard-phase-16 \
+  --engine postgres \
+  --engine-version 16 \
+  --db-instance-class db.t3.micro \
+  --allocated-storage 20 \
+  --storage-type gp3 \
+  --storage-encrypted \
+  --db-name launchboard \
+  --master-username launchboard_user \
+  --master-user-password 'CHANGE_ME_STRONG_PASSWORD' \
+  --db-subnet-group-name launchboard-phase-16-db-subnets \
+  --vpc-security-group-ids "$DB_SG" \
+  --no-publicly-accessible \
+  --backup-retention-period 1 \
+  --no-multi-az
+```
+
+Line explanation:
+
+- `--db-name launchboard` and `--master-username launchboard_user` match what every previous phase used, so `DATABASE_URL` keeps its familiar shape.
+- `--no-publicly-accessible` plus the security group (5432 only from the cluster SG) is the same defense-in-depth as the NetworkPolicies inside the cluster — enforced at the VPC layer.
+- `--backup-retention-period 1` turns on automated daily backups **and** point-in-time recovery — capabilities the PostgreSQL Pod never had without Velero. Production would use 7-30 days.
+- `--no-multi-az` keeps the lab at ~$0.017/hour. `--multi-az` is the production flag: a synchronous standby in the second AZ with automatic failover, for roughly double the cost.
+
+Creation takes 5-10 minutes. Wait for it, then capture the endpoint — you will substitute it into the manifests below:
+
+```bash
+aws rds wait db-instance-available --db-instance-identifier launchboard-phase-16 --region "$AWS_REGION"
+
+RDS_ENDPOINT=$(aws rds describe-db-instances --db-instance-identifier launchboard-phase-16 \
+  --region "$AWS_REGION" --query 'DBInstances[0].Endpoint.Address' --output text)
+echo "RDS endpoint: $RDS_ENDPOINT"
+```
+
+Reference:
+
+- RDS for PostgreSQL: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_PostgreSQL.html
+- create-db-instance CLI: https://docs.aws.amazon.com/cli/latest/reference/rds/create-db-instance.html
+- RDS Multi-AZ: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZ.html
 
 ### namespace.yaml
 
@@ -666,7 +751,7 @@ parameters:
   encrypted: "true"
 ```
 
-Encrypted gp3 volumes, created in the Pod's AZ (`WaitForFirstConsumer`), expandable without recreation.
+Encrypted gp3 volumes, created in the Pod's AZ (`WaitForFirstConsumer`), expandable without recreation. The app itself no longer claims a volume (the database is RDS) — this StorageClass stays because **Prometheus** persists its metrics on it in Step 9.
 
 ### configmap.yaml
 
@@ -685,11 +770,10 @@ data:
   APP_ENV: production
   CORS_ORIGINS: http://YOUR_ALB_DNS_NAME
   SEED_DEMO_DATA: "true"
-  POSTGRES_DB: launchboard
-  POSTGRES_USER: launchboard_user
+  DB_HOST: YOUR_RDS_ENDPOINT
 ```
 
-`CORS_ORIGINS` stays a placeholder until the ALB exists — the patch command at the end of this step fixes it, and the runbook covers re-fixing it after any restore.
+Two placeholders here: `CORS_ORIGINS` stays one until the ALB exists (the patch command at the end of this step fixes it), and `DB_HOST` gets the RDS endpoint stamped in by the `sed` in the deploy section. `DB_HOST` exists because the backend's and migration Job's wait loops need to know where PostgreSQL lives now that there is no `launchboard-db` Service inside the cluster. The `POSTGRES_DB`/`POSTGRES_USER` keys from earlier phases are gone — they existed to configure the postgres *container's* first boot, and RDS was configured at creation time instead.
 
 ### secret.example.yaml
 
@@ -706,154 +790,10 @@ metadata:
 type: Opaque
 stringData:
   POSTGRES_PASSWORD: CHANGE_ME_STRONG_PASSWORD
-  DATABASE_URL: postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard
+  DATABASE_URL: postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@YOUR_RDS_ENDPOINT:5432/launchboard
 ```
 
-Committed template only. The real Secret is created with `kubectl create secret` below and exists nowhere in Git — the same discipline as Terraform's `tfvars` and Ansible's Vault.
-
-### pvc.yaml
-
-```bash
-vim deployment/phase-16-production-capstone/app-k8s/pvc.yaml
-```
-
-```yaml
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: launchboard-postgres-pvc
-  namespace: devops-launchboard
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: gp3
-  resources:
-    requests:
-      storage: 10Gi
-```
-
-### launchboard-postgres-deployment.yaml
-
-```bash
-vim deployment/phase-16-production-capstone/app-k8s/launchboard-postgres-deployment.yaml
-```
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: launchboard-db
-  namespace: devops-launchboard
-  labels:
-    app: launchboard-db
-spec:
-  replicas: 1
-  strategy:
-    type: Recreate
-  selector:
-    matchLabels:
-      app: launchboard-db
-  template:
-    metadata:
-      labels:
-        app: launchboard-db
-    spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 999
-        runAsGroup: 999
-        fsGroup: 999
-        seccompProfile:
-          type: RuntimeDefault
-      containers:
-        - name: postgres
-          image: postgres:16-alpine
-          imagePullPolicy: IfNotPresent
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
-          ports:
-            - name: postgres
-              containerPort: 5432
-          env:
-            - name: POSTGRES_DB
-              valueFrom:
-                configMapKeyRef:
-                  name: launchboard-config
-                  key: POSTGRES_DB
-            - name: POSTGRES_USER
-              valueFrom:
-                configMapKeyRef:
-                  name: launchboard-config
-                  key: POSTGRES_USER
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: launchboard-secret
-                  key: POSTGRES_PASSWORD
-            - name: PGDATA
-              value: /var/lib/postgresql/data/pgdata
-          volumeMounts:
-            - name: postgres-data
-              mountPath: /var/lib/postgresql/data
-          readinessProbe:
-            exec:
-              command:
-                - pg_isready
-                - -U
-                - launchboard_user
-                - -d
-                - launchboard
-            initialDelaySeconds: 10
-            periodSeconds: 10
-          livenessProbe:
-            exec:
-              command:
-                - pg_isready
-                - -U
-                - launchboard_user
-                - -d
-                - launchboard
-            initialDelaySeconds: 20
-            periodSeconds: 15
-          resources:
-            requests:
-              cpu: 100m
-              memory: 256Mi
-            limits:
-              cpu: 1000m
-              memory: 1Gi
-      volumes:
-        - name: postgres-data
-          persistentVolumeClaim:
-            claimName: launchboard-postgres-pvc
-```
-
-Production-relevant lines: `Recreate` (single writer on a ReadWriteOnce volume), the fully hardened security context (non-root UID 999 — the postgres user in the alpine image — all capabilities dropped, no privilege escalation, default seccomp), `PGDATA` pointing at a subdirectory so `initdb` never trips over the EBS `lost+found` directory, and `pg_isready` probes.
-
-### launchboard-postgres-service.yaml
-
-```bash
-vim deployment/phase-16-production-capstone/app-k8s/launchboard-postgres-service.yaml
-```
-
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: launchboard-db
-  namespace: devops-launchboard
-spec:
-  type: ClusterIP
-  selector:
-    app: launchboard-db
-  ports:
-    - name: postgres
-      port: 5432
-      targetPort: 5432
-```
+Committed template only. The real Secret is created with `kubectl create secret` below (with the real password and the real RDS endpoint) and exists nowhere in Git — the same discipline as Terraform's `tfvars` and Ansible's Vault. Note the `DATABASE_URL` host is the RDS endpoint now, not a cluster-internal Service name.
 
 ### launchboard-migration-job.yaml
 
@@ -894,7 +834,7 @@ spec:
             - /bin/sh
             - -c
             - |
-              until python -c "import socket; s=socket.create_connection(('launchboard-db', 5432), timeout=3); s.close()"; do
+              until python -c "import socket, os; s=socket.create_connection((os.environ['DB_HOST'], 5432), timeout=3); s.close()"; do
                 echo "waiting for postgres"
                 sleep 2
               done
@@ -913,7 +853,7 @@ spec:
               memory: 256Mi
 ```
 
-Migrations run once, as a Job, before the app — never from inside racing app replicas. The wait loop blocks until PostgreSQL accepts connections.
+Migrations run once, as a Job, before the app — never from inside racing app replicas. The wait loop reads `DB_HOST` from the ConfigMap and blocks until RDS accepts connections.
 
 ### launchboard-backend-deployment.yaml
 
@@ -963,7 +903,7 @@ spec:
             - /bin/sh
             - -c
             - |
-              until python -c "import socket; s=socket.create_connection(('launchboard-db', 5432), timeout=3); s.close()"; do
+              until python -c "import socket, os; s=socket.create_connection((os.environ['DB_HOST'], 5432), timeout=3); s.close()"; do
                 echo "waiting for postgres"
                 sleep 2
               done
@@ -1266,29 +1206,6 @@ spec:
       ports:
         - protocol: TCP
           port: 8000
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-db-from-backend-and-migrate
-  namespace: devops-launchboard
-spec:
-  podSelector:
-    matchLabels:
-      app: launchboard-db
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app: launchboard-backend
-        - podSelector:
-            matchLabels:
-              app: launchboard-migrate
-      ports:
-        - protocol: TCP
-          port: 5432
 ```
 
 Line explanation:
@@ -1296,7 +1213,7 @@ Line explanation:
 - `default-deny-ingress` has an empty `podSelector: {}` — it matches **every Pod in the namespace** and, by declaring `policyTypes: [Ingress]` with no `ingress` rules, denies all inbound traffic. Every rule after it is an explicit exception. Deny-by-default is the production posture: a compromised or misdeployed Pod cannot reach anything it was not explicitly granted.
 - `allow-frontend-from-anywhere` permits inbound TCP 8080 to frontend Pods from any source — required because the ALB (target-type `ip`) sends traffic straight to Pod IPs from outside the cluster, so no `podSelector` could describe it.
 - `allow-backend-from-frontend` is the tier rule: only Pods labeled `app: launchboard-frontend` may open connections to backend port 8000. `curl` from any other Pod in the cluster now times out — you can prove it after deploying (see verification below).
-- `allow-db-from-backend-and-migrate` restricts PostgreSQL to the backend and the migration Job (multiple `podSelector` entries in one `from` list are OR-ed).
+- There is no database policy because there is no database Pod — that boundary moved to the VPC layer: the RDS security group admits port 5432 only from the cluster security group. Same principle, enforced one layer down.
 - These are the same tier boundaries the Phase 9 security groups and Phase 10 security groups drew at the VPC layer — here enforced between Pods by the VPC CNI's network policy agent enabled in Step 4.
 
 Reference:
@@ -1317,9 +1234,6 @@ resources:
   - namespace.yaml
   - storageclass.yaml
   - configmap.yaml
-  - pvc.yaml
-  - launchboard-postgres-deployment.yaml
-  - launchboard-postgres-service.yaml
   - launchboard-migration-job.yaml
   - launchboard-backend-deployment.yaml
   - launchboard-backend-service.yaml
@@ -1333,7 +1247,7 @@ resources:
 
 ### Deploy
 
-Stamp your account and region into the three manifests that reference ECR:
+Stamp your account, region, and the RDS endpoint into the manifests:
 
 ```bash
 cd /opt/devops-launchboard/app-source
@@ -1341,9 +1255,14 @@ sed -i "s|YOUR_ACCOUNT_ID|${ACCOUNT_ID}|g; s|YOUR_AWS_REGION|${AWS_REGION}|g" \
   deployment/phase-16-production-capstone/app-k8s/launchboard-backend-deployment.yaml \
   deployment/phase-16-production-capstone/app-k8s/launchboard-migration-job.yaml \
   deployment/phase-16-production-capstone/app-k8s/launchboard-frontend-deployment.yaml
+
+sed -i "s|YOUR_RDS_ENDPOINT|${RDS_ENDPOINT}|g" \
+  deployment/phase-16-production-capstone/app-k8s/configmap.yaml
 ```
 
-Create the namespace and the real Secret (choose a strong password; it exists only in the cluster):
+(`$RDS_ENDPOINT` was exported at the end of the RDS creation step; if you opened a new shell, re-run that `describe-db-instances` command.)
+
+Create the namespace and the real Secret — the password must match what you gave `create-db-instance`, and the host is the RDS endpoint:
 
 ```bash
 kubectl apply -f deployment/phase-16-production-capstone/app-k8s/namespace.yaml
@@ -1351,15 +1270,14 @@ kubectl apply -f deployment/phase-16-production-capstone/app-k8s/namespace.yaml
 kubectl create secret generic launchboard-secret \
   --namespace devops-launchboard \
   --from-literal=POSTGRES_PASSWORD='CHANGE_ME_STRONG_PASSWORD' \
-  --from-literal=DATABASE_URL='postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard'
+  --from-literal=DATABASE_URL="postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@${RDS_ENDPOINT}:5432/launchboard"
 ```
 
-Apply everything and wait:
+Apply everything and wait (no database rollout to wait for — RDS is already available):
 
 ```bash
 kubectl apply -k deployment/phase-16-production-capstone/app-k8s
 
-kubectl -n devops-launchboard rollout status deployment/launchboard-db --timeout=300s
 kubectl -n devops-launchboard wait --for=condition=complete job/launchboard-migrate --timeout=300s
 kubectl -n devops-launchboard rollout status deployment/launchboard-backend --timeout=300s
 kubectl -n devops-launchboard rollout status deployment/launchboard-frontend --timeout=300s
@@ -1390,15 +1308,15 @@ Verify the app and the security posture:
 curl -s "http://$ALB_DNS/health" | jq
 curl -s "http://$ALB_DNS/api/summary" | jq
 
-# Prove the NetworkPolicies bite: this Pod is neither frontend nor migrate,
-# so both connections must TIME OUT (Ctrl+C after a few seconds each)
+# Prove the NetworkPolicy bites: this Pod is not the frontend,
+# so the connection must TIME OUT (Ctrl+C after a few seconds)
 kubectl -n devops-launchboard run netpol-test --rm -it --image=busybox:1.36 --restart=Never \
-  -- sh -c "nc -zv -w 3 launchboard-backend 8000; nc -zv -w 3 launchboard-db 5432"
+  -- nc -zv -w 3 launchboard-backend 8000
 
 kubectl -n devops-launchboard get pdb
 ```
 
-Open `http://$ALB_DNS` in the browser — the app is live. Both `nc` probes should fail with a timeout, and both PDBs should show `ALLOWED DISRUPTIONS: 1`.
+Open `http://$ALB_DNS` in the browser — the app is live. The `nc` probe should fail with a timeout, and both PDBs should show `ALLOWED DISRUPTIONS: 1`. The database boundary is verified at the AWS layer instead: RDS Console > launchboard-phase-16 > Connectivity shows `Publicly accessible: No` and only the `launchboard-phase-16-db-sg` security group.
 
 ## Step 8: Metrics Server And HPA
 
@@ -1675,7 +1593,7 @@ velero backup create launchboard-first --include-namespaces devops-launchboard -
 velero backup describe launchboard-first
 ```
 
-Expected: `Phase: Completed`, and one volume snapshot (the PostgreSQL PVC). Now the schedule:
+Expected: `Phase: Completed`. No volume snapshots this time — the app namespace no longer contains a PVC, because the database lives in RDS with its **own** backup system (automated daily snapshots plus point-in-time recovery, enabled by `--backup-retention-period`). Velero now covers exactly what it should: the Kubernetes objects. This split — platform state in Velero, data in the database's native backups — is how real teams divide DR responsibility. Now the schedule:
 
 ```bash
 vim deployment/phase-16-production-capstone/backup/velero-daily-schedule.yaml
@@ -1699,7 +1617,7 @@ spec:
 ```
 
 - `schedule: "0 3 * * *"` is standard cron: daily at 03:00 UTC.
-- `snapshotVolumes: true` snapshots the PostgreSQL EBS volume with every backup — Kubernetes objects without the data are half a backup.
+- `snapshotVolumes: true` snapshots any EBS-backed PVC included in the backup. The app namespace has none now (RDS holds the data), but leaving it on costs nothing and protects you if a PVC is ever added back.
 - `ttl: 168h` expires each backup (and its snapshot) after 7 days, capping storage cost automatically.
 
 ```bash
@@ -1720,7 +1638,7 @@ velero restore create --from-backup launchboard-drill --wait
 kubectl -n devops-launchboard get pods
 ```
 
-Wait for everything to reach Running/Completed (the PVC is restored from the EBS snapshot — allow 5-10 minutes). The ALB is recreated by the controller, so its DNS name changed — repeat the CORS fix:
+Wait for everything to reach Running/Completed (a few minutes — no volume restore is needed, because the data never left: deleting the namespace destroyed the *application*, while RDS sat untouched outside the cluster). The ALB is recreated by the controller, so its DNS name changed — repeat the CORS fix:
 
 ```bash
 ALB_DNS=$(kubectl -n devops-launchboard get ingress launchboard-ingress \
@@ -1730,7 +1648,21 @@ kubectl -n devops-launchboard patch configmap launchboard-config \
 kubectl -n devops-launchboard rollout restart deployment/launchboard-backend
 ```
 
-Open the new URL: your test data is back. You have now performed an actual disaster recovery.
+Open the new URL: your test data is there — not because it was restored, but because it was never lost. That is the payoff of separating state (RDS) from workload (the cluster): the whole namespace, even the whole cluster, becomes disposable.
+
+For the *database* disaster case (bad migration, data corruption), RDS gives you two levers Velero never could:
+
+```bash
+# a manual snapshot before anything risky (like a schema migration)
+aws rds create-db-snapshot --db-instance-identifier launchboard-phase-16 \
+  --db-snapshot-identifier launchboard-pre-migration --region "$AWS_REGION"
+
+# and point-in-time recovery exists automatically - see your restorable window:
+aws rds describe-db-instances --db-instance-identifier launchboard-phase-16 \
+  --region "$AWS_REGION" --query 'DBInstances[0].LatestRestorableTime'
+```
+
+Restoring either one creates a **new** RDS instance from the snapshot/timestamp; you then point `DATABASE_URL` at it. Try `describe-db-snapshots --db-instance-identifier launchboard-phase-16` to see the automated dailies accumulating.
 
 Reference:
 
@@ -1843,6 +1775,7 @@ curl -s "http://$ALB_DNS/health" | jq
 [ ] EKS cluster with OIDC, private workers, control plane logging
 [ ] NetworkPolicy enforcement enabled (vpc-cni addon)
 [ ] Images in ECR, scan-on-push enabled, lifecycle policy attached
+[ ] RDS in private subnets, not publicly accessible, encrypted, backups on
 
 === Application ===
 [ ] All Pods Running; migration Job Completed
@@ -1855,7 +1788,8 @@ curl -s "http://$ALB_DNS/health" | jq
 === Resilience ===
 [ ] HPA shows real utilization and scaled during the load test
 [ ] PDBs present with ALLOWED DISRUPTIONS >= 1
-[ ] NetworkPolicies verified: test Pod CANNOT reach backend or db
+[ ] NetworkPolicy verified: test Pod CANNOT reach the backend
+[ ] RDS reachable only from the cluster SG (checked in the console)
 [ ] Rollback rehearsed with rollout undo
 
 === Operations ===
@@ -1881,6 +1815,15 @@ kubectl delete namespace velero
 
 # Application (ALB is deleted by the controller - wait 2-3 minutes)
 kubectl delete namespace devops-launchboard
+
+# RDS - MUST be deleted before the cluster, or eksctl cannot delete the VPC
+aws rds delete-db-instance --db-instance-identifier launchboard-phase-16 \
+  --skip-final-snapshot --delete-automated-backups --region "$AWS_REGION"
+aws rds wait db-instance-deleted --db-instance-identifier launchboard-phase-16 --region "$AWS_REGION"
+aws rds delete-db-subnet-group --db-subnet-group-name launchboard-phase-16-db-subnets --region "$AWS_REGION"
+DB_SG=$(aws ec2 describe-security-groups --region "$AWS_REGION" \
+  --filters Name=group-name,Values=launchboard-phase-16-db-sg --query 'SecurityGroups[0].GroupId' --output text)
+aws ec2 delete-security-group --group-id "$DB_SG" --region "$AWS_REGION"
 
 # ALB controller + IAM
 helm uninstall aws-load-balancer-controller --namespace kube-system
@@ -1910,9 +1853,19 @@ Also delete the EBS **snapshots** Velero created (Console > EC2 > Snapshots — 
 
 The VPC CNI network policy agent is not enabled. Confirm the addon configuration: `aws eks describe-addon --cluster-name $CLUSTER_NAME --addon-name vpc-cni --region $AWS_REGION --query 'addon.configurationValues'` should show `enableNetworkPolicy: "true"`. If the cluster was created without it, update the addon: `aws eks update-addon --cluster-name $CLUSTER_NAME --addon-name vpc-cni --configuration-values '{"enableNetworkPolicy": "true"}' --region $AWS_REGION` and wait for the aws-node Pods to roll.
 
-### Problem 2: Backend Pods cannot reach the database after applying NetworkPolicies
+### Problem 2: Migration Job or backend stuck printing "waiting for postgres"
 
-The backend Pod labels must be exactly `app: launchboard-backend` (and the migrate Job's `app: launchboard-migrate`) — the `allow-db` policy matches on them. `kubectl -n devops-launchboard get pods --show-labels` to compare. A frequent cause is a hand-edited Deployment with changed labels.
+The wait loop cannot reach RDS on port 5432. Three checks, in order:
+
+```bash
+kubectl -n devops-launchboard get configmap launchboard-config -o jsonpath='{.data.DB_HOST}'; echo
+```
+
+1. If that prints `YOUR_RDS_ENDPOINT`, the `sed` stamping step was skipped — re-run it and `kubectl apply -k` again.
+2. The DB security group must allow 5432 **from the cluster security group** (`aws ec2 describe-security-groups --group-ids "$DB_SG"` and check the ingress rule's source).
+3. The instance must be `available`: `aws rds describe-db-instances --db-instance-identifier launchboard-phase-16 --query 'DBInstances[0].DBInstanceStatus'`.
+
+If DATABASE_URL's password does not match the RDS master password, the wait loop *passes* (TCP connects) but the migration then fails with an authentication error — check `kubectl -n devops-launchboard logs job/launchboard-migrate`.
 
 ### Problem 3: ALB never gets an address
 
@@ -1924,13 +1877,17 @@ The IAM user policy is missing or the bucket name inside it was not substituted 
 
 ### Problem 5: Restore completes but the app is broken
 
-Two known follow-ups after every restore: the ALB DNS changed (re-run the CORS patch — runbook Situation 6), and the migration Job restored as already-Completed (fine — the data came back with the volume). If Pods are stuck Pending on the PVC, the EBS snapshot restore may still be in progress; give it 10 minutes before digging.
+Two known follow-ups after every restore: the ALB DNS changed (re-run the CORS patch — runbook Situation 6), and the migration Job restored as already-Completed (fine — the schema still exists in RDS, which the namespace deletion never touched).
 
 ### Problem 6: HPA never scales during the load test
 
 Check `kubectl top pods -n devops-launchboard` works (Metrics Server), and that the load actually pushes CPU past 70% of *requests* (100m) — if your nodes are fast, raise the k6 `target` to 40-50 VUs. Remember the HPA formula uses requests, not limits.
 
-### Problem 7: Prometheus or Elasticsearch-style Pods Pending for resources
+### Problem 7: `eksctl delete cluster` hangs or fails deleting the VPC
+
+RDS (or its security group / subnet group) still exists inside the cluster's VPC — AWS refuses to delete a VPC with resources in it. Run the RDS deletion commands from the Cleanup section first, wait for `db-instance-deleted`, then re-run `eksctl delete cluster`.
+
+### Problem 8: Prometheus or Elasticsearch-style Pods Pending for resources
 
 Two t3.medium nodes are close to full with app + monitoring + Velero. Scale to 3: `eksctl scale nodegroup --cluster $CLUSTER_NAME --name launchboard-workers --nodes 3 --region $AWS_REGION`.
 
@@ -1949,12 +1906,92 @@ Two t3.medium nodes are close to full with app + monitoring + Velero. Scale to 3
 | k6 | https://grafana.com/docs/k6/latest/ |
 | EKS best practices | https://docs.aws.amazon.com/eks/latest/best-practices/introduction.html |
 
-## Extensions: The Last Two Steps To "Real" Production
+## Extensions: The Last Steps To "Real" Production
 
-When you are ready to spend a few dollars a month, two additions complete the picture:
+When you are ready to spend a few dollars a month, three additions complete the picture.
 
-1. **Domain + TLS**: register a domain (Route 53, ~$12/year), request a free public certificate in ACM, then add three lines to the Ingress: `alb.ingress.kubernetes.io/certificate-arn`, change `listen-ports` to `'[{"HTTP":80},{"HTTPS":443}]'`, and `alb.ingress.kubernetes.io/ssl-redirect: "443"`. Point an A-record (alias) at the ALB. Update `CORS_ORIGINS` to `https://yourdomain.com` — and the DNS-changes-after-restore problem disappears forever, because the record follows the new ALB.
-2. **Automate the deploy**: wire the Phase 7 Jenkins pipeline (or GitHub Actions) at the front: build → test → scan → push to ECR → `kubectl apply -k` → rollout status → smoke test. Everything this guide did manually becomes one `git push`. Adding the Phase 6 ArgoCD scenario on top turns it into GitOps: the cluster continuously syncs itself to the manifests in Git.
+### Extension 1: Domain + HTTPS (~$12/year for the domain, certificate free)
+
+1. Register a domain in Route 53 (Console > Route 53 > Registered domains), or transfer one you own.
+2. Request a **public certificate** in ACM for `yourdomain.com` (and `*.yourdomain.com` if you want subdomains) — ACM certificates are free:
+
+```bash
+CERT_ARN=$(aws acm request-certificate --domain-name yourdomain.com \
+  --validation-method DNS --region "$AWS_REGION" --query CertificateArn --output text)
+aws acm describe-certificate --certificate-arn "$CERT_ARN" --region "$AWS_REGION" \
+  --query 'Certificate.DomainValidationOptions[0].ResourceRecord'
+```
+
+3. Create the CNAME record ACM printed (Route 53 > your hosted zone > Create record) — with the domain in Route 53, the ACM console even has a "Create records in Route 53" button. Wait for the certificate status to become `ISSUED` (minutes).
+4. Add three annotations to `ingress.yaml` and change the listen ports:
+
+```yaml
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/certificate-arn: YOUR_CERT_ARN
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+```
+
+5. Apply the Ingress, then point the domain at the ALB: Route 53 > hosted zone > Create record > A record > Alias > Application Load Balancer > pick `launchboard-phase-16`.
+6. Update `CORS_ORIGINS` to `https://yourdomain.com` and restart the backend — and the DNS-changes-after-restore problem disappears forever, because the alias record follows any new ALB you point it at.
+
+### Extension 2: Node Autoscaling (Cluster Autoscaler)
+
+The HPA adds *Pods* under load, but when the nodes are full, new Pods sit `Pending` — you saw exactly this when Vault replicas would not schedule in Phase 12, and the fix was a manual `eksctl scale nodegroup`. The Cluster Autoscaler automates that: it watches for Pending Pods and grows the node group (within the `minSize`/`maxSize` you already set in the eksctl config), then shrinks it when nodes sit underused.
+
+```bash
+# IAM permissions via IRSA (the same pattern as the ALB controller)
+cat > /tmp/cluster-autoscaler-policy.json << 'POLICY'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "autoscaling:DescribeAutoScalingGroups",
+        "autoscaling:DescribeAutoScalingInstances",
+        "autoscaling:DescribeLaunchConfigurations",
+        "autoscaling:DescribeScalingActivities",
+        "autoscaling:SetDesiredCapacity",
+        "autoscaling:TerminateInstanceInAutoScalingGroup",
+        "ec2:DescribeInstanceTypes",
+        "ec2:DescribeLaunchTemplateVersions",
+        "ec2:DescribeImages",
+        "ec2:GetInstanceTypesFromInstanceRequirements",
+        "eks:DescribeNodegroup"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+POLICY
+
+aws iam create-policy --policy-name ClusterAutoscalerPolicyPhase16 \
+  --policy-document file:///tmp/cluster-autoscaler-policy.json
+
+eksctl create iamserviceaccount --cluster "$CLUSTER_NAME" --namespace kube-system \
+  --name cluster-autoscaler \
+  --attach-policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/ClusterAutoscalerPolicyPhase16" \
+  --approve --region "$AWS_REGION"
+
+helm repo add autoscaler https://kubernetes.github.io/autoscaler
+helm repo update
+helm install cluster-autoscaler autoscaler/cluster-autoscaler \
+  --namespace kube-system \
+  --set autoDiscovery.clusterName="$CLUSTER_NAME" \
+  --set awsRegion="$AWS_REGION" \
+  --set rbac.serviceAccount.create=false \
+  --set rbac.serviceAccount.name=cluster-autoscaler
+
+kubectl -n kube-system rollout status deployment/cluster-autoscaler-aws-cluster-autoscaler
+```
+
+- `autoDiscovery.clusterName` makes the autoscaler find the node group by the `k8s.io/cluster-autoscaler/...` tags eksctl already put on it — no ASG names to hardcode.
+- Test it: raise the backend HPA's `maxReplicas` to something the two nodes cannot hold (say 12), run the k6 stress shape, and watch `kubectl get nodes -w` — a third node appears within ~2 minutes of Pods going Pending, and disappears ~10 minutes after load ends. Your PDBs (Step 7) are what guarantee the scale-*down* never drops the app below one Pod per tier.
+- The modern successor is **Karpenter** (https://karpenter.sh) — instead of resizing a fixed node group, it provisions right-sized instances directly, faster and often cheaper. Its setup (interruption queues, NodePool CRDs) deserves its own lab; learn the Cluster Autoscaler model first, then read Karpenter's docs with that mental model.
+
+### Extension 3: Automate The Deploy
+
+Wire the Phase 7 Jenkins pipeline (or GitHub Actions) at the front: build → test → scan → push to ECR → `kubectl apply -k` → rollout status → smoke test. Everything this guide did manually becomes one `git push`. Better yet, run it GitOps-style with the Phase 7 ArgoCD lab: point an Application at this phase's `app-k8s/` folder and let the cluster sync itself to Git — drift detection and audited rollbacks included.
 
 ## Congratulations
 

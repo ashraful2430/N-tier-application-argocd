@@ -70,6 +70,10 @@ Simple decision guide:
 | Canary | Gradual traffic exposure | Needs careful monitoring |
 | Feature flags | Turning features on or off without redeploying | App code must support the flag |
 
+## Database Note: Why Still A Pod And Not RDS?
+
+This phase runs PostgreSQL as a Pod on an EBS volume, even though the production answer is a managed database. That is deliberate: this phase's lessons need a database *inside* the cluster: blue-green and canary strategies need a stable stateful backend both app versions share, and keeping it in-cluster keeps this already-busy phase self-contained. The managed-database pattern has its own homes in this track — Phase 9 (Terraform production) provisions RDS as code, and Phase 16 (capstone) runs the full Kubernetes stack against RDS with the security groups, `DB_HOST` wiring, and backup division of labor spelled out. If you want RDS here, the capstone's "Create The Database First" section is a drop-in recipe: create the instance, remove the postgres Deployment/Service/PVC from the kustomization, point `DATABASE_URL` and the wait loops at the RDS endpoint.
+
 ## Recommended AWS Setup
 
 | Item | Recommended Value |
@@ -1867,6 +1871,197 @@ Reference:
 
 - Kubernetes ConfigMap: https://kubernetes.io/docs/concepts/configuration/configmap/
 - kubectl set env: https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands#set-env
+
+## Step 15: Multi-Environment Overlays With Kustomize
+
+Everything so far deployed one environment. Real teams run at least two — a dev/staging environment where changes land first, and production — and the single most common way to express the *differences* between them on Kubernetes is Kustomize's base-and-overlay pattern, which you have been half-using all along (`kubectl apply -k` reads a Kustomization).
+
+The idea: `app-k8s/` is the **base** — the environment-agnostic truth. An **overlay** is a folder that inherits the base and patches only what differs:
+
+```text
+app-k8s/                      (base: all 13 manifests, unchanged)
+overlays/
++-- dev/kustomization.yaml    (namespace devops-launchboard-dev, 1 replica, tiny HPA, own ALB)
++-- prod/kustomization.yaml   (3 replicas, bigger HPA, demo seeding OFF)
+```
+
+No manifest is copied. If you fix a probe in the base, both environments get the fix — the overlay only ever contains the *delta*. Compare that with the copy-the-folder-per-environment approach, where every fix must be applied N times and environments silently drift apart.
+
+### overlays/dev/kustomization.yaml
+
+```bash
+mkdir -p deployment/phase-13-advanced-deployments/overlays/dev deployment/phase-13-advanced-deployments/overlays/prod
+vim deployment/phase-13-advanced-deployments/overlays/dev/kustomization.yaml
+```
+
+Paste:
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: devops-launchboard-dev
+
+resources:
+  - ../../app-k8s
+
+patches:
+  - target:
+      kind: Deployment
+      name: launchboard-backend
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: launchboard-backend
+      spec:
+        replicas: 1
+  - target:
+      kind: Deployment
+      name: launchboard-frontend
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: launchboard-frontend
+      spec:
+        replicas: 1
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: launchboard-backend
+    patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: launchboard-backend
+      spec:
+        minReplicas: 1
+        maxReplicas: 2
+  - target:
+      kind: Ingress
+      name: launchboard-ingress
+    patch: |-
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: launchboard-ingress
+        annotations:
+          alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-13-dev
+```
+
+Line explanation:
+
+- `namespace: devops-launchboard-dev` is the namespace transformer: it stamps this namespace onto **every** resource the base produces (and renames the Namespace object itself). One line turns the whole stack into a parallel environment.
+- `resources: [../../app-k8s]` inherits the base. The overlay contains no manifests of its own.
+- Each `patches` entry targets one object by kind and name and merges a fragment over it (strategic merge). Dev runs 1 replica of each tier and an HPA of 1-2 — dev does not need production capacity, and this is where the cost savings of the pattern come from.
+- The Ingress patch changes only the `load-balancer-name` annotation, because two Ingresses cannot claim the same ALB name. Everything else about the Ingress is inherited.
+
+### overlays/prod/kustomization.yaml
+
+```bash
+vim deployment/phase-13-advanced-deployments/overlays/prod/kustomization.yaml
+```
+
+Paste:
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: devops-launchboard
+
+resources:
+  - ../../app-k8s
+
+patches:
+  - target:
+      kind: Deployment
+      name: launchboard-backend
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: launchboard-backend
+      spec:
+        replicas: 3
+  - target:
+      kind: ConfigMap
+      name: launchboard-config
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: launchboard-config
+      data:
+        SEED_DEMO_DATA: "false"
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: launchboard-backend
+    patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: launchboard-backend
+      spec:
+        minReplicas: 3
+        maxReplicas: 8
+```
+
+- Production keeps the original namespace (the base you already deployed *is* production — applying this overlay upgrades it in place), raises the floor to 3 replicas with an 3-8 HPA, and — the interesting one — flips `SEED_DEMO_DATA` to `"false"`: demo data belongs in dev, never in production. Environment-specific *behavior*, not just size, expressed as a patch.
+
+### See The Diff Before Touching Anything
+
+Kustomize renders locally without applying — the habit that makes overlays reviewable:
+
+```bash
+kubectl kustomize deployment/phase-13-advanced-deployments/overlays/dev | grep -E "kind:|namespace:|replicas:|SEED"
+kubectl kustomize deployment/phase-13-advanced-deployments/overlays/prod | grep -E "replicas:|SEED"
+```
+
+Read the output: same objects, different namespaces, different replica counts, different seeding. In a team, a pull request touching `overlays/prod/` gets a very different review than one touching `overlays/dev/` — the folder structure *is* the blast-radius signal.
+
+### Bring Up Dev Alongside Prod
+
+The dev namespace needs its own Secret (secrets are namespaced and never in Git):
+
+```bash
+kubectl kustomize deployment/phase-13-advanced-deployments/overlays/dev | kubectl apply -f - --dry-run=client > /dev/null && echo "renders clean"
+
+kubectl create namespace devops-launchboard-dev --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret generic launchboard-secret \
+  --namespace devops-launchboard-dev \
+  --from-literal=POSTGRES_PASSWORD='CHANGE_ME_STRONG_PASSWORD' \
+  --from-literal=DATABASE_URL='postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard'
+
+kubectl apply -k deployment/phase-13-advanced-deployments/overlays/dev
+kubectl -n devops-launchboard-dev get pods
+```
+
+A complete second environment appears — its own database, backend, frontend, and (after 2-3 minutes) its own ALB named `launchboard-phase-13-dev`. Note dev's `DATABASE_URL` still points at `launchboard-db` — the Service DNS resolves *within its own namespace*, so dev automatically talks to dev's database, not prod's. Namespaces gave you data isolation for free.
+
+Same CORS ritual as always, but scoped to dev (patch the dev ConfigMap with the dev ALB's DNS and restart the dev backend) if you want the dev UI fully working. For the overlay lesson itself, seeing both environments' Pods side by side is the point:
+
+```bash
+kubectl get pods -A | grep launchboard
+```
+
+### Tear Dev Down
+
+Dev's ALB costs money; when done exploring:
+
+```bash
+kubectl delete namespace devops-launchboard-dev
+```
+
+One namespace delete removes the whole environment — the overlay can recreate it identically any time. That disposability is the real multi-environment superpower: environments stop being precious.
+
+Where this connects: the Phase 7 GitOps lab deploys with an ArgoCD Application pointing at a Kustomize path — point one Application at `overlays/dev` and another at `overlays/prod`, and you have the standard production setup: every environment continuously synced from its own overlay, promoted by pull request.
+
+Reference:
+
+- Kustomize bases and overlays: https://kubectl.docs.kubernetes.io/guides/config_management/components/
+- Kustomization reference: https://kubectl.docs.kubernetes.io/references/kustomize/kustomization/
+- Patches: https://kubectl.docs.kubernetes.io/references/kustomize/kustomization/patches/
 
 ## Verification Commands
 
