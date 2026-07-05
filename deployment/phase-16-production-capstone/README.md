@@ -57,20 +57,20 @@ Everything the journey taught, assembled into one deployment you could genuinely
 
 | Concern | What this phase does | Learned in |
 | --- | --- | --- |
-| Repeatable infrastructure | Declarative eksctl config, all manifests in Git | 8, 14 |
-| Container hygiene | Multi-stage builds, non-root, pinned UIDs, image scanning | 3, 10 |
-| Zero-downtime deploys | RollingUpdate, maxUnavailable 0, readiness gates | 6, 11 |
+| Repeatable infrastructure | Declarative eksctl config, all manifests in Git | 8, 9 |
+| Container hygiene | Multi-stage builds, non-root, pinned UIDs, image scanning | 3, 12 |
+| Zero-downtime deploys | RollingUpdate, maxUnavailable 0, readiness gates | 6, 13 |
 | Self-healing | Deployments, liveness probes, managed node groups | 6, 8 |
-| Autoscaling | HPA 2-5 on CPU, node group 2-4 | 8, 13 |
+| Autoscaling | HPA 2-5 on CPU, node group 2-4 | 8, 15 |
 | Availability under maintenance | PodDisruptionBudgets | new here |
-| Network segmentation | Default-deny NetworkPolicies per tier | 10 |
-| Secrets | Kubernetes Secret created out-of-band, never in Git | 6-13 |
-| Observability | Prometheus, Grafana dashboards, Alertmanager | 9 |
-| Backups + DR | Velero daily schedule to S3 + EBS snapshots, restore drill | 12 |
-| Load validation | k6 load test with latency/error thresholds, HPA verified | 13 |
-| Operations | Written runbook with incident situations | 12 |
+| Network segmentation | Default-deny NetworkPolicies per tier | 12 |
+| Secrets | Kubernetes Secret created out-of-band, never in Git | 6-8, 11-15 |
+| Observability | Prometheus, Grafana dashboards, Alertmanager | 11 |
+| Backups + DR | Velero daily schedule to S3 + EBS snapshots, restore drill | 14 |
+| Load validation | k6 load test with latency/error thresholds, HPA verified | 15 |
+| Operations | Written runbook with incident situations | 14 |
 
-Deliberately out of scope (each costs money or needs an org): custom domain + TLS (Route 53 + ACM), multi-AZ RDS instead of in-cluster PostgreSQL (Phase 14 production shows RDS), CI/CD automation (Phase 7 shows the Jenkins pipeline — this phase deploys manually so every step is visible one last time).
+Deliberately out of scope (each costs money or needs an org): custom domain + TLS (Route 53 + ACM), multi-AZ RDS instead of in-cluster PostgreSQL (Phase 9 production shows RDS), CI/CD automation (Phase 7 shows the Jenkins pipeline — this phase deploys manually so every step is visible one last time).
 
 ## Cost Warning
 
@@ -339,7 +339,7 @@ Reference:
 
 ### Dockerfiles and Nginx config
 
-The images are the hardened builds used since Phase 8. Full line-by-line explanations live in the Phase 9 guide; the production-relevant properties: multi-stage (no compilers/Node in runtime images), non-root with pinned UIDs (10001 backend, 101 frontend), HEALTHCHECKs, `--proxy-headers` for correct client IPs behind the ALB.
+The images are the hardened builds used since Phase 8. Full line-by-line explanations live in the Phase 11 guide; the production-relevant properties: multi-stage (no compilers/Node in runtime images), non-root with pinned UIDs (10001 backend, 101 frontend), HEALTHCHECKs, `--proxy-headers` for correct client IPs behind the ALB.
 
 ```bash
 vim deployment/phase-16-production-capstone/Dockerfile.backend
@@ -629,7 +629,7 @@ Reference:
 
 ## Step 7: Create And Deploy The Application Manifests
 
-All files go in `deployment/phase-16-production-capstone/app-k8s/`. These are the battle-tested manifests from phases 8-13 (deep line-by-line in the Phase 9 and Phase 13 guides) plus two capstone additions explained in full: `pdb.yaml` and `networkpolicies.yaml`.
+All files go in `deployment/phase-16-production-capstone/app-k8s/`. These are the battle-tested manifests from phases 8 and 11-15 (deep line-by-line in the Phase 11 and Phase 15 guides) plus two capstone additions explained in full: `pdb.yaml` and `networkpolicies.yaml`.
 
 ### namespace.yaml
 
@@ -1297,7 +1297,7 @@ Line explanation:
 - `allow-frontend-from-anywhere` permits inbound TCP 8080 to frontend Pods from any source — required because the ALB (target-type `ip`) sends traffic straight to Pod IPs from outside the cluster, so no `podSelector` could describe it.
 - `allow-backend-from-frontend` is the tier rule: only Pods labeled `app: launchboard-frontend` may open connections to backend port 8000. `curl` from any other Pod in the cluster now times out — you can prove it after deploying (see verification below).
 - `allow-db-from-backend-and-migrate` restricts PostgreSQL to the backend and the migration Job (multiple `podSelector` entries in one `from` list are OR-ed).
-- These are the same tier boundaries the Phase 14 security groups and Phase 15 security groups drew at the VPC layer — here enforced between Pods by the VPC CNI's network policy agent enabled in Step 4.
+- These are the same tier boundaries the Phase 9 security groups and Phase 10 security groups drew at the VPC layer — here enforced between Pods by the VPC CNI's network policy agent enabled in Step 4.
 
 Reference:
 
@@ -1560,7 +1560,7 @@ helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
 kubectl -n observability get pods
 ```
 
-The values are the Phase 9 configuration (full line-by-line there): persistent Prometheus on a gp3 PVC with 3-day/5 GB retention, three auto-imported Grafana dashboards, all-namespace ServiceMonitor discovery, and etcd/scheduler rules disabled because EKS manages that control plane.
+The values are the Phase 11 configuration (full line-by-line there): persistent Prometheus on a gp3 PVC with 3-day/5 GB retention, three auto-imported Grafana dashboards, all-namespace ServiceMonitor discovery, and etcd/scheduler rules disabled because EKS manages that control plane.
 
 Access Grafana (add port 3000 to the workstation security group, your IP only):
 
@@ -1790,7 +1790,7 @@ export default function () {
 
 Line explanation:
 
-- `stages` ramp to 20 virtual users over 2 minutes, hold for 5, ramp down — the standard load-test shape (ramp/hold/ramp) from Phase 13.
+- `stages` ramp to 20 virtual users over 2 minutes, hold for 5, ramp down — the standard load-test shape (ramp/hold/ramp) from Phase 15.
 - `thresholds` are the pass/fail contract: under 2% failed requests, 95th percentile under 800 ms, 99th under 1500 ms. If any threshold fails, k6 exits non-zero — in a pipeline, that fails the build.
 - Each iteration fetches three endpoints in parallel with `http.batch` (frontend page, backend health through the frontend proxy, backend readiness) and `check`s each for 200.
 

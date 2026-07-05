@@ -1,4 +1,4 @@
-# Phase 11: Advanced Deployment Strategies
+# Phase 13: Advanced Deployment Strategies
 
 ## Fresh Start Assumption
 
@@ -75,7 +75,7 @@ Simple decision guide:
 | Item | Recommended Value |
 | --- | --- |
 | AWS Region | `us-east-1` or the closest region |
-| Cluster Name | `devops-launchboard-phase-11` |
+| Cluster Name | `devops-launchboard-phase-13` |
 | Kubernetes Version | `1.34` |
 | Node Type | `t3.medium` |
 | Desired Nodes | `2` |
@@ -186,8 +186,8 @@ Run:
 cd ~
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
-ssh-keygen -t ed25519 -C "devops-launchboard-phase-11" -f ~/.ssh/devops_launchboard_phase_11
-cat ~/.ssh/devops_launchboard_phase_11.pub
+ssh-keygen -t ed25519 -C "devops-launchboard-phase-13" -f ~/.ssh/devops_launchboard_phase_13
+cat ~/.ssh/devops_launchboard_phase_13.pub
 ```
 
 Add the printed public key to GitHub:
@@ -211,7 +211,7 @@ Paste:
 Host github.com
   HostName github.com
   User git
-  IdentityFile ~/.ssh/devops_launchboard_phase_11
+  IdentityFile ~/.ssh/devops_launchboard_phase_13
   IdentitiesOnly yes
 ```
 
@@ -219,8 +219,8 @@ Secure and test:
 
 ```bash
 chmod 600 ~/.ssh/config
-chmod 600 ~/.ssh/devops_launchboard_phase_11
-chmod 644 ~/.ssh/devops_launchboard_phase_11.pub
+chmod 600 ~/.ssh/devops_launchboard_phase_13
+chmod 644 ~/.ssh/devops_launchboard_phase_13.pub
 ssh -T git@github.com
 ```
 
@@ -255,18 +255,18 @@ Why this step exists:
 
 The application code, Dockerfiles, and deployment files must exist locally before we build images or deploy to Kubernetes.
 
-## Step 5: Create Phase 11 Folders
+## Step 5: Create Phase 13 Folders
 
 Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-mkdir -p deployment/phase-11-advanced-deployments/cluster
-mkdir -p deployment/phase-11-advanced-deployments/ecr
-mkdir -p deployment/phase-11-advanced-deployments/app-k8s
-mkdir -p deployment/phase-11-advanced-deployments/blue-green
-mkdir -p deployment/phase-11-advanced-deployments/canary
-mkdir -p deployment/phase-11-advanced-deployments/feature-flags
+mkdir -p deployment/phase-13-advanced-deployments/cluster
+mkdir -p deployment/phase-13-advanced-deployments/ecr
+mkdir -p deployment/phase-13-advanced-deployments/app-k8s
+mkdir -p deployment/phase-13-advanced-deployments/blue-green
+mkdir -p deployment/phase-13-advanced-deployments/canary
+mkdir -p deployment/phase-13-advanced-deployments/feature-flags
 ```
 
 Why these folders exist:
@@ -283,7 +283,7 @@ Why these folders exist:
 Run:
 
 ```bash
-vim deployment/phase-11-advanced-deployments/cluster/eksctl-cluster.yaml
+vim deployment/phase-13-advanced-deployments/cluster/eksctl-cluster.yaml
 ```
 
 Paste:
@@ -293,7 +293,7 @@ apiVersion: eksctl.io/v1alpha5
 kind: ClusterConfig
 
 metadata:
-  name: devops-launchboard-phase-11
+  name: devops-launchboard-phase-13
   region: YOUR_AWS_REGION
   version: "1.34"
 
@@ -325,7 +325,7 @@ managedNodeGroups:
       workload: launchboard
     tags:
       Project: devops-launchboard
-      Environment: phase-11
+      Environment: phase-13
       Owner: student
 
 cloudWatch:
@@ -346,7 +346,7 @@ addons:
 Replace `YOUR_AWS_REGION` and create the cluster:
 
 ```bash
-eksctl create cluster -f deployment/phase-11-advanced-deployments/cluster/eksctl-cluster.yaml
+eksctl create cluster -f deployment/phase-13-advanced-deployments/cluster/eksctl-cluster.yaml
 kubectl get nodes
 ```
 
@@ -377,7 +377,7 @@ aws ecr create-repository --repository-name launchboard-frontend --region $AWS_R
 Create lifecycle policy:
 
 ```bash
-vim deployment/phase-11-advanced-deployments/ecr/lifecycle-policy.json
+vim deployment/phase-13-advanced-deployments/ecr/lifecycle-policy.json
 ```
 
 Paste:
@@ -387,10 +387,10 @@ Paste:
   "rules": [
     {
       "rulePriority": 1,
-      "description": "Keep the latest 10 phase 11 images",
+      "description": "Keep the latest 10 phase 13 images",
       "selection": {
         "tagStatus": "tagged",
-        "tagPrefixList": ["phase-11"],
+        "tagPrefixList": ["phase-13"],
         "countType": "imageCountMoreThan",
         "countNumber": 10
       },
@@ -420,18 +420,18 @@ Apply:
 ```bash
 aws ecr put-lifecycle-policy \
   --repository-name launchboard-backend \
-  --lifecycle-policy-text file://deployment/phase-11-advanced-deployments/ecr/lifecycle-policy.json \
+  --lifecycle-policy-text file://deployment/phase-13-advanced-deployments/ecr/lifecycle-policy.json \
   --region $AWS_REGION
 
 aws ecr put-lifecycle-policy \
   --repository-name launchboard-frontend \
-  --lifecycle-policy-text file://deployment/phase-11-advanced-deployments/ecr/lifecycle-policy.json \
+  --lifecycle-policy-text file://deployment/phase-13-advanced-deployments/ecr/lifecycle-policy.json \
   --region $AWS_REGION
 ```
 
 Line explanation:
 
-- `rulePriority: 1` keeps only the 10 most recent images tagged with the `phase-11` prefix (which also matches `phase-11-blue`, `phase-11-green`, and `phase-11-canary` since ECR prefix matching is a string prefix, not an exact match) — older ones beyond the 10 most recent are expired automatically.
+- `rulePriority: 1` keeps only the 10 most recent images tagged with the `phase-13` prefix (which also matches `phase-13-blue`, `phase-13-green`, and `phase-13-canary` since ECR prefix matching is a string prefix, not an exact match) — older ones beyond the 10 most recent are expired automatically.
 - `rulePriority: 2` deletes untagged images (orphaned layers left behind when a tag is moved or overwritten) after 7 days.
 - `put-lifecycle-policy` attaches this same policy to both repositories, so neither one accumulates old release images forever.
 
@@ -448,7 +448,7 @@ Reference:
 Create:
 
 ```bash
-vim deployment/phase-11-advanced-deployments/Dockerfile.backend
+vim deployment/phase-13-advanced-deployments/Dockerfile.backend
 ```
 
 Paste:
@@ -516,7 +516,7 @@ Line explanation:
 Create:
 
 ```bash
-vim deployment/phase-11-advanced-deployments/Dockerfile.frontend
+vim deployment/phase-13-advanced-deployments/Dockerfile.frontend
 ```
 
 Paste:
@@ -537,7 +537,7 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
-COPY deployment/phase-11-advanced-deployments/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deployment/phase-13-advanced-deployments/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
@@ -553,7 +553,7 @@ This uses the `nginxinc/nginx-unprivileged` image (UID 101), consistent with the
 Create:
 
 ```bash
-vim deployment/phase-11-advanced-deployments/nginx-frontend.conf
+vim deployment/phase-13-advanced-deployments/nginx-frontend.conf
 ```
 
 Paste:
@@ -647,51 +647,51 @@ Line explanation:
 Build images:
 
 ```bash
-docker build -f deployment/phase-11-advanced-deployments/Dockerfile.backend \
-  -t launchboard-backend:phase-11 .
+docker build -f deployment/phase-13-advanced-deployments/Dockerfile.backend \
+  -t launchboard-backend:phase-13 .
 
-docker build -f deployment/phase-11-advanced-deployments/Dockerfile.frontend \
+docker build -f deployment/phase-13-advanced-deployments/Dockerfile.frontend \
   --build-arg VITE_API_URL=/api \
-  -t launchboard-frontend:phase-11 .
+  -t launchboard-frontend:phase-13 .
 ```
 
 Line explanation:
 
-- `-f deployment/phase-11-advanced-deployments/Dockerfile.backend` points Docker at this phase's own Dockerfile rather than the default `./Dockerfile`.
+- `-f deployment/phase-13-advanced-deployments/Dockerfile.backend` points Docker at this phase's own Dockerfile rather than the default `./Dockerfile`.
 - The trailing `.` on each command is the build context — the directory Docker reads `COPY` instructions relative to. It must be the repository root, because the Dockerfiles `COPY backend/...` and `COPY frontend/...`.
-- `-t launchboard-backend:phase-11` tags the image locally with a name and tag before it has any relationship to ECR at all; the registry hostname is added separately in the tagging step below.
+- `-t launchboard-backend:phase-13` tags the image locally with a name and tag before it has any relationship to ECR at all; the registry hostname is added separately in the tagging step below.
 - `--build-arg VITE_API_URL=/api` on the frontend build embeds a relative API path into the compiled JavaScript at build time, so the frontend calls `/api/...` and lets Nginx proxy it to the backend rather than hardcoding a hostname.
 
 Create release tags. This phase needs five different tags on the same two images: one plain release tag per image, plus `-blue`, `-green`, and `-canary` variants of the backend image so each release-strategy step in this phase has its own image to point at:
 
 ```bash
-docker tag launchboard-backend:phase-11 $ECR_REGISTRY/launchboard-backend:phase-11
-docker tag launchboard-backend:phase-11 $ECR_REGISTRY/launchboard-backend:phase-11-blue
-docker tag launchboard-backend:phase-11 $ECR_REGISTRY/launchboard-backend:phase-11-green
-docker tag launchboard-backend:phase-11 $ECR_REGISTRY/launchboard-backend:phase-11-canary
-docker tag launchboard-frontend:phase-11 $ECR_REGISTRY/launchboard-frontend:phase-11
+docker tag launchboard-backend:phase-13 $ECR_REGISTRY/launchboard-backend:phase-13
+docker tag launchboard-backend:phase-13 $ECR_REGISTRY/launchboard-backend:phase-13-blue
+docker tag launchboard-backend:phase-13 $ECR_REGISTRY/launchboard-backend:phase-13-green
+docker tag launchboard-backend:phase-13 $ECR_REGISTRY/launchboard-backend:phase-13-canary
+docker tag launchboard-frontend:phase-13 $ECR_REGISTRY/launchboard-frontend:phase-13
 ```
 
 Line explanation:
 
 - `docker tag <local-name> <new-name>` does not copy or rebuild anything — it just adds a second name pointing at the same image bytes already on disk. That is why all four backend lines are instant: they are four labels on one image.
-- `$ECR_REGISTRY/launchboard-backend:phase-11` is the full name `docker push` needs: registry hostname, repository name, and tag, in that order.
+- `$ECR_REGISTRY/launchboard-backend:phase-13` is the full name `docker push` needs: registry hostname, repository name, and tag, in that order.
 - The `-blue`, `-green`, and `-canary` tags exist only so Step 12 and Step 13 have distinct image references to deploy under each release strategy. In this lab they point at identical image bytes; in real production, you would build `-green` or `-canary` from a newer commit so the new version is actually different code.
 
 Push every tag to ECR:
 
 ```bash
-docker push $ECR_REGISTRY/launchboard-backend:phase-11
-docker push $ECR_REGISTRY/launchboard-backend:phase-11-blue
-docker push $ECR_REGISTRY/launchboard-backend:phase-11-green
-docker push $ECR_REGISTRY/launchboard-backend:phase-11-canary
-docker push $ECR_REGISTRY/launchboard-frontend:phase-11
+docker push $ECR_REGISTRY/launchboard-backend:phase-13
+docker push $ECR_REGISTRY/launchboard-backend:phase-13-blue
+docker push $ECR_REGISTRY/launchboard-backend:phase-13-green
+docker push $ECR_REGISTRY/launchboard-backend:phase-13-canary
+docker push $ECR_REGISTRY/launchboard-frontend:phase-13
 ```
 
 Line explanation:
 
 - Each `docker push` uploads one tag to its ECR repository. Because all four backend tags reference the same underlying image layers, Docker uploads the actual layer data once and the remaining pushes only need to register the new tag name — they finish almost instantly after the first.
-- After this step, `aws ecr describe-images --repository-name launchboard-backend --region $AWS_REGION` would list four tags (`phase-11`, `phase-11-blue`, `phase-11-green`, `phase-11-canary`) all pointing at the same image digest.
+- After this step, `aws ecr describe-images --repository-name launchboard-backend --region $AWS_REGION` would list four tags (`phase-13`, `phase-13-blue`, `phase-13-green`, `phase-13-canary`) all pointing at the same image digest.
 
 Why this step exists:
 
@@ -703,12 +703,12 @@ Reference:
 
 ## Step 10: Deploy The Base Application
 
-All manifests go inside `deployment/phase-11-advanced-deployments/app-k8s/`. Every container here already sets `allowPrivilegeEscalation: false` and drops all Linux capabilities, the same hardened baseline introduced in Phase 10, so that the safer-release techniques in this phase build on top of an already security-conscious deployment.
+All manifests go inside `deployment/phase-13-advanced-deployments/app-k8s/`. Every container here already sets `allowPrivilegeEscalation: false` and drops all Linux capabilities, the same hardened baseline introduced in Phase 12, so that the safer-release techniques in this phase build on top of an already security-conscious deployment.
 
 #### namespace.yaml
 
 ```bash
-vim deployment/phase-11-advanced-deployments/app-k8s/namespace.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/namespace.yaml
 ```
 
 ```yaml
@@ -726,7 +726,7 @@ A Namespace is a logical boundary inside Kubernetes; every other resource below 
 #### storageclass.yaml
 
 ```bash
-vim deployment/phase-11-advanced-deployments/app-k8s/storageclass.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/storageclass.yaml
 ```
 
 ```yaml
@@ -747,7 +747,7 @@ parameters:
 #### configmap.yaml
 
 ```bash
-vim deployment/phase-11-advanced-deployments/app-k8s/configmap.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/configmap.yaml
 ```
 
 ```yaml
@@ -770,7 +770,7 @@ data:
 #### secret.example.yaml
 
 ```bash
-vim deployment/phase-11-advanced-deployments/app-k8s/secret.example.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/secret.example.yaml
 ```
 
 ```yaml
@@ -790,7 +790,7 @@ Example only — copy it to a real Secret and replace the placeholder password.
 #### pvc.yaml
 
 ```bash
-vim deployment/phase-11-advanced-deployments/app-k8s/pvc.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/pvc.yaml
 ```
 
 ```yaml
@@ -813,7 +813,7 @@ spec:
 #### launchboard-postgres-deployment.yaml
 
 ```bash
-vim deployment/phase-11-advanced-deployments/app-k8s/launchboard-postgres-deployment.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/launchboard-postgres-deployment.yaml
 ```
 
 ```yaml
@@ -914,7 +914,7 @@ spec:
 #### launchboard-postgres-service.yaml
 
 ```bash
-vim deployment/phase-11-advanced-deployments/app-k8s/launchboard-postgres-service.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/launchboard-postgres-service.yaml
 ```
 
 ```yaml
@@ -938,7 +938,7 @@ spec:
 #### launchboard-migration-job.yaml
 
 ```bash
-vim deployment/phase-11-advanced-deployments/app-k8s/launchboard-migration-job.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/launchboard-migration-job.yaml
 ```
 
 ```yaml
@@ -963,7 +963,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: migrate
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-11
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-13
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -993,12 +993,12 @@ spec:
               memory: 256Mi
 ```
 
-`image` pulls from your private ECR repository — replace both placeholders, e.g. `123456789012.dkr.ecr.us-east-1.amazonaws.com/launchboard-backend:phase-11`. A Job runs its Pod once to completion and stops, unlike a Deployment; `restartPolicy: OnFailure` retries only on failure.
+`image` pulls from your private ECR repository — replace both placeholders, e.g. `123456789012.dkr.ecr.us-east-1.amazonaws.com/launchboard-backend:phase-13`. A Job runs its Pod once to completion and stops, unlike a Deployment; `restartPolicy: OnFailure` retries only on failure.
 
 #### launchboard-backend-deployment.yaml
 
 ```bash
-vim deployment/phase-11-advanced-deployments/app-k8s/launchboard-backend-deployment.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/launchboard-backend-deployment.yaml
 ```
 
 ```yaml
@@ -1032,7 +1032,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: backend
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-11
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-13
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -1082,7 +1082,7 @@ This is the Deployment you practice blue-green and canary releases against in St
 #### launchboard-backend-service.yaml
 
 ```bash
-vim deployment/phase-11-advanced-deployments/app-k8s/launchboard-backend-service.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/launchboard-backend-service.yaml
 ```
 
 ```yaml
@@ -1106,7 +1106,7 @@ spec:
 #### launchboard-frontend-deployment.yaml
 
 ```bash
-vim deployment/phase-11-advanced-deployments/app-k8s/launchboard-frontend-deployment.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/launchboard-frontend-deployment.yaml
 ```
 
 ```yaml
@@ -1141,7 +1141,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: frontend
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-frontend:phase-11
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-frontend:phase-13
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -1177,7 +1177,7 @@ spec:
 #### launchboard-frontend-service.yaml
 
 ```bash
-vim deployment/phase-11-advanced-deployments/app-k8s/launchboard-frontend-service.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/launchboard-frontend-service.yaml
 ```
 
 ```yaml
@@ -1201,7 +1201,7 @@ Port 80 is what the Ingress targets; port 8080 is the Pod's actual non-root port
 #### ingress.yaml
 
 ```bash
-vim deployment/phase-11-advanced-deployments/app-k8s/ingress.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/ingress.yaml
 ```
 
 ```yaml
@@ -1215,7 +1215,7 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
-    alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-11
+    alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-13
 spec:
   ingressClassName: alb
   rules:
@@ -1235,7 +1235,7 @@ spec:
 #### hpa.yaml
 
 ```bash
-vim deployment/phase-11-advanced-deployments/app-k8s/hpa.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/hpa.yaml
 ```
 
 ```yaml
@@ -1265,7 +1265,7 @@ If average backend CPU usage exceeds 70% of requested CPU, the HPA scales up to 
 #### kustomization.yaml
 
 ```bash
-vim deployment/phase-11-advanced-deployments/app-k8s/kustomization.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/kustomization.yaml
 ```
 
 ```yaml
@@ -1301,13 +1301,13 @@ cd /opt/devops-launchboard/app-source
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
 sed -i "s|YOUR_ACCOUNT_ID|${ACCOUNT_ID}|g; s|YOUR_AWS_REGION|${AWS_REGION}|g" \
-  deployment/phase-11-advanced-deployments/app-k8s/launchboard-backend-deployment.yaml \
-  deployment/phase-11-advanced-deployments/app-k8s/launchboard-migration-job.yaml \
-  deployment/phase-11-advanced-deployments/app-k8s/launchboard-frontend-deployment.yaml
+  deployment/phase-13-advanced-deployments/app-k8s/launchboard-backend-deployment.yaml \
+  deployment/phase-13-advanced-deployments/app-k8s/launchboard-migration-job.yaml \
+  deployment/phase-13-advanced-deployments/app-k8s/launchboard-frontend-deployment.yaml
 
-cp deployment/phase-11-advanced-deployments/app-k8s/secret.example.yaml \
-   deployment/phase-11-advanced-deployments/app-k8s/secret.yaml
-vim deployment/phase-11-advanced-deployments/app-k8s/secret.yaml
+cp deployment/phase-13-advanced-deployments/app-k8s/secret.example.yaml \
+   deployment/phase-13-advanced-deployments/app-k8s/secret.yaml
+vim deployment/phase-13-advanced-deployments/app-k8s/secret.yaml
 ```
 
 Line explanation:
@@ -1318,8 +1318,8 @@ Line explanation:
 Replace `CHANGE_ME_STRONG_PASSWORD` in `secret.yaml` with a real password (both occurrences), then apply:
 
 ```bash
-kubectl apply -f deployment/phase-11-advanced-deployments/app-k8s/secret.yaml
-kubectl apply -k deployment/phase-11-advanced-deployments/app-k8s
+kubectl apply -f deployment/phase-13-advanced-deployments/app-k8s/secret.yaml
+kubectl apply -k deployment/phase-13-advanced-deployments/app-k8s
 kubectl -n devops-launchboard get pods
 ```
 
@@ -1346,10 +1346,10 @@ Create controller service account:
 
 ```bash
 eksctl create iamserviceaccount \
-  --cluster devops-launchboard-phase-11 \
+  --cluster devops-launchboard-phase-13 \
   --namespace kube-system \
   --name aws-load-balancer-controller \
-  --role-name devops-launchboard-phase-11-alb-controller \
+  --role-name devops-launchboard-phase-13-alb-controller \
   --attach-policy-arn arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess \
   --approve
 ```
@@ -1359,7 +1359,7 @@ Install:
 ```bash
 helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
   --namespace kube-system \
-  --set clusterName=devops-launchboard-phase-11 \
+  --set clusterName=devops-launchboard-phase-13 \
   --set serviceAccount.create=false \
   --set serviceAccount.name=aws-load-balancer-controller
 ```
@@ -1373,7 +1373,7 @@ kubectl -n devops-launchboard get ingress
 Command explanation:
 
 - `eksctl create iamserviceaccount` creates an IAM role, a Kubernetes ServiceAccount in `kube-system`, and a trust relationship between them via the cluster's OIDC provider (IRSA) — the controller Pod automatically receives temporary credentials for the role, with no access keys stored in the cluster.
-- `--attach-policy-arn arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess` uses a broad AWS managed policy for simplicity in this phase, since the focus here is release strategy, not IAM hardening. Phase 10 walks through downloading the controller's official least-privilege policy instead and attaching a custom policy scoped to only what the controller needs — worth doing here too if you want stricter IAM alongside blue-green and canary practice.
+- `--attach-policy-arn arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess` uses a broad AWS managed policy for simplicity in this phase, since the focus here is release strategy, not IAM hardening. Phase 12 walks through downloading the controller's official least-privilege policy instead and attaching a custom policy scoped to only what the controller needs — worth doing here too if you want stricter IAM alongside blue-green and canary practice.
 - `helm upgrade --install` deploys the controller from the official EKS Helm chart repository; `--set serviceAccount.create=false` tells Helm to use the ServiceAccount `eksctl` already created instead of making its own.
 
 Why this step exists:
@@ -1396,7 +1396,7 @@ Blue-green means two versions run at the same time:
 Create:
 
 ```bash
-vim deployment/phase-11-advanced-deployments/blue-green/active-backend-service.yaml
+vim deployment/phase-13-advanced-deployments/blue-green/active-backend-service.yaml
 ```
 
 Paste:
@@ -1421,7 +1421,7 @@ spec:
 Create:
 
 ```bash
-vim deployment/phase-11-advanced-deployments/blue-green/blue-deployment.yaml
+vim deployment/phase-13-advanced-deployments/blue-green/blue-deployment.yaml
 ```
 
 Paste:
@@ -1458,7 +1458,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: backend
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-11-blue
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-13-blue
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -1506,13 +1506,13 @@ spec:
 `labels.track: blue` and `selector.matchLabels.track: blue` are what separates this Deployment from `green` below — both carry `app: launchboard-backend` so either can be selected by the `active-backend-service.yaml` Service created above, but only one `track` value at a time.
 
 ```bash
-vim deployment/phase-11-advanced-deployments/blue-green/green-deployment.yaml
+vim deployment/phase-13-advanced-deployments/blue-green/green-deployment.yaml
 ```
 
-Paste the same content as `blue-deployment.yaml`, but change every occurrence of `blue` to `green`: `metadata.name: launchboard-backend-green`, `labels.track: green`, `selector.matchLabels.track: green`, `template.metadata.labels.track: green`, and the image tag `:phase-11-green`.
+Paste the same content as `blue-deployment.yaml`, but change every occurrence of `blue` to `green`: `metadata.name: launchboard-backend-green`, `labels.track: green`, `selector.matchLabels.track: green`, `template.metadata.labels.track: green`, and the image tag `:phase-13-green`.
 
 ```bash
-vim deployment/phase-11-advanced-deployments/blue-green/kustomization.yaml
+vim deployment/phase-13-advanced-deployments/blue-green/kustomization.yaml
 ```
 
 Paste:
@@ -1533,7 +1533,7 @@ Deploy blue-green:
 ```bash
 kubectl -n devops-launchboard delete deployment launchboard-backend
 
-kubectl apply -k deployment/phase-11-advanced-deployments/blue-green
+kubectl apply -k deployment/phase-13-advanced-deployments/blue-green
 
 kubectl -n devops-launchboard get pods -l app=launchboard-backend --show-labels
 kubectl -n devops-launchboard describe service launchboard-backend
@@ -1611,7 +1611,7 @@ The plugin adds the `kubectl argo rollouts` subcommands used later in this step 
 Create:
 
 ```bash
-vim deployment/phase-11-advanced-deployments/canary/argo-rollout.yaml
+vim deployment/phase-13-advanced-deployments/canary/argo-rollout.yaml
 ```
 
 Paste:
@@ -1653,7 +1653,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: backend
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-11-canary
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-13-canary
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -1703,7 +1703,7 @@ spec:
 - `maxSurge: 1` / `maxUnavailable: 0` controls how Pods are added/removed during each step, the same safety guarantee as a normal rolling update.
 
 ```bash
-vim deployment/phase-11-advanced-deployments/canary/kustomization.yaml
+vim deployment/phase-13-advanced-deployments/canary/kustomization.yaml
 ```
 
 Paste:
@@ -1736,7 +1736,7 @@ Line explanation:
 Apply rollout:
 
 ```bash
-kubectl apply -k deployment/phase-11-advanced-deployments/canary
+kubectl apply -k deployment/phase-13-advanced-deployments/canary
 
 kubectl -n devops-launchboard get rollout
 kubectl -n devops-launchboard get pods -l app=launchboard-backend
@@ -1786,8 +1786,8 @@ Feature flags let teams enable or disable behavior without building a new image.
 Create:
 
 ```bash
-vim deployment/phase-11-advanced-deployments/feature-flags/configmap-flags.yaml
-vim deployment/phase-11-advanced-deployments/feature-flags/kustomization.yaml
+vim deployment/phase-13-advanced-deployments/feature-flags/configmap-flags.yaml
+vim deployment/phase-13-advanced-deployments/feature-flags/kustomization.yaml
 ```
 
 Paste into `configmap-flags.yaml`:
@@ -1801,7 +1801,7 @@ metadata:
 data:
   ENABLE_ADVANCED_METRICS: "true"
   ENABLE_DEMO_SEED: "false"
-  RELEASE_BANNER: "Phase 11 controlled release"
+  RELEASE_BANNER: "Phase 13 controlled release"
 ```
 
 Line explanation:
@@ -1822,7 +1822,7 @@ resources:
 Apply:
 
 ```bash
-kubectl apply -k deployment/phase-11-advanced-deployments/feature-flags
+kubectl apply -k deployment/phase-13-advanced-deployments/feature-flags
 ```
 
 This creates the `launchboard-feature-flags` ConfigMap in the cluster. By itself this does nothing yet — no running Pod reads it until you attach it to a workload in one of the two ways below.
@@ -1957,16 +1957,16 @@ kubectl -n devops-launchboard describe service launchboard-backend
 Delete advanced release resources:
 
 ```bash
-kubectl delete -k deployment/phase-11-advanced-deployments/feature-flags
-kubectl delete -k deployment/phase-11-advanced-deployments/canary
-kubectl delete -k deployment/phase-11-advanced-deployments/blue-green
+kubectl delete -k deployment/phase-13-advanced-deployments/feature-flags
+kubectl delete -k deployment/phase-13-advanced-deployments/canary
+kubectl delete -k deployment/phase-13-advanced-deployments/blue-green
 ```
 
 Delete app:
 
 ```bash
-kubectl delete -f deployment/phase-11-advanced-deployments/app-k8s/secret.yaml
-kubectl delete -k deployment/phase-11-advanced-deployments/app-k8s
+kubectl delete -f deployment/phase-13-advanced-deployments/app-k8s/secret.yaml
+kubectl delete -k deployment/phase-13-advanced-deployments/app-k8s
 ```
 
 Delete Argo Rollouts:
@@ -1978,7 +1978,7 @@ kubectl delete namespace argo-rollouts
 Delete cluster:
 
 ```bash
-eksctl delete cluster -f deployment/phase-11-advanced-deployments/cluster/eksctl-cluster.yaml
+eksctl delete cluster -f deployment/phase-13-advanced-deployments/cluster/eksctl-cluster.yaml
 ```
 
 Delete ECR repositories:
@@ -2023,4 +2023,4 @@ aws ecr delete-repository --repository-name launchboard-frontend --force --regio
 
 ## Next Step
 
-Move to Phase 12 to learn disaster recovery, backup, restore, and incident response.
+Move to Phase 14 to learn disaster recovery, backup, restore, and incident response.

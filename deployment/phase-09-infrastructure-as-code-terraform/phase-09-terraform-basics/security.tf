@@ -1,5 +1,5 @@
 resource "aws_security_group" "app" {
-  name        = "launchboard-phase-14-basics-sg"
+  name        = "launchboard-phase-9-basics-sg"
   description = "SSH from my IP, HTTP from anywhere"
   vpc_id      = data.aws_vpc.default.id
 
@@ -28,6 +28,6 @@ resource "aws_security_group" "app" {
   }
 
   tags = {
-    Name = "launchboard-phase-14-basics-sg"
+    Name = "launchboard-phase-9-basics-sg"
   }
 }

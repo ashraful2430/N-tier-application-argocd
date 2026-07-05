@@ -1,10 +1,10 @@
-# Phase 14 (Part 2): Terraform Production
+# Phase 9 (Part 2): Terraform Production
 
 ## Fresh Start Assumption
 
 This phase starts from a clean AWS environment and a clean Ubuntu workstation.
 
-You must complete `phase-14-terraform-basics` first — this guide uses every concept it taught (providers, variables, data sources, state, plan/apply) without re-explaining them from zero.
+You must complete `phase-09-terraform-basics` first — this guide uses every concept it taught (providers, variables, data sources, state, plan/apply) without re-explaining them from zero.
 
 This guide assumes:
 
@@ -78,7 +78,7 @@ Roughly **$0.13-$0.15/hour** (~$1.20 for an 8-hour session). Run `terraform dest
 ## Files Included In This Phase
 
 ```text
-deployment/phase-14-infrastructure-as-code-terraform/phase-14-terraform-production/
+deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-production/
 +-- backend.tf                    (remote state in S3)
 +-- providers.tf                  (Terraform + AWS provider, ECR image locals)
 +-- variables.tf                  (all inputs)
@@ -119,7 +119,7 @@ Same as the basics lab:
 
 | Field | Value |
 | --- | --- |
-| Name | `devops-launchboard-phase-14-prod-workstation` |
+| Name | `devops-launchboard-phase-9-prod-workstation` |
 | AMI | Ubuntu Server 24.04 LTS |
 | Instance Type | `t3.small` |
 | Storage | 30 GB gp3 |
@@ -199,7 +199,7 @@ Same GitHub deploy key flow as every phase:
 ```bash
 cd ~
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
-ssh-keygen -t ed25519 -C "devops-launchboard-phase-14-prod" -f ~/.ssh/devops_launchboard_github_key
+ssh-keygen -t ed25519 -C "devops-launchboard-phase-9-prod" -f ~/.ssh/devops_launchboard_github_key
 cat ~/.ssh/devops_launchboard_github_key.pub
 ```
 
@@ -272,8 +272,8 @@ Reference:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-mkdir -p deployment/phase-14-infrastructure-as-code-terraform/phase-14-terraform-production
-cd deployment/phase-14-infrastructure-as-code-terraform/phase-14-terraform-production
+mkdir -p deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-production
+cd deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-production
 ```
 
 ### backend.tf
@@ -288,7 +288,7 @@ Paste, then replace `YOUR_STATE_BUCKET_NAME` with the bucket name printed in Ste
 terraform {
   backend "s3" {
     bucket       = "YOUR_STATE_BUCKET_NAME"
-    key          = "phase-14/terraform-production.tfstate"
+    key          = "phase-9/terraform-production.tfstate"
     region       = "YOUR_AWS_REGION"
     use_lockfile = true
     encrypt      = true
@@ -330,7 +330,7 @@ provider "aws" {
   default_tags {
     tags = {
       Project     = "devops-launchboard"
-      Environment = "phase-14-terraform-production"
+      Environment = "phase-09-terraform-production"
       ManagedBy   = "terraform"
     }
   }
@@ -368,7 +368,7 @@ variable "aws_region" {
 variable "project_name" {
   description = "Name prefix for all resources"
   type        = string
-  default     = "launchboard-phase-14"
+  default     = "launchboard-phase-9"
 }
 
 variable "vpc_cidr" {
@@ -404,7 +404,7 @@ variable "asg_max_size" {
 variable "image_tag" {
   description = "Tag of the app images in ECR"
   type        = string
-  default     = "phase-14"
+  default     = "phase-9"
 }
 
 variable "db_name" {
@@ -511,7 +511,7 @@ Line explanation:
 
 - In phases 8-13 you created these repositories with `aws ecr create-repository` and attached the lifecycle policy from a JSON file. Same result here, but declared — Terraform creates them, tracks them, and deletes them on destroy.
 - `force_delete = true` lets `terraform destroy` remove the repository even if it still contains images. Without it, destroy fails until you empty the repository by hand. Set this to `false` in a real production account where accidental image deletion would be a problem.
-- `scan_on_push = true` enables ECR's built-in vulnerability scan on every push (the feature Phase 10 uses).
+- `scan_on_push = true` enables ECR's built-in vulnerability scan on every push (the feature Phase 12 uses).
 - `jsonencode()` converts an HCL object into a JSON string — the same lifecycle policy JSON you used before, but written in HCL so it is syntax-checked and shared by both repositories via a local instead of duplicated.
 
 ### ssm.tf
@@ -726,7 +726,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 ```
 
-Key points (full line-by-line in the Phase 9 guide, same file):
+Key points (full line-by-line in the Phase 11 guide, same file):
 
 - Multi-stage: dependencies compile in `builder`, only the virtualenv and app code reach `runtime`.
 - Non-root user with pinned UID 10001.
@@ -756,7 +756,7 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
-COPY deployment/phase-14-infrastructure-as-code-terraform/phase-14-terraform-production/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-production/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
@@ -1775,15 +1775,15 @@ ECR_REGISTRY=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 aws ecr get-login-password --region "$AWS_REGION" \
   | docker login --username AWS --password-stdin $ECR_REGISTRY
 
-docker build -f deployment/phase-14-infrastructure-as-code-terraform/phase-14-terraform-production/Dockerfile.backend \
-  -t $ECR_REGISTRY/launchboard-backend:phase-14 .
+docker build -f deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-production/Dockerfile.backend \
+  -t $ECR_REGISTRY/launchboard-backend:phase-9 .
 
-docker build -f deployment/phase-14-infrastructure-as-code-terraform/phase-14-terraform-production/Dockerfile.frontend \
+docker build -f deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-production/Dockerfile.frontend \
   --build-arg VITE_API_URL= \
-  -t $ECR_REGISTRY/launchboard-frontend:phase-14 .
+  -t $ECR_REGISTRY/launchboard-frontend:phase-9 .
 
-docker push $ECR_REGISTRY/launchboard-backend:phase-14
-docker push $ECR_REGISTRY/launchboard-frontend:phase-14
+docker push $ECR_REGISTRY/launchboard-backend:phase-9
+docker push $ECR_REGISTRY/launchboard-frontend:phase-9
 ```
 
 Verify both images exist:
@@ -1798,7 +1798,7 @@ aws ecr describe-images --repository-name launchboard-frontend --region "$AWS_RE
 ## Step 14: Apply Everything
 
 ```bash
-cd deployment/phase-14-infrastructure-as-code-terraform/phase-14-terraform-production
+cd deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-production
 terraform plan
 ```
 
@@ -1815,8 +1815,8 @@ Apply complete! Resources: 35 added, 0 changed, 0 destroyed.
 
 Outputs:
 
-alb_dns_name = "launchboard-phase-14-alb-1234567890.us-east-1.elb.amazonaws.com"
-app_url = "http://launchboard-phase-14-alb-1234567890.us-east-1.elb.amazonaws.com"
+alb_dns_name = "launchboard-phase-9-alb-1234567890.us-east-1.elb.amazonaws.com"
+app_url = "http://launchboard-phase-9-alb-1234567890.us-east-1.elb.amazonaws.com"
 ...
 ```
 
@@ -1830,7 +1830,7 @@ curl -s "$APP_URL/api/summary" | jq
 
 Open the `app_url` in the browser — the LaunchBoard UI loads through the ALB, served by whichever instance the ALB picked, backed by RDS.
 
-Check the target group in the console (EC2 > Target Groups > launchboard-phase-14-tg > Targets): both instances should show `healthy`.
+Check the target group in the console (EC2 > Target Groups > launchboard-phase-9-tg > Targets): both instances should show `healthy`.
 
 ## Step 15: Connect To A Private Instance With SSM
 
@@ -1838,7 +1838,7 @@ The instances have no public IP and no SSH port. Session Manager gives you a she
 
 ```bash
 INSTANCE_ID=$(aws ec2 describe-instances \
-  --filters "Name=tag:Name,Values=launchboard-phase-14-app" "Name=instance-state-name,Values=running" \
+  --filters "Name=tag:Name,Values=launchboard-phase-9-app" "Name=instance-state-name,Values=running" \
   --query 'Reservations[0].Instances[0].InstanceId' --output text --region "$AWS_REGION")
 
 aws ssm start-session --target "$INSTANCE_ID" --region "$AWS_REGION"
@@ -1886,7 +1886,7 @@ terraform plan
 
 The plan shows exactly one in-place change to the ASG. Apply, then watch the third instance register in the target group and turn `healthy` (~3-4 minutes). Set it back to 2 (or remove the line) and apply again — the ASG terminates one instance gracefully.
 
-For a **rolling redeploy** (new image version): push images with a new tag (for example `phase-14-v2`), set `image_tag = "phase-14-v2"` in `terraform.tfvars`, and apply. The launch template gets a new version, and `instance_refresh` replaces instances in batches while the ALB keeps serving from the healthy ones — a zero-downtime deployment driven entirely by one variable change.
+For a **rolling redeploy** (new image version): push images with a new tag (for example `phase-9-v2`), set `image_tag = "phase-9-v2"` in `terraform.tfvars`, and apply. The launch template gets a new version, and `instance_refresh` replaces instances in batches while the ALB keeps serving from the healthy ones — a zero-downtime deployment driven entirely by one variable change.
 
 ## Step 17: Destroy
 
@@ -1931,7 +1931,7 @@ sudo tail -100 /var/log/cloud-init-output.log
 sudo docker ps -a
 ```
 
-Common causes: images not pushed before instances booted (Step 13 skipped or done after Step 14 — fix by terminating the instances: `aws autoscaling start-instance-refresh --auto-scaling-group-name launchboard-phase-14-asg --region $AWS_REGION`), or migration failure because RDS was still initializing (same fix — replacement instances retry cleanly).
+Common causes: images not pushed before instances booted (Step 13 skipped or done after Step 14 — fix by terminating the instances: `aws autoscaling start-instance-refresh --auto-scaling-group-name launchboard-phase-9-asg --region $AWS_REGION`), or migration failure because RDS was still initializing (same fix — replacement instances retry cleanly).
 
 ### Problem 4: `alembic upgrade head` fails with connection refused
 
@@ -1991,7 +1991,7 @@ Something outside Terraform still lives in the VPC (usually a manually created r
 Move to:
 
 ```text
-Phase 15: Configuration Management With Ansible
+Phase 10: Configuration Management With Ansible
 ```
 
 Why:

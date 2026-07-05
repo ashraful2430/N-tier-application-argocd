@@ -7,9 +7,9 @@
 | Date |  |
 | Tester |  |
 | AWS Region |  |
-| Cluster Name | devops-launchboard-phase-13 |
-| Backend Image Tag | phase-13 |
-| Frontend Image Tag | phase-13 |
+| Cluster Name | devops-launchboard-phase-15 |
+| Backend Image Tag | phase-15 |
+| Frontend Image Tag | phase-15 |
 | Test Tool | k6 |
 
 ## Environment

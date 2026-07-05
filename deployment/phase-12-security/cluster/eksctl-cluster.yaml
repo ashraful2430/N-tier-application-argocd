@@ -2,7 +2,7 @@ apiVersion: eksctl.io/v1alpha5
 kind: ClusterConfig
 
 metadata:
-  name: devops-launchboard-phase-10
+  name: devops-launchboard-phase-12
   region: YOUR_AWS_REGION
   version: "1.34"
 
@@ -34,7 +34,7 @@ managedNodeGroups:
       workload: launchboard
     tags:
       Project: devops-launchboard
-      Environment: phase-10
+      Environment: phase-12
       Owner: student
 
 cloudWatch:

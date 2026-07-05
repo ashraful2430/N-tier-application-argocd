@@ -1,11 +1,11 @@
-# Phase 14: Infrastructure As Code With Terraform
+# Phase 9: Infrastructure As Code With Terraform
 
 This phase teaches Terraform in two stages, the same way Phase 7 splits CI/CD into two labs:
 
 ```text
-deployment/phase-14-infrastructure-as-code-terraform/
-+-- phase-14-terraform-basics/          (start here)
-+-- phase-14-terraform-production/      (do this second)
+deployment/phase-09-infrastructure-as-code-terraform/
++-- phase-09-terraform-basics/          (start here)
++-- phase-09-terraform-production/      (do this second)
 ```
 
 ## Which One Should You Do?
@@ -21,11 +21,11 @@ deployment/phase-14-infrastructure-as-code-terraform/
 | Structure | Flat `.tf` files in one folder | Reusable modules |
 | Cost while running | ~$0.02/hour | ~$0.15/hour |
 
-Do `phase-14-terraform-basics` first. Every concept in the production lab (modules, remote state, data sources, `templatefile`, `depends_on`) builds on what the basics lab teaches.
+Do `phase-09-terraform-basics` first. Every concept in the production lab (modules, remote state, data sources, `templatefile`, `depends_on`) builds on what the basics lab teaches.
 
-## Why Terraform After 13 Phases Of Manual Work?
+## Why Terraform After Eight Phases Of Manual Work?
 
-In phases 1 through 13 you clicked through the AWS Console to create EC2 instances and security groups, and you typed `eksctl` and `aws` commands to create clusters and repositories. That works, but:
+In phases 1 through 8 you clicked through the AWS Console to create EC2 instances and security groups, and you typed `eksctl` and `aws` commands to create clusters and repositories. That works, but:
 
 - Nothing is repeatable. Rebuilding an environment means re-doing every click and command in the right order from memory or from a README.
 - Nothing is reviewable. There is no diff, no pull request, no approval before infrastructure changes.
@@ -36,4 +36,4 @@ Terraform fixes all four: infrastructure is declared in files, changes are plann
 
 ## What To Do Next
 
-After completing both labs, move to Phase 15 (Configuration Management With Ansible) — Terraform creates the machines, Ansible configures what runs *inside* them. The two tools are complementary, and real companies use them together.
+After completing both labs, move to Phase 10 (Configuration Management With Ansible) — Terraform creates the machines, Ansible configures what runs *inside* them. The two tools are complementary, and real companies use them together.

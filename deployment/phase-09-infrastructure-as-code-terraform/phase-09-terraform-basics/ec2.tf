@@ -15,6 +15,6 @@ resource "aws_instance" "app" {
   })
 
   tags = {
-    Name = "launchboard-phase-14-basics"
+    Name = "launchboard-phase-9-basics"
   }
 }

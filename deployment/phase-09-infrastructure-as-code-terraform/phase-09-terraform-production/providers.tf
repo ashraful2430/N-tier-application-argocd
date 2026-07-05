@@ -15,7 +15,7 @@ provider "aws" {
   default_tags {
     tags = {
       Project     = "devops-launchboard"
-      Environment = "phase-14-terraform-production"
+      Environment = "phase-09-terraform-production"
       ManagedBy   = "terraform"
     }
   }

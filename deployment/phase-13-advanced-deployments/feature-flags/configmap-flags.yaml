@@ -6,4 +6,4 @@ metadata:
 data:
   ENABLE_ADVANCED_METRICS: "true"
   ENABLE_DEMO_SEED: "false"
-  RELEASE_BANNER: "Phase 11 controlled release"
+  RELEASE_BANNER: "Phase 13 controlled release"

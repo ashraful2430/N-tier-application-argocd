@@ -1,10 +1,10 @@
-# Phase 15 (Part 1): Ansible Basics
+# Phase 10 (Part 1): Ansible Basics
 
 ## Fresh Start Assumption
 
 This phase starts from a clean AWS environment.
 
-You do not need to complete any previous phase before using this guide (Phase 14 is recommended context but not required).
+You do not need to complete any previous phase before using this guide (Phase 9 is recommended context but not required).
 
 This guide assumes:
 
@@ -40,7 +40,7 @@ Two EC2 instances with different jobs:
 
 The key idea: **Ansible is agentless.** Nothing is installed on the managed node. The control node connects over plain SSH, copies small Python programs (modules) over, runs them, reads the results, and deletes them. If you can SSH to a machine, Ansible can manage it.
 
-By the end, the same app you deployed by hand in Phase 3/4 and with Terraform user data in Phase 14 is deployed by three playbooks — and re-running them is a no-op, because every task is idempotent.
+By the end, the same app you deployed by hand in Phase 3/4 and with Terraform user data in Phase 9 is deployed by three playbooks — and re-running them is a no-op, because every task is idempotent.
 
 ## Core Vocabulary
 
@@ -68,7 +68,7 @@ Terminate both instances after each session.
 ## Files Included In This Phase
 
 ```text
-deployment/phase-15-configuration-management-ansible/phase-15-ansible-basics/
+deployment/phase-10-configuration-management-ansible/phase-10-ansible-basics/
 +-- ansible.cfg                       (Ansible defaults for this folder)
 +-- inventory.ini.example             (managed node list - copy to inventory.ini)
 +-- group_vars/
@@ -90,7 +90,7 @@ Create both from the AWS Console:
 
 | Field | Value |
 | --- | --- |
-| Name | `devops-launchboard-phase-15-control` |
+| Name | `devops-launchboard-phase-10-control` |
 | AMI | Ubuntu Server 24.04 LTS |
 | Instance Type | `t3.small` |
 | Storage | 20 GB gp3 |
@@ -101,7 +101,7 @@ Create both from the AWS Console:
 
 | Field | Value |
 | --- | --- |
-| Name | `devops-launchboard-phase-15-app` |
+| Name | `devops-launchboard-phase-10-app` |
 | AMI | Ubuntu Server 24.04 LTS |
 | Instance Type | `t3.medium` |
 | Storage | 30 GB gp3 |
@@ -471,8 +471,8 @@ APP_ENV=production
 CORS_ORIGINS=http://{{ ansible_host }}
 SEED_DEMO_DATA=true
 VITE_API_URL=
-BACKEND_IMAGE=launchboard-backend:phase-15
-FRONTEND_IMAGE=launchboard-frontend:phase-15
+BACKEND_IMAGE=launchboard-backend:phase-10
+FRONTEND_IMAGE=launchboard-frontend:phase-10
 ```
 
 - A `.j2` file is a Jinja2 template: the `template` module renders every `{{ variable }}` with real values *before* writing the file to the managed node. `db_password` comes from `group_vars/app_servers.yml`; `ansible_host` comes from the inventory — so CORS is automatically the server's own public IP, the value you edited by hand in Phase 4.
@@ -633,7 +633,7 @@ Normal for a first run over long geographic distance; also make sure you are not
 Move to:
 
 ```text
-deployment/phase-15-configuration-management-ansible/phase-15-ansible-production
+deployment/phase-10-configuration-management-ansible/phase-10-ansible-production
 ```
 
 Why:

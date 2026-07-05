@@ -27,13 +27,13 @@ Start with `phase-0-setup`, then move phase by phase. Each phase has its own REA
 | `phase-06-kubernetes-local` | Local Kubernetes | Learn Deployments, Services, Ingress, PVC, HPA |
 | `phase-07-cicd-self-hosted` | Automation | Test, scan, build, push, deploy, and rollback |
 | `phase-08-eks` | AWS Kubernetes | Provision EKS with eksctl and deploy app |
-| `phase-09-observability` | Monitoring and logs | Add metrics, alerts, dashboards, logs, and traces |
-| `phase-10-security` | Hardening | Apply RBAC, NetworkPolicy, Vault, SAST, image scanning |
-| `phase-11-advanced-deployments` | Safer releases | Practice blue-green, canary, and feature flags |
-| `phase-12-disaster-recovery` | Recovery | Back up, restore, test failover, and run incident playbooks |
-| `phase-13-performance-and-load-validation` | Performance validation | Run smoke, load, stress, and soak tests before calling the app production-ready |
-| `phase-14-infrastructure-as-code-terraform` | Infrastructure as code | Learn Terraform basics on one EC2, then a production VPC/ALB/ASG/RDS deployment with modules and remote state |
-| `phase-15-configuration-management-ansible` | Configuration management | Learn Ansible basics on one server, then a production multi-tier rolling deployment with roles and Vault |
+| `phase-09-infrastructure-as-code-terraform` | Infrastructure as code | Learn Terraform basics on one EC2, then a production VPC/ALB/ASG/RDS deployment with modules and remote state |
+| `phase-10-configuration-management-ansible` | Configuration management | Learn Ansible basics on one server, then a production multi-tier rolling deployment with roles and Vault |
+| `phase-11-observability` | Monitoring and logs | Add metrics, alerts, dashboards, logs, and traces |
+| `phase-12-security` | Hardening | Apply RBAC, NetworkPolicy, Vault, SAST, image scanning |
+| `phase-13-advanced-deployments` | Safer releases | Practice blue-green, canary, and feature flags |
+| `phase-14-disaster-recovery` | Recovery | Back up, restore, test failover, and run incident playbooks |
+| `phase-15-performance-and-load-validation` | Performance validation | Run smoke, load, stress, and soak tests before calling the app production-ready |
 | `phase-16-production-capstone` | Production capstone | Combine EKS, security, autoscaling, monitoring, backups, and load validation into one production-grade deployment |
 
 ## Values Students Must Replace
@@ -85,7 +85,7 @@ Local Docker and local Kubernetes are usually free. AWS labs can create real cha
 
 ## Recommended Teaching Flow
 
-For beginners, spend more time on phases 0, 1, 2, 3, 4, and 6. For intermediate students, focus on phases 7, 8, 9, and 10. For production-readiness discussions, use phases 11, 12, and 13. For infrastructure automation, use phases 14 (Terraform) and 15 (Ansible). Finish with the phase 16 capstone, which combines everything.
+For beginners, spend more time on phases 0, 1, 2, 3, 4, and 6. For intermediate students, focus on phases 7 and 8. For infrastructure automation, use phases 9 (Terraform) and 10 (Ansible). For production-readiness discussions, use phases 11 (observability), 12 (security), 13 (advanced deployments), 14 (disaster recovery), and 15 (performance). Finish with the phase 16 capstone, which combines everything.
 
 ## Core Documentation URLs
 

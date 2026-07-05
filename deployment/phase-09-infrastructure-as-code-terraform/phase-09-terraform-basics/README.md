@@ -1,4 +1,4 @@
-# Phase 14 (Part 1): Terraform Basics
+# Phase 9 (Part 1): Terraform Basics
 
 ## Fresh Start Assumption
 
@@ -77,7 +77,7 @@ Do not use this exact architecture for production:
 - The database runs in a container on the same instance as the app.
 - State is stored in a local file that only exists on your machine.
 
-The `phase-14-terraform-production` lab fixes all three.
+The `phase-09-terraform-production` lab fixes all three.
 
 ## Cost Warning
 
@@ -91,7 +91,7 @@ Running for 8 hours costs well under $1. Run `terraform destroy` after each sess
 ## Files Included In This Phase
 
 ```text
-deployment/phase-14-infrastructure-as-code-terraform/phase-14-terraform-basics/
+deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-basics/
 +-- providers.tf                (Terraform + AWS provider configuration)
 +-- variables.tf                (input variables)
 +-- data.tf                     (data sources: default VPC, Ubuntu AMI)
@@ -109,7 +109,7 @@ Create one Ubuntu EC2 workstation from the AWS Console (this is the last instanc
 
 | Field | Value |
 | --- | --- |
-| Name | `devops-launchboard-phase-14-workstation` |
+| Name | `devops-launchboard-phase-9-workstation` |
 | AMI | Ubuntu Server 24.04 LTS |
 | Instance Type | `t3.small` |
 | Storage | 20 GB gp3 |
@@ -179,7 +179,7 @@ Command explanation:
 
 - The first command downloads HashiCorp's GPG signing key and converts it to the binary keyring format apt expects (`gpg --dearmor`), storing it where apt looks for repository keys.
 - The `echo ... | sudo tee` line registers HashiCorp's apt repository, restricted to packages signed by that key (`signed-by=`). `$(lsb_release -cs)` inserts your Ubuntu codename so apt picks the right package build.
-- If `sudo apt update` fails with a GPG or "clearsigned file" error (the same class of problem as the Helm apt repo in Phase 9), fall back to the direct binary download:
+- If `sudo apt update` fails with a GPG or "clearsigned file" error (the same class of problem as the Helm apt repo in Phase 11), fall back to the direct binary download:
 
 ```bash
 TERRAFORM_VERSION=$(curl -sI https://github.com/hashicorp/terraform/releases/latest \
@@ -204,7 +204,7 @@ Create GitHub SSH key:
 cd ~
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
-ssh-keygen -t ed25519 -C "devops-launchboard-phase-14" -f ~/.ssh/devops_launchboard_github_key
+ssh-keygen -t ed25519 -C "devops-launchboard-phase-9" -f ~/.ssh/devops_launchboard_github_key
 cat ~/.ssh/devops_launchboard_github_key.pub
 ```
 
@@ -253,8 +253,8 @@ Reference:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-mkdir -p deployment/phase-14-infrastructure-as-code-terraform/phase-14-terraform-basics
-cd deployment/phase-14-infrastructure-as-code-terraform/phase-14-terraform-basics
+mkdir -p deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-basics
+cd deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-basics
 ```
 
 Terraform reads **every `.tf` file in the current folder** and merges them into one configuration. Splitting into multiple files is purely for human readability — `providers.tf`, `variables.tf`, `ec2.tf` could all be one file and Terraform would not care. The names below follow the common community convention.
@@ -285,7 +285,7 @@ provider "aws" {
   default_tags {
     tags = {
       Project     = "devops-launchboard"
-      Environment = "phase-14-terraform-basics"
+      Environment = "phase-09-terraform-basics"
       ManagedBy   = "terraform"
     }
   }
@@ -379,7 +379,7 @@ Paste:
 
 ```hcl
 resource "aws_security_group" "app" {
-  name        = "launchboard-phase-14-basics-sg"
+  name        = "launchboard-phase-9-basics-sg"
   description = "SSH from my IP, HTTP from anywhere"
   vpc_id      = data.aws_vpc.default.id
 
@@ -408,7 +408,7 @@ resource "aws_security_group" "app" {
   }
 
   tags = {
-    Name = "launchboard-phase-14-basics-sg"
+    Name = "launchboard-phase-9-basics-sg"
   }
 }
 ```
@@ -447,7 +447,7 @@ resource "aws_instance" "app" {
   })
 
   tags = {
-    Name = "launchboard-phase-14-basics"
+    Name = "launchboard-phase-9-basics"
   }
 }
 ```
@@ -709,7 +709,7 @@ This is the workflow that makes Terraform valuable. Edit the security group desc
 vim security.tf
 ```
 
-Change the `Name` tag value from `launchboard-phase-14-basics-sg` to `launchboard-phase-14-basics-firewall`, then:
+Change the `Name` tag value from `launchboard-phase-9-basics-sg` to `launchboard-phase-9-basics-firewall`, then:
 
 ```bash
 terraform plan
@@ -818,7 +818,7 @@ Your current public IP no longer matches `my_ip_cidr` (home IPs rotate). Update 
 Move to:
 
 ```text
-deployment/phase-14-infrastructure-as-code-terraform/phase-14-terraform-production
+deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-production
 ```
 
 Why:

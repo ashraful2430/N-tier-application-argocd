@@ -1,4 +1,4 @@
-# Phase 10: Security Hardening
+# Phase 12: Security Hardening
 
 ## Fresh Start Assumption
 
@@ -62,7 +62,7 @@ Do not start here if:
 
 ## Cost Warning
 
-Same cost profile as Phase 8 and 9. The security tools themselves (Pod Security Admission, RBAC, NetworkPolicy, ResourceQuota, LimitRange) are built into Kubernetes and cost nothing extra. Trivy and Semgrep run as one-off Docker containers and cost nothing. The optional SonarQube Deployment needs ~2 GB memory and a 20 GB PVC, which may require scaling to 3 worker nodes.
+Same cost profile as Phase 8 and Phase 11. The security tools themselves (Pod Security Admission, RBAC, NetworkPolicy, ResourceQuota, LimitRange) are built into Kubernetes and cost nothing extra. Trivy and Semgrep run as one-off Docker containers and cost nothing. The optional SonarQube Deployment needs ~2 GB memory and a 20 GB PVC, which may require scaling to 3 worker nodes.
 
 | Resource | Approximate Cost |
 | --- | --- |
@@ -119,7 +119,7 @@ Security controls applied:
 ## Files Included In This Phase
 
 ```text
-deployment/phase-10-security/
+deployment/phase-12-security/
 +-- cluster/
 |   +-- eksctl-cluster.yaml                    (EKS cluster definition)
 +-- ecr/
@@ -169,7 +169,7 @@ Create one Ubuntu EC2 workstation:
 
 | Field | Value |
 | --- | --- |
-| Name | `devops-launchboard-phase-10-workstation` |
+| Name | `devops-launchboard-phase-12-workstation` |
 | AMI | Ubuntu Server 24.04 LTS |
 | Instance Type | `t3.small` |
 | Storage | 30 GB gp3 |
@@ -253,7 +253,7 @@ Reference:
 ```bash
 cd ~
 mkdir -p ~/.ssh && chmod 700 ~/.ssh
-ssh-keygen -t ed25519 -C "devops-launchboard-phase-10" -f ~/.ssh/devops_launchboard_github_key
+ssh-keygen -t ed25519 -C "devops-launchboard-phase-12" -f ~/.ssh/devops_launchboard_github_key
 cat ~/.ssh/devops_launchboard_github_key.pub
 ```
 
@@ -277,11 +277,11 @@ git clone git@github.com:ashraful2430/N-tier-application.git app-source
 cd app-source
 ```
 
-## Step 3: Create Phase 10 Folders
+## Step 3: Create Phase 12 Folders
 
 ```bash
 cd /opt/devops-launchboard/app-source
-mkdir -p deployment/phase-10-security/{cluster,ecr,app-k8s,k8s-security,secrets-management,sast,vault}
+mkdir -p deployment/phase-12-security/{cluster,ecr,app-k8s,k8s-security,secrets-management,sast,vault}
 ```
 
 Each folder owns one concern: `cluster/` for eksctl config, `ecr/` for image lifecycle, `app-k8s/` for the application manifests, `k8s-security/` for hardening controls, `secrets-management/` for secret delivery patterns, `sast/` for source code scanning, and `vault/` for the Vault learning deployment.
@@ -289,7 +289,7 @@ Each folder owns one concern: `cluster/` for eksctl config, `ecr/` for image lif
 ## Step 4: Create EKS Cluster
 
 ```bash
-vim deployment/phase-10-security/cluster/eksctl-cluster.yaml
+vim deployment/phase-12-security/cluster/eksctl-cluster.yaml
 ```
 
 Paste:
@@ -299,7 +299,7 @@ apiVersion: eksctl.io/v1alpha5
 kind: ClusterConfig
 
 metadata:
-  name: devops-launchboard-phase-10
+  name: devops-launchboard-phase-12
   region: YOUR_AWS_REGION
   version: "1.34"
 
@@ -331,7 +331,7 @@ managedNodeGroups:
       workload: launchboard
     tags:
       Project: devops-launchboard
-      Environment: phase-10
+      Environment: phase-12
       Owner: student
 
 cloudWatch:
@@ -361,7 +361,7 @@ availabilityZones:
 
 Line explanation:
 
-- `metadata.name: devops-launchboard-phase-10` names the cluster; eksctl creates CloudFormation stacks named after it.
+- `metadata.name: devops-launchboard-phase-12` names the cluster; eksctl creates CloudFormation stacks named after it.
 - `metadata.version: "1.34"` pins the Kubernetes version, quoted because YAML would otherwise read `1.34` as a number.
 - `iam.withOIDC: true` creates an OIDC provider — the foundation of IAM Roles for Service Accounts (IRSA), which lets Kubernetes ServiceAccounts assume IAM roles without storing AWS credentials in the cluster. The EBS CSI driver and the AWS Load Balancer Controller both need this.
 - `vpc.nat.gateway: Single` creates one shared NAT Gateway instead of one per AZ, at roughly half the cost.
@@ -379,10 +379,10 @@ Set variables and create the cluster (20–40 minutes):
 ```bash
 export AWS_REGION=YOUR_AWS_REGION
 export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-export CLUSTER_NAME=devops-launchboard-phase-10
+export CLUSTER_NAME=devops-launchboard-phase-12
 echo "Account: $ACCOUNT_ID  Region: $AWS_REGION  Cluster: $CLUSTER_NAME"
 
-eksctl create cluster -f deployment/phase-10-security/cluster/eksctl-cluster.yaml
+eksctl create cluster -f deployment/phase-12-security/cluster/eksctl-cluster.yaml
 kubectl get nodes
 ```
 
@@ -396,7 +396,7 @@ aws ecr create-repository --repository-name launchboard-frontend --region "$AWS_
 Create lifecycle policy:
 
 ```bash
-vim deployment/phase-10-security/ecr/lifecycle-policy.json
+vim deployment/phase-12-security/ecr/lifecycle-policy.json
 ```
 
 Paste:
@@ -406,10 +406,10 @@ Paste:
   "rules": [
     {
       "rulePriority": 1,
-      "description": "Keep the latest 10 phase 10 images",
+      "description": "Keep the latest 10 phase 12 images",
       "selection": {
         "tagStatus": "tagged",
-        "tagPrefixList": ["phase-10"],
+        "tagPrefixList": ["phase-12"],
         "countType": "imageCountMoreThan",
         "countNumber": 10
       },
@@ -439,18 +439,18 @@ Apply:
 ```bash
 aws ecr put-lifecycle-policy \
   --repository-name launchboard-backend \
-  --lifecycle-policy-text file://deployment/phase-10-security/ecr/lifecycle-policy.json \
+  --lifecycle-policy-text file://deployment/phase-12-security/ecr/lifecycle-policy.json \
   --region "$AWS_REGION"
 
 aws ecr put-lifecycle-policy \
   --repository-name launchboard-frontend \
-  --lifecycle-policy-text file://deployment/phase-10-security/ecr/lifecycle-policy.json \
+  --lifecycle-policy-text file://deployment/phase-12-security/ecr/lifecycle-policy.json \
   --region "$AWS_REGION"
 ```
 
 Line explanation:
 
-- `rulePriority: 1` keeps only the 10 most recent images tagged with the `phase-10` prefix — older ones beyond the 10 most recent are expired automatically.
+- `rulePriority: 1` keeps only the 10 most recent images tagged with the `phase-12` prefix — older ones beyond the 10 most recent are expired automatically.
 - `rulePriority: 2` deletes untagged images (orphaned layers left behind when a tag is moved or overwritten) after 7 days.
 - `put-lifecycle-policy` attaches this same policy to both repositories, so neither one accumulates old release images forever.
 
@@ -459,7 +459,7 @@ Line explanation:
 ### Dockerfile.backend
 
 ```bash
-vim deployment/phase-10-security/Dockerfile.backend
+vim deployment/phase-12-security/Dockerfile.backend
 ```
 
 Paste:
@@ -532,7 +532,7 @@ Reference:
 ### Dockerfile.frontend
 
 ```bash
-vim deployment/phase-10-security/Dockerfile.frontend
+vim deployment/phase-12-security/Dockerfile.frontend
 ```
 
 Paste:
@@ -553,7 +553,7 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
-COPY deployment/phase-10-security/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deployment/phase-12-security/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
@@ -574,7 +574,7 @@ Line explanation:
 ### nginx-frontend.conf
 
 ```bash
-vim deployment/phase-10-security/nginx-frontend.conf
+vim deployment/phase-12-security/nginx-frontend.conf
 ```
 
 Paste:
@@ -683,12 +683,12 @@ Build:
 ```bash
 cd /opt/devops-launchboard/app-source
 
-docker build -f deployment/phase-10-security/Dockerfile.backend \
-  -t launchboard-backend:phase-10 .
+docker build -f deployment/phase-12-security/Dockerfile.backend \
+  -t launchboard-backend:phase-12 .
 
-docker build -f deployment/phase-10-security/Dockerfile.frontend \
+docker build -f deployment/phase-12-security/Dockerfile.frontend \
   --build-arg VITE_API_URL= \
-  -t launchboard-frontend:phase-10 .
+  -t launchboard-frontend:phase-12 .
 ```
 
 ### Scan with Trivy before pushing
@@ -701,14 +701,14 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
   --severity HIGH,CRITICAL \
   --ignore-unfixed \
   --exit-code 1 \
-  launchboard-backend:phase-10
+  launchboard-backend:phase-12
 
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
   aquasec/trivy:latest image \
   --severity HIGH,CRITICAL \
   --ignore-unfixed \
   --exit-code 1 \
-  launchboard-frontend:phase-10
+  launchboard-frontend:phase-12
 ```
 
 Command explanation:
@@ -723,11 +723,11 @@ If Trivy finds vulnerabilities: read the table it prints. Each row shows the pac
 Tag and push:
 
 ```bash
-docker tag launchboard-backend:phase-10 $ECR_REGISTRY/launchboard-backend:phase-10
-docker tag launchboard-frontend:phase-10 $ECR_REGISTRY/launchboard-frontend:phase-10
+docker tag launchboard-backend:phase-12 $ECR_REGISTRY/launchboard-backend:phase-12
+docker tag launchboard-frontend:phase-12 $ECR_REGISTRY/launchboard-frontend:phase-12
 
-docker push $ECR_REGISTRY/launchboard-backend:phase-10
-docker push $ECR_REGISTRY/launchboard-frontend:phase-10
+docker push $ECR_REGISTRY/launchboard-backend:phase-12
+docker push $ECR_REGISTRY/launchboard-frontend:phase-12
 ```
 
 `docker tag <local-name> <new-name>` does not copy or rebuild anything — it adds a second name pointing at the same image bytes already on disk, this time including the ECR registry hostname `docker push` needs to know where to upload to.
@@ -745,14 +745,14 @@ curl -o aws-load-balancer-controller-policy.json \
   https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
 
 aws iam create-policy \
-  --policy-name AWSLoadBalancerControllerIAMPolicyPhase10 \
+  --policy-name AWSLoadBalancerControllerIAMPolicyPhase12 \
   --policy-document file://aws-load-balancer-controller-policy.json
 
 eksctl create iamserviceaccount \
   --cluster "$CLUSTER_NAME" \
   --namespace kube-system \
   --name aws-load-balancer-controller \
-  --attach-policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicyPhase10" \
+  --attach-policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicyPhase12" \
   --approve \
   --region "$AWS_REGION"
 
@@ -787,12 +787,12 @@ Reference:
 
 ## Step 9: Deploy The Application
 
-All manifests go inside `deployment/phase-10-security/app-k8s/`. Unlike Phase 8, every container here already sets `allowPrivilegeEscalation: false` and drops all Linux capabilities — these manifests are written to already satisfy the `restricted` Pod Security Admission level you apply in Step 10, instead of needing to be patched afterward.
+All manifests go inside `deployment/phase-12-security/app-k8s/`. Unlike Phase 8, every container here already sets `allowPrivilegeEscalation: false` and drops all Linux capabilities — these manifests are written to already satisfy the `restricted` Pod Security Admission level you apply in Step 10, instead of needing to be patched afterward.
 
 #### namespace.yaml
 
 ```bash
-vim deployment/phase-10-security/app-k8s/namespace.yaml
+vim deployment/phase-12-security/app-k8s/namespace.yaml
 ```
 
 ```yaml
@@ -810,7 +810,7 @@ A Namespace is a logical boundary inside Kubernetes; every other resource below 
 #### storageclass.yaml
 
 ```bash
-vim deployment/phase-10-security/app-k8s/storageclass.yaml
+vim deployment/phase-12-security/app-k8s/storageclass.yaml
 ```
 
 ```yaml
@@ -831,7 +831,7 @@ parameters:
 #### configmap.yaml
 
 ```bash
-vim deployment/phase-10-security/app-k8s/configmap.yaml
+vim deployment/phase-12-security/app-k8s/configmap.yaml
 ```
 
 ```yaml
@@ -854,7 +854,7 @@ data:
 #### secret.example.yaml
 
 ```bash
-vim deployment/phase-10-security/app-k8s/secret.example.yaml
+vim deployment/phase-12-security/app-k8s/secret.example.yaml
 ```
 
 ```yaml
@@ -874,7 +874,7 @@ Example only — the real Secret is created with `kubectl create secret` later i
 #### pvc.yaml
 
 ```bash
-vim deployment/phase-10-security/app-k8s/pvc.yaml
+vim deployment/phase-12-security/app-k8s/pvc.yaml
 ```
 
 ```yaml
@@ -897,7 +897,7 @@ spec:
 #### launchboard-postgres-deployment.yaml
 
 ```bash
-vim deployment/phase-10-security/app-k8s/launchboard-postgres-deployment.yaml
+vim deployment/phase-12-security/app-k8s/launchboard-postgres-deployment.yaml
 ```
 
 ```yaml
@@ -998,7 +998,7 @@ This is the first phase where the PostgreSQL Pod itself gets a full `securityCon
 #### launchboard-postgres-service.yaml
 
 ```bash
-vim deployment/phase-10-security/app-k8s/launchboard-postgres-service.yaml
+vim deployment/phase-12-security/app-k8s/launchboard-postgres-service.yaml
 ```
 
 ```yaml
@@ -1022,7 +1022,7 @@ spec:
 #### launchboard-migration-job.yaml
 
 ```bash
-vim deployment/phase-10-security/app-k8s/launchboard-migration-job.yaml
+vim deployment/phase-12-security/app-k8s/launchboard-migration-job.yaml
 ```
 
 ```yaml
@@ -1047,7 +1047,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: migrate
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-10
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-12
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -1077,12 +1077,12 @@ spec:
               memory: 256Mi
 ```
 
-`image` pulls from your private ECR repository — replace both placeholders, e.g. `123456789012.dkr.ecr.us-east-1.amazonaws.com/launchboard-backend:phase-10`. The Pod-level `securityContext.runAsNonRoot: true` here relies on the image's own `USER app` (which the Dockerfile pins to numeric UID 10001), and the container-level `allowPrivilegeEscalation: false` / `capabilities.drop: [ALL]` are the same restricted-profile fields every container in this phase needs.
+`image` pulls from your private ECR repository — replace both placeholders, e.g. `123456789012.dkr.ecr.us-east-1.amazonaws.com/launchboard-backend:phase-12`. The Pod-level `securityContext.runAsNonRoot: true` here relies on the image's own `USER app` (which the Dockerfile pins to numeric UID 10001), and the container-level `allowPrivilegeEscalation: false` / `capabilities.drop: [ALL]` are the same restricted-profile fields every container in this phase needs.
 
 #### launchboard-backend-deployment.yaml
 
 ```bash
-vim deployment/phase-10-security/app-k8s/launchboard-backend-deployment.yaml
+vim deployment/phase-12-security/app-k8s/launchboard-backend-deployment.yaml
 ```
 
 ```yaml
@@ -1117,7 +1117,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: backend
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-10
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-12
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -1167,7 +1167,7 @@ spec:
 #### launchboard-backend-service.yaml
 
 ```bash
-vim deployment/phase-10-security/app-k8s/launchboard-backend-service.yaml
+vim deployment/phase-12-security/app-k8s/launchboard-backend-service.yaml
 ```
 
 ```yaml
@@ -1191,7 +1191,7 @@ spec:
 #### launchboard-frontend-deployment.yaml
 
 ```bash
-vim deployment/phase-10-security/app-k8s/launchboard-frontend-deployment.yaml
+vim deployment/phase-12-security/app-k8s/launchboard-frontend-deployment.yaml
 ```
 
 ```yaml
@@ -1226,7 +1226,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: frontend
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-frontend:phase-10
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-frontend:phase-12
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -1262,7 +1262,7 @@ spec:
 #### launchboard-frontend-service.yaml
 
 ```bash
-vim deployment/phase-10-security/app-k8s/launchboard-frontend-service.yaml
+vim deployment/phase-12-security/app-k8s/launchboard-frontend-service.yaml
 ```
 
 ```yaml
@@ -1286,7 +1286,7 @@ Port 80 is what the Ingress targets; port 8080 is the Pod's actual non-root port
 #### ingress.yaml
 
 ```bash
-vim deployment/phase-10-security/app-k8s/ingress.yaml
+vim deployment/phase-12-security/app-k8s/ingress.yaml
 ```
 
 ```yaml
@@ -1300,7 +1300,7 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
-    alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-10
+    alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-12
 spec:
   ingressClassName: alb
   rules:
@@ -1320,7 +1320,7 @@ spec:
 #### hpa.yaml
 
 ```bash
-vim deployment/phase-10-security/app-k8s/hpa.yaml
+vim deployment/phase-12-security/app-k8s/hpa.yaml
 ```
 
 ```yaml
@@ -1350,7 +1350,7 @@ If average backend CPU usage exceeds 70% of requested CPU, the HPA scales up to 
 #### kustomization.yaml
 
 ```bash
-vim deployment/phase-10-security/app-k8s/kustomization.yaml
+vim deployment/phase-12-security/app-k8s/kustomization.yaml
 ```
 
 ```yaml
@@ -1385,15 +1385,15 @@ Replace image placeholders:
 ```bash
 cd /opt/devops-launchboard/app-source
 sed -i "s|YOUR_ACCOUNT_ID|${ACCOUNT_ID}|g; s|YOUR_AWS_REGION|${AWS_REGION}|g" \
-  deployment/phase-10-security/app-k8s/launchboard-backend-deployment.yaml \
-  deployment/phase-10-security/app-k8s/launchboard-migration-job.yaml \
-  deployment/phase-10-security/app-k8s/launchboard-frontend-deployment.yaml
+  deployment/phase-12-security/app-k8s/launchboard-backend-deployment.yaml \
+  deployment/phase-12-security/app-k8s/launchboard-migration-job.yaml \
+  deployment/phase-12-security/app-k8s/launchboard-frontend-deployment.yaml
 ```
 
 Create namespace and Secret:
 
 ```bash
-kubectl apply -f deployment/phase-10-security/app-k8s/namespace.yaml
+kubectl apply -f deployment/phase-12-security/app-k8s/namespace.yaml
 
 kubectl create secret generic launchboard-secret \
   --namespace devops-launchboard \
@@ -1404,7 +1404,7 @@ kubectl create secret generic launchboard-secret \
 Apply and verify:
 
 ```bash
-kubectl apply -k deployment/phase-10-security/app-k8s
+kubectl apply -k deployment/phase-12-security/app-k8s
 
 kubectl -n devops-launchboard rollout status deployment/launchboard-db --timeout=300s
 kubectl -n devops-launchboard wait --for=condition=complete job/launchboard-migrate --timeout=300s
@@ -1421,13 +1421,13 @@ ALB_DNS=$(kubectl -n devops-launchboard get ingress launchboard-ingress \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 echo "ALB: $ALB_DNS"
 
-vim deployment/phase-10-security/app-k8s/configmap.yaml
+vim deployment/phase-12-security/app-k8s/configmap.yaml
 ```
 
 Set `CORS_ORIGINS` to `http://YOUR_ALB_DNS_NAME`, then:
 
 ```bash
-kubectl apply -f deployment/phase-10-security/app-k8s/configmap.yaml
+kubectl apply -f deployment/phase-12-security/app-k8s/configmap.yaml
 kubectl -n devops-launchboard rollout restart deployment/launchboard-backend
 curl -s "http://$ALB_DNS/health" | jq
 ```
@@ -1449,7 +1449,7 @@ Pod Security Admission (PSA) is built into Kubernetes since v1.23. It evaluates 
 Your application already meets the `restricted` requirements because the Dockerfiles run as non-root and the Deployments set `securityContext` with `runAsNonRoot`, `runAsUser`, and `seccompProfile`. Applying PSA formalizes this: if anyone later adds a Deployment that tries to run as root, Kubernetes rejects it immediately instead of letting it run.
 
 ```bash
-vim deployment/phase-10-security/k8s-security/pod-security-standards.yaml
+vim deployment/phase-12-security/k8s-security/pod-security-standards.yaml
 ```
 
 Paste:
@@ -1471,7 +1471,7 @@ metadata:
 Apply:
 
 ```bash
-kubectl apply -f deployment/phase-10-security/k8s-security/pod-security-standards.yaml
+kubectl apply -f deployment/phase-12-security/k8s-security/pod-security-standards.yaml
 ```
 
 Line explanation:
@@ -1519,7 +1519,7 @@ Right now, you are using cluster-admin access (from the kubeconfig that eksctl c
 This step creates a `launchboard-deployer` ServiceAccount with only the permissions needed to deploy and manage the application in the `devops-launchboard` namespace — nothing more.
 
 ```bash
-vim deployment/phase-10-security/k8s-security/rbac.yaml
+vim deployment/phase-12-security/k8s-security/rbac.yaml
 ```
 
 Paste:
@@ -1574,7 +1574,7 @@ roleRef:
 Apply:
 
 ```bash
-kubectl apply -f deployment/phase-10-security/k8s-security/rbac.yaml
+kubectl apply -f deployment/phase-12-security/k8s-security/rbac.yaml
 ```
 
 Line explanation:
@@ -1611,7 +1611,7 @@ ResourceQuota caps the total resources a namespace can consume. LimitRange sets 
 ### resource-quota.yaml
 
 ```bash
-vim deployment/phase-10-security/k8s-security/resource-quota.yaml
+vim deployment/phase-12-security/k8s-security/resource-quota.yaml
 ```
 
 Paste:
@@ -1647,7 +1647,7 @@ Line explanation:
 ### limit-range.yaml
 
 ```bash
-vim deployment/phase-10-security/k8s-security/limit-range.yaml
+vim deployment/phase-12-security/k8s-security/limit-range.yaml
 ```
 
 Paste:
@@ -1685,8 +1685,8 @@ Line explanation:
 Apply both:
 
 ```bash
-kubectl apply -f deployment/phase-10-security/k8s-security/resource-quota.yaml
-kubectl apply -f deployment/phase-10-security/k8s-security/limit-range.yaml
+kubectl apply -f deployment/phase-12-security/k8s-security/resource-quota.yaml
+kubectl apply -f deployment/phase-12-security/k8s-security/limit-range.yaml
 kubectl -n devops-launchboard describe resourcequota launchboard-quota
 kubectl -n devops-launchboard describe limitrange launchboard-default-limits
 ```
@@ -1758,7 +1758,7 @@ NetworkPolicy is the Kubernetes firewall. You start with a default-deny rule (bl
 Important: on EKS, NetworkPolicy enforcement requires the VPC CNI network policy feature, which is enabled by default on EKS clusters running Kubernetes 1.25+. If your cluster is older, you need to enable it or install Calico.
 
 ```bash
-vim deployment/phase-10-security/k8s-security/network-policy.yaml
+vim deployment/phase-12-security/k8s-security/network-policy.yaml
 ```
 
 Paste:
@@ -1908,7 +1908,7 @@ spec:
 Apply:
 
 ```bash
-kubectl apply -f deployment/phase-10-security/k8s-security/network-policy.yaml
+kubectl apply -f deployment/phase-12-security/k8s-security/network-policy.yaml
 kubectl -n devops-launchboard get networkpolicy
 ```
 
@@ -1941,7 +1941,7 @@ Reference:
 SAST (Static Application Security Testing) scans source code for security anti-patterns without running the application. Semgrep is an open-source SAST tool that uses pattern-matching rules.
 
 ```bash
-vim deployment/phase-10-security/sast/semgrep-config.yaml
+vim deployment/phase-12-security/sast/semgrep-config.yaml
 ```
 
 Paste:
@@ -1982,7 +1982,7 @@ Run the scan:
 ```bash
 cd /opt/devops-launchboard/app-source
 docker run --rm -v "$PWD:/src" returntocorp/semgrep:latest \
-  semgrep scan --config /src/deployment/phase-10-security/sast/semgrep-config.yaml /src
+  semgrep scan --config /src/deployment/phase-12-security/sast/semgrep-config.yaml /src
 ```
 
 Command explanation:
@@ -2003,7 +2003,7 @@ Reference:
 SonarQube provides a web dashboard for continuous code quality and security analysis. It is heavier than Semgrep (requires 2+ GB memory and a persistent volume) so it is optional.
 
 ```bash
-vim deployment/phase-10-security/sast/sonarqube.yaml
+vim deployment/phase-12-security/sast/sonarqube.yaml
 ```
 
 Paste:
@@ -2113,7 +2113,7 @@ Line explanation:
 Apply and access:
 
 ```bash
-kubectl apply -f deployment/phase-10-security/sast/sonarqube.yaml
+kubectl apply -f deployment/phase-12-security/sast/sonarqube.yaml
 kubectl -n security rollout status deployment/sonarqube --timeout=300s
 
 kubectl -n security port-forward svc/sonarqube 9000:9000 --address 0.0.0.0 &
@@ -2130,9 +2130,9 @@ Two banners you may see in the UI, and what they mean:
 - **Red: "You're running a version of SonarQube that is no longer active"** — the image tag points at an end-of-life release. The manifest above uses `sonarqube:community`, the actively maintained Community Build line, so a fresh deploy should not show this. If you deployed with an older pinned tag (like `sonarqube:10-community`), fix it by updating the image in `sonarqube.yaml` and redeploying **from scratch** — SonarQube does not support upgrading the embedded database between versions, and this lab's data is throwaway anyway:
 
 ```bash
-vim deployment/phase-10-security/sast/sonarqube.yaml
-kubectl delete -f deployment/phase-10-security/sast/sonarqube.yaml
-kubectl apply -f deployment/phase-10-security/sast/sonarqube.yaml
+vim deployment/phase-12-security/sast/sonarqube.yaml
+kubectl delete -f deployment/phase-12-security/sast/sonarqube.yaml
+kubectl apply -f deployment/phase-12-security/sast/sonarqube.yaml
 kubectl -n security rollout status deployment/sonarqube --timeout=300s
 ```
 
@@ -2235,21 +2235,21 @@ Create the secret in AWS:
 
 ```bash
 aws secretsmanager create-secret \
-  --name devops-launchboard/phase-10/database \
+  --name devops-launchboard/phase-12/database \
   --secret-string '{"POSTGRES_PASSWORD":"CHANGE_ME_STRONG_PASSWORD","DATABASE_URL":"postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard"}' \
   --region "$AWS_REGION"
 ```
 
 Command explanation:
 
-- `--name devops-launchboard/phase-10/database` uses a path-like naming convention that matches the app and phase. Slashes in the name are cosmetic (Secrets Manager treats the whole string as one name), but they make the console and IAM policies more readable.
+- `--name devops-launchboard/phase-12/database` uses a path-like naming convention that matches the app and phase. Slashes in the name are cosmetic (Secrets Manager treats the whole string as one name), but they make the console and IAM policies more readable.
 - `--secret-string` stores a JSON object with the same keys the Kubernetes Secret uses. The External Secrets Operator (Step 17) will read individual properties from this JSON.
 - AWS encrypts this at rest with the default `aws/secretsmanager` KMS key. You can specify a custom KMS key for tighter access control.
 
 Create the IAM policy that allows reading this specific secret:
 
 ```bash
-vim deployment/phase-10-security/secrets-management/aws-secrets-manager-policy.json
+vim deployment/phase-12-security/secrets-management/aws-secrets-manager-policy.json
 ```
 
 Paste:
@@ -2265,7 +2265,7 @@ Paste:
         "secretsmanager:GetSecretValue",
         "secretsmanager:DescribeSecret"
       ],
-      "Resource": "arn:aws:secretsmanager:YOUR_AWS_REGION:YOUR_ACCOUNT_ID:secret:devops-launchboard/phase-10/database-*"
+      "Resource": "arn:aws:secretsmanager:YOUR_AWS_REGION:YOUR_ACCOUNT_ID:secret:devops-launchboard/phase-12/database-*"
     }
   ]
 }
@@ -2283,11 +2283,11 @@ Create the policy:
 
 ```bash
 sed -i "s|YOUR_AWS_REGION|${AWS_REGION}|g; s|YOUR_ACCOUNT_ID|${ACCOUNT_ID}|g" \
-  deployment/phase-10-security/secrets-management/aws-secrets-manager-policy.json
+  deployment/phase-12-security/secrets-management/aws-secrets-manager-policy.json
 
 aws iam create-policy \
-  --policy-name devops-launchboard-phase-10-secrets-read \
-  --policy-document file://deployment/phase-10-security/secrets-management/aws-secrets-manager-policy.json
+  --policy-name devops-launchboard-phase-12-secrets-read \
+  --policy-document file://deployment/phase-12-security/secrets-management/aws-secrets-manager-policy.json
 ```
 
 ### See How Secrets Manager Works Before Wiring It To Kubernetes
@@ -2297,7 +2297,7 @@ The secret exists in AWS now — use it from the CLI the way applications and op
 **1. Retrieve the secret value** (this is the API call the External Secrets Operator will make on your behalf):
 
 ```bash
-aws secretsmanager get-secret-value   --secret-id devops-launchboard/phase-10/database   --region "$AWS_REGION"   --query SecretString --output text | jq
+aws secretsmanager get-secret-value   --secret-id devops-launchboard/phase-12/database   --region "$AWS_REGION"   --query SecretString --output text | jq
 ```
 
 Expected: the JSON object with both keys. Two things to notice:
@@ -2308,7 +2308,7 @@ Expected: the JSON object with both keys. Two things to notice:
 **2. Look at the metadata** (what `secretsmanager:DescribeSecret` in the policy grants — note there is no value in this output):
 
 ```bash
-aws secretsmanager describe-secret   --secret-id devops-launchboard/phase-10/database   --region "$AWS_REGION" | jq '{Name, ARN, VersionIdsToStages, LastChangedDate, RotationEnabled}'
+aws secretsmanager describe-secret   --secret-id devops-launchboard/phase-12/database   --region "$AWS_REGION" | jq '{Name, ARN, VersionIdsToStages, LastChangedDate, RotationEnabled}'
 ```
 
 `VersionIdsToStages` shows one version labeled `AWSCURRENT`. `RotationEnabled: false` — rotation Lambdas are the production feature this lab does not set up.
@@ -2316,21 +2316,21 @@ aws secretsmanager describe-secret   --secret-id devops-launchboard/phase-10/dat
 **3. Update the value and see version history** — the feature plain Kubernetes Secrets do not have. Write a new version (same values, one added demo key):
 
 ```bash
-aws secretsmanager put-secret-value   --secret-id devops-launchboard/phase-10/database   --secret-string '{"POSTGRES_PASSWORD":"CHANGE_ME_STRONG_PASSWORD","DATABASE_URL":"postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard","DEMO_NOTE":"added in step 16"}'   --region "$AWS_REGION"
+aws secretsmanager put-secret-value   --secret-id devops-launchboard/phase-12/database   --secret-string '{"POSTGRES_PASSWORD":"CHANGE_ME_STRONG_PASSWORD","DATABASE_URL":"postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard","DEMO_NOTE":"added in step 16"}'   --region "$AWS_REGION"
 
-aws secretsmanager list-secret-version-ids   --secret-id devops-launchboard/phase-10/database   --region "$AWS_REGION" | jq '.Versions[] | {VersionStages, CreatedDate}'
+aws secretsmanager list-secret-version-ids   --secret-id devops-launchboard/phase-12/database   --region "$AWS_REGION" | jq '.Versions[] | {VersionStages, CreatedDate}'
 ```
 
 Expected: two versions — the new one is `AWSCURRENT`, the original moved to `AWSPREVIOUS`. Prove the old value is still retrievable (your undo button after a bad rotation):
 
 ```bash
-aws secretsmanager get-secret-value   --secret-id devops-launchboard/phase-10/database   --version-stage AWSPREVIOUS   --region "$AWS_REGION"   --query SecretString --output text | jq
+aws secretsmanager get-secret-value   --secret-id devops-launchboard/phase-12/database   --version-stage AWSPREVIOUS   --region "$AWS_REGION"   --query SecretString --output text | jq
 ```
 
 The `AWSPREVIOUS` output has no `DEMO_NOTE` key — that is the pre-update value, one API call away. Now put the secret back to exactly the original two keys so Step 17 syncs clean data:
 
 ```bash
-aws secretsmanager put-secret-value   --secret-id devops-launchboard/phase-10/database   --secret-string '{"POSTGRES_PASSWORD":"CHANGE_ME_STRONG_PASSWORD","DATABASE_URL":"postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard"}'   --region "$AWS_REGION"
+aws secretsmanager put-secret-value   --secret-id devops-launchboard/phase-12/database   --secret-string '{"POSTGRES_PASSWORD":"CHANGE_ME_STRONG_PASSWORD","DATABASE_URL":"postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard"}'   --region "$AWS_REGION"
 ```
 
 (Use your real password in all three `put-secret-value` commands, matching what you stored originally.)
@@ -2366,7 +2366,7 @@ eksctl create iamserviceaccount \
   --cluster "$CLUSTER_NAME" \
   --namespace devops-launchboard \
   --name launchboard-secrets-reader \
-  --attach-policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/devops-launchboard-phase-10-secrets-read" \
+  --attach-policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/devops-launchboard-phase-12-secrets-read" \
   --approve \
   --region "$AWS_REGION"
 ```
@@ -2374,7 +2374,7 @@ eksctl create iamserviceaccount \
 Create the SecretStore and ExternalSecret:
 
 ```bash
-vim deployment/phase-10-security/secrets-management/external-secret.example.yaml
+vim deployment/phase-12-security/secrets-management/external-secret.example.yaml
 ```
 
 Paste:
@@ -2411,11 +2411,11 @@ spec:
   data:
     - secretKey: POSTGRES_PASSWORD
       remoteRef:
-        key: devops-launchboard/phase-10/database
+        key: devops-launchboard/phase-12/database
         property: POSTGRES_PASSWORD
     - secretKey: DATABASE_URL
       remoteRef:
-        key: devops-launchboard/phase-10/database
+        key: devops-launchboard/phase-12/database
         property: DATABASE_URL
 ```
 
@@ -2437,8 +2437,8 @@ Apply:
 
 ```bash
 sed -i "s|YOUR_AWS_REGION|${AWS_REGION}|g" \
-  deployment/phase-10-security/secrets-management/external-secret.example.yaml
-kubectl apply -f deployment/phase-10-security/secrets-management/external-secret.example.yaml
+  deployment/phase-12-security/secrets-management/external-secret.example.yaml
+kubectl apply -f deployment/phase-12-security/secrets-management/external-secret.example.yaml
 ```
 
 Verify:
@@ -2485,7 +2485,7 @@ Within seconds (the deletion triggers an immediate reconcile), the Secret reappe
 A real company rotates credentials on a schedule. Simulate it with a harmless demo key so the running database is not affected (see the warning below for why). First add the key to the AWS secret — **keep your real POSTGRES_PASSWORD and DATABASE_URL values unchanged**, only add the third key:
 
 ```bash
-aws secretsmanager put-secret-value   --secret-id devops-launchboard/phase-10/database   --secret-string '{"POSTGRES_PASSWORD":"YOUR_CURRENT_PASSWORD","DATABASE_URL":"postgresql+asyncpg://launchboard_user:YOUR_CURRENT_PASSWORD@launchboard-db:5432/launchboard","ROTATION_DEMO":"version-1"}'   --region "$AWS_REGION"
+aws secretsmanager put-secret-value   --secret-id devops-launchboard/phase-12/database   --secret-string '{"POSTGRES_PASSWORD":"YOUR_CURRENT_PASSWORD","DATABASE_URL":"postgresql+asyncpg://launchboard_user:YOUR_CURRENT_PASSWORD@launchboard-db:5432/launchboard","ROTATION_DEMO":"version-1"}'   --region "$AWS_REGION"
 ```
 
 - `put-secret-value` writes a **new version** of the secret; Secrets Manager keeps the previous version retrievable (this version history is one of its selling points over plain Kubernetes Secrets).
@@ -2493,7 +2493,7 @@ aws secretsmanager put-secret-value   --secret-id devops-launchboard/phase-10/da
 Tell the ExternalSecret to sync this key too — add one entry to its `data` list:
 
 ```bash
-vim deployment/phase-10-security/secrets-management/external-secret.example.yaml
+vim deployment/phase-12-security/secrets-management/external-secret.example.yaml
 ```
 
 Add under the existing two `data` entries:
@@ -2501,21 +2501,21 @@ Add under the existing two `data` entries:
 ```yaml
     - secretKey: ROTATION_DEMO
       remoteRef:
-        key: devops-launchboard/phase-10/database
+        key: devops-launchboard/phase-12/database
         property: ROTATION_DEMO
 ```
 
 Apply and confirm the new key arrived:
 
 ```bash
-kubectl apply -f deployment/phase-10-security/secrets-management/external-secret.example.yaml
+kubectl apply -f deployment/phase-12-security/secrets-management/external-secret.example.yaml
 kubectl -n devops-launchboard get secret launchboard-secret -o jsonpath='{.data.ROTATION_DEMO}' | base64 -d; echo
 ```
 
 Expected: `version-1`. Now rotate it in AWS:
 
 ```bash
-aws secretsmanager put-secret-value   --secret-id devops-launchboard/phase-10/database   --secret-string '{"POSTGRES_PASSWORD":"YOUR_CURRENT_PASSWORD","DATABASE_URL":"postgresql+asyncpg://launchboard_user:YOUR_CURRENT_PASSWORD@launchboard-db:5432/launchboard","ROTATION_DEMO":"version-2"}'   --region "$AWS_REGION"
+aws secretsmanager put-secret-value   --secret-id devops-launchboard/phase-12/database   --secret-string '{"POSTGRES_PASSWORD":"YOUR_CURRENT_PASSWORD","DATABASE_URL":"postgresql+asyncpg://launchboard_user:YOUR_CURRENT_PASSWORD@launchboard-db:5432/launchboard","ROTATION_DEMO":"version-2"}'   --region "$AWS_REGION"
 ```
 
 With `refreshInterval: 1h` you would wait up to an hour — instead, force an immediate reconcile with the annotation ESO watches for:
@@ -2597,7 +2597,7 @@ Seal it:
 
 ```bash
 kubeseal --format yaml < /tmp/launchboard-secret.yaml \
-  > deployment/phase-10-security/secrets-management/sealed-secret.yaml
+  > deployment/phase-12-security/secrets-management/sealed-secret.yaml
 
 rm /tmp/launchboard-secret.yaml
 ```
@@ -2607,7 +2607,7 @@ rm /tmp/launchboard-secret.yaml
 Apply it:
 
 ```bash
-kubectl apply -f deployment/phase-10-security/secrets-management/sealed-secret.yaml
+kubectl apply -f deployment/phase-12-security/secrets-management/sealed-secret.yaml
 ```
 
 The controller watches for `SealedSecret` resources, decrypts the one you just applied with its private key, and creates a normal Kubernetes `Secret` from the result — `launchboard-secret` ends up identical to the one you would have created directly in Step 9, just without ever committing plaintext to version control.
@@ -2623,7 +2623,7 @@ HashiCorp Vault is a dedicated secrets management platform. It is more complex t
 This step deploys Vault in HA mode as a learning exercise. It is optional and requires ~1.5 GB memory across the 3 replicas.
 
 ```bash
-vim deployment/phase-10-security/vault/vault-values.yaml
+vim deployment/phase-12-security/vault/vault-values.yaml
 ```
 
 Paste:
@@ -2668,19 +2668,19 @@ Line explanation:
 Create the application-scoped policy:
 
 ```bash
-vim deployment/phase-10-security/vault/launchboard-policy.hcl
+vim deployment/phase-12-security/vault/launchboard-policy.hcl
 ```
 
 Paste:
 
 ```hcl
 # Allow reading secrets under the launchboard path
-path "secret/data/devops-launchboard/phase-10/*" {
+path "secret/data/devops-launchboard/phase-12/*" {
   capabilities = ["read", "list"]
 }
 
 # Allow listing secret metadata (for discovery)
-path "secret/metadata/devops-launchboard/phase-10/*" {
+path "secret/metadata/devops-launchboard/phase-12/*" {
   capabilities = ["read", "list"]
 }
 ```
@@ -2695,7 +2695,7 @@ helm repo update
 helm install vault hashicorp/vault \
   --namespace vault \
   --create-namespace \
-  -f deployment/phase-10-security/vault/vault-values.yaml
+  -f deployment/phase-12-security/vault/vault-values.yaml
 ```
 
 Note: Vault starts sealed and requires initialization and unsealing before use. This is a manual process in a lab:
@@ -2739,8 +2739,8 @@ vault login YOUR_ROOT_TOKEN
 
 ```bash
 vault secrets enable -path=secret kv-v2
-vault kv put secret/devops-launchboard/phase-10/database   POSTGRES_PASSWORD="CHANGE_ME_STRONG_PASSWORD"   DATABASE_URL="postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard"
-vault kv get secret/devops-launchboard/phase-10/database
+vault kv put secret/devops-launchboard/phase-12/database   POSTGRES_PASSWORD="CHANGE_ME_STRONG_PASSWORD"   DATABASE_URL="postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard"
+vault kv get secret/devops-launchboard/phase-12/database
 ```
 
 - `kv-v2` is the versioned key-value engine: every `kv put` creates a new version, and old versions remain readable — the same version-history property you saw in AWS Secrets Manager.
@@ -2750,10 +2750,10 @@ vault kv get secret/devops-launchboard/phase-10/database
 
 ```bash
 vault policy write launchboard-read - <<EOF
-path "secret/data/devops-launchboard/phase-10/*" {
+path "secret/data/devops-launchboard/phase-12/*" {
   capabilities = ["read", "list"]
 }
-path "secret/metadata/devops-launchboard/phase-10/*" {
+path "secret/metadata/devops-launchboard/phase-12/*" {
   capabilities = ["read", "list"]
 }
 EOF
@@ -2775,21 +2775,21 @@ Copy the `token` value from the output.
 ```bash
 vault login YOUR_APP_TOKEN
 
-vault kv get secret/devops-launchboard/phase-10/database
+vault kv get secret/devops-launchboard/phase-12/database
 ```
 
 Expected: the secret is returned — reading its own path works. Now try to step outside the path and try to write:
 
 ```bash
 vault kv put secret/other-team/api-key value=steal-me
-vault kv put secret/devops-launchboard/phase-10/database POSTGRES_PASSWORD=hacked
+vault kv put secret/devops-launchboard/phase-12/database POSTGRES_PASSWORD=hacked
 ```
 
 Expected — both fail:
 
 ```text
 Error writing data to secret/data/other-team/api-key: ... permission denied
-Error writing data to secret/data/devops-launchboard/phase-10/database: ... permission denied
+Error writing data to secret/data/devops-launchboard/phase-12/database: ... permission denied
 ```
 
 The token can read exactly one path prefix and nothing else — not other teams' secrets, and not even *write* its own. That is the `capabilities = ["read", "list"]` line enforced. Exit the Pod shell with `exit`.
@@ -2855,8 +2855,8 @@ kubectl get crd externalsecrets.external-secrets.io -o jsonpath='{.spec.versions
 Fix by updating the apiVersion in the manifest (both the SecretStore and the ExternalSecret) and re-applying:
 
 ```bash
-sed -i "s|external-secrets.io/v1beta1|external-secrets.io/v1|g"   deployment/phase-10-security/secrets-management/external-secret.example.yaml
-kubectl apply -f deployment/phase-10-security/secrets-management/external-secret.example.yaml
+sed -i "s|external-secrets.io/v1beta1|external-secrets.io/v1|g"   deployment/phase-12-security/secrets-management/external-secret.example.yaml
+kubectl apply -f deployment/phase-12-security/secrets-management/external-secret.example.yaml
 kubectl -n devops-launchboard get externalsecret
 ```
 
@@ -2886,9 +2886,9 @@ Fix: add the numeric UID/GID to the Job's Pod securityContext:
 Jobs are immutable once created, so delete and re-apply:
 
 ```bash
-vim deployment/phase-10-security/app-k8s/launchboard-migration-job.yaml
+vim deployment/phase-12-security/app-k8s/launchboard-migration-job.yaml
 kubectl -n devops-launchboard delete job launchboard-migrate
-kubectl apply -f deployment/phase-10-security/app-k8s/launchboard-migration-job.yaml
+kubectl apply -f deployment/phase-12-security/app-k8s/launchboard-migration-job.yaml
 kubectl -n devops-launchboard wait --for=condition=complete job/launchboard-migrate --timeout=300s
 kubectl -n devops-launchboard rollout restart deployment/launchboard-backend
 kubectl -n devops-launchboard rollout status deployment/launchboard-backend --timeout=180s
@@ -2949,7 +2949,7 @@ kubectl delete namespace vault external-secrets security 2>/dev/null
 Delete security controls:
 
 ```bash
-kubectl delete -f deployment/phase-10-security/k8s-security/ 2>/dev/null
+kubectl delete -f deployment/phase-12-security/k8s-security/ 2>/dev/null
 ```
 
 Delete application:
@@ -2969,7 +2969,7 @@ helm uninstall aws-load-balancer-controller -n kube-system
 Delete cluster (10–20 minutes):
 
 ```bash
-eksctl delete cluster --name devops-launchboard-phase-10 --region "$AWS_REGION"
+eksctl delete cluster --name devops-launchboard-phase-12 --region "$AWS_REGION"
 ```
 
 Delete ECR:
@@ -2983,7 +2983,7 @@ Delete AWS secret:
 
 ```bash
 aws secretsmanager delete-secret \
-  --secret-id devops-launchboard/phase-10/database \
+  --secret-id devops-launchboard/phase-12/database \
   --force-delete-without-recovery --region "$AWS_REGION"
 ```
 
@@ -2991,11 +2991,11 @@ Delete IAM policies:
 
 ```bash
 aws iam delete-policy \
-  --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/devops-launchboard-phase-10-secrets-read" \
+  --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/devops-launchboard-phase-12-secrets-read" \
   2>/dev/null
 
 aws iam delete-policy \
-  --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicyPhase10" \
+  --policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicyPhase12" \
   2>/dev/null
 ```
 
@@ -3077,7 +3077,7 @@ Terminate the workstation EC2.
 Move to:
 
 ```text
-Phase 11: Advanced Deployment Strategies
+Phase 13: Advanced Deployment Strategies
 ```
 
 Why:

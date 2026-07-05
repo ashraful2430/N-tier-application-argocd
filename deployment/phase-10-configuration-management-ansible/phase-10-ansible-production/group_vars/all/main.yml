@@ -12,4 +12,4 @@ cors_origins: "http://{{ lb_public_ip }}"
 app_repo: https://github.com/ashraful2430/N-tier-application.git
 app_dir: /opt/launchboard
 app_version: main
-image_tag: phase-15
+image_tag: phase-10

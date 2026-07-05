@@ -2,10 +2,10 @@
   "rules": [
     {
       "rulePriority": 1,
-      "description": "Keep the latest 10 phase 11 images",
+      "description": "Keep the latest 10 phase 13 images",
       "selection": {
         "tagStatus": "tagged",
-        "tagPrefixList": ["phase-11"],
+        "tagPrefixList": ["phase-13"],
         "countType": "imageCountMoreThan",
         "countNumber": 10
       },

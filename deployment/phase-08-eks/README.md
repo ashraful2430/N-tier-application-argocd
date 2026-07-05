@@ -2486,9 +2486,9 @@ Terminate the workstation EC2 from the AWS Console.
 Move to:
 
 ```text
-Phase 9: Observability
+Phase 9: Infrastructure As Code With Terraform
 ```
 
 Why:
 
-Phase 8 deployed the application to a production-grade managed Kubernetes platform. Phase 9 adds the visibility layer: Prometheus for metrics collection, Grafana for dashboards, structured logging, and alerting. Without observability, you are flying blind — you can deploy but you cannot see whether the app is healthy, how resources are being used, or when something is about to break.
+Phase 8 deployed the application to a production-grade managed Kubernetes platform — but every piece of it was created by hand: console clicks for the workstation, `eksctl` and `aws` commands typed one at a time. Phase 9 makes infrastructure itself reviewable, repeatable code with Terraform: first the fundamentals on a single EC2 instance, then a production deployment (custom VPC, Auto Scaling Group behind an ALB, RDS) from one `terraform apply`.

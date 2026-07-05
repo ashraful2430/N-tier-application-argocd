@@ -1,4 +1,4 @@
-# Phase 13: Performance And Load Validation
+# Phase 15: Performance And Load Validation
 
 ## Fresh Start Assumption
 
@@ -79,7 +79,7 @@ Performance testing is not only about high traffic. It is about proving what the
 | Item | Recommended Value |
 | --- | --- |
 | AWS Region | `us-east-1` or closest region |
-| Cluster Name | `devops-launchboard-phase-13` |
+| Cluster Name | `devops-launchboard-phase-15` |
 | Kubernetes Version | `1.34` |
 | Node Type | `t3.medium` |
 | Desired Nodes | `2` |
@@ -201,16 +201,16 @@ Run:
 cd ~
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
-ssh-keygen -t ed25519 -C "devops-launchboard-phase-13" -f ~/.ssh/devops_launchboard_phase_13
-cat ~/.ssh/devops_launchboard_phase_13.pub
+ssh-keygen -t ed25519 -C "devops-launchboard-phase-15" -f ~/.ssh/devops_launchboard_phase_15
+cat ~/.ssh/devops_launchboard_phase_15.pub
 ```
 
 Command explanation:
 
 - `mkdir -p ~/.ssh` creates the SSH config directory if it does not already exist.
 - `chmod 700 ~/.ssh` restricts the directory to the owner only — SSH refuses to use key files inside a world-readable directory.
-- `ssh-keygen -t ed25519 -C "devops-launchboard-phase-13" -f ~/.ssh/devops_launchboard_phase_13` generates a new Ed25519 key pair. `-C` attaches a label comment so the key is identifiable later in GitHub's deploy key list. `-f` sets the output filename.
-- `cat ~/.ssh/devops_launchboard_phase_13.pub` prints the public key so you can copy it into GitHub.
+- `ssh-keygen -t ed25519 -C "devops-launchboard-phase-15" -f ~/.ssh/devops_launchboard_phase_15` generates a new Ed25519 key pair. `-C` attaches a label comment so the key is identifiable later in GitHub's deploy key list. `-f` sets the output filename.
+- `cat ~/.ssh/devops_launchboard_phase_15.pub` prints the public key so you can copy it into GitHub.
 
 Add the public key to GitHub:
 
@@ -233,7 +233,7 @@ Paste:
 Host github.com
   HostName github.com
   User git
-  IdentityFile ~/.ssh/devops_launchboard_phase_13
+  IdentityFile ~/.ssh/devops_launchboard_phase_15
   IdentitiesOnly yes
 ```
 
@@ -242,15 +242,15 @@ Line explanation:
 - `Host github.com` matches any SSH connection targeting `github.com`.
 - `HostName github.com` is explicit here, but matters once you have multiple `Host` aliases pointing at the same real hostname.
 - `User git` is the fixed username GitHub expects for all SSH Git operations, regardless of your own GitHub username.
-- `IdentityFile ~/.ssh/devops_launchboard_phase_13` points SSH at the private key created above.
+- `IdentityFile ~/.ssh/devops_launchboard_phase_15` points SSH at the private key created above.
 - `IdentitiesOnly yes` stops SSH from also trying any other keys loaded in your SSH agent, avoiding GitHub's "too many authentication failures" error if you have several keys.
 
 Run:
 
 ```bash
 chmod 600 ~/.ssh/config
-chmod 600 ~/.ssh/devops_launchboard_phase_13
-chmod 644 ~/.ssh/devops_launchboard_phase_13.pub
+chmod 600 ~/.ssh/devops_launchboard_phase_15
+chmod 644 ~/.ssh/devops_launchboard_phase_15.pub
 ssh -T git@github.com
 ```
 
@@ -284,17 +284,17 @@ Reference:
 
 - GitHub deploy keys: https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys
 
-## Step 4: Create Phase 13 Folders
+## Step 4: Create Phase 15 Folders
 
 Run:
 
 ```bash
-mkdir -p deployment/phase-13-performance-and-load-validation/cluster
-mkdir -p deployment/phase-13-performance-and-load-validation/ecr
-mkdir -p deployment/phase-13-performance-and-load-validation/app-k8s
-mkdir -p deployment/phase-13-performance-and-load-validation/monitoring
-mkdir -p deployment/phase-13-performance-and-load-validation/tests/k6
-mkdir -p deployment/phase-13-performance-and-load-validation/reports
+mkdir -p deployment/phase-15-performance-and-load-validation/cluster
+mkdir -p deployment/phase-15-performance-and-load-validation/ecr
+mkdir -p deployment/phase-15-performance-and-load-validation/app-k8s
+mkdir -p deployment/phase-15-performance-and-load-validation/monitoring
+mkdir -p deployment/phase-15-performance-and-load-validation/tests/k6
+mkdir -p deployment/phase-15-performance-and-load-validation/reports
 ```
 
 Why these folders exist:
@@ -311,7 +311,7 @@ Why these folders exist:
 Create:
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/cluster/eksctl-cluster.yaml
+vim deployment/phase-15-performance-and-load-validation/cluster/eksctl-cluster.yaml
 ```
 
 Paste:
@@ -321,7 +321,7 @@ apiVersion: eksctl.io/v1alpha5
 kind: ClusterConfig
 
 metadata:
-  name: devops-launchboard-phase-13
+  name: devops-launchboard-phase-15
   region: YOUR_AWS_REGION
   version: "1.34"
 
@@ -353,7 +353,7 @@ managedNodeGroups:
       workload: launchboard
     tags:
       Project: devops-launchboard
-      Environment: phase-13
+      Environment: phase-15
       Owner: student
 
 cloudWatch:
@@ -375,7 +375,7 @@ Replace `YOUR_AWS_REGION` in three places. For example, `us-east-1`, `us-east-1a
 
 Line explanation:
 
-- `metadata.name` is the cluster name. Using `devops-launchboard-phase-13` keeps this cluster distinct from the ones created by other phases, so they can coexist in the same AWS account.
+- `metadata.name` is the cluster name. Using `devops-launchboard-phase-15` keeps this cluster distinct from the ones created by other phases, so they can coexist in the same AWS account.
 - `iam.withOIDC: true` creates an OpenID Connect provider for the cluster, the foundation of IAM Roles for Service Accounts (IRSA). The EBS CSI driver addon and the AWS Load Balancer Controller installed in Step 8 both need this to get AWS permissions without storing access keys in the cluster.
 - `vpc.nat.gateway: Single` creates one NAT Gateway instead of one per availability zone, trading some redundancy for a meaningfully lower hourly cost in a lab.
 - `managedNodeGroups` defines the EC2 worker nodes that run your Pods. `desiredCapacity: 2` with `minSize: 2`/`maxSize: 4` gives the backend's HPA room to schedule extra Pods when the load tests in Step 11-13 push CPU usage up.
@@ -385,7 +385,7 @@ Line explanation:
 Create the cluster (20 to 40 minutes):
 
 ```bash
-eksctl create cluster -f deployment/phase-13-performance-and-load-validation/cluster/eksctl-cluster.yaml
+eksctl create cluster -f deployment/phase-15-performance-and-load-validation/cluster/eksctl-cluster.yaml
 kubectl get nodes
 ```
 
@@ -419,7 +419,7 @@ Command explanation:
 Create lifecycle policy:
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/ecr/lifecycle-policy.json
+vim deployment/phase-15-performance-and-load-validation/ecr/lifecycle-policy.json
 ```
 
 Paste:
@@ -429,10 +429,10 @@ Paste:
   "rules": [
     {
       "rulePriority": 1,
-      "description": "Keep the latest 10 phase 13 images",
+      "description": "Keep the latest 10 phase 15 images",
       "selection": {
         "tagStatus": "tagged",
-        "tagPrefixList": ["phase-13"],
+        "tagPrefixList": ["phase-15"],
         "countType": "imageCountMoreThan",
         "countNumber": 10
       },
@@ -460,7 +460,7 @@ Paste:
 Line explanation:
 
 - `rulePriority: 1` is evaluated first. ECR evaluates rules in priority order and applies the first matching rule to each image.
-- `tagStatus: "tagged"` with `tagPrefixList: ["phase-13"]` selects images whose tags start with `phase-13`.
+- `tagStatus: "tagged"` with `tagPrefixList: ["phase-15"]` selects images whose tags start with `phase-15`.
 - `countType: "imageCountMoreThan"` with `countNumber: 10` means: once there are more than 10 matching images, expire the oldest ones until only 10 remain. This keeps the last 10 builds available without the repository growing forever.
 - `rulePriority: 2` catches untagged images (failed or interrupted pushes, or the attestation manifests modern `docker buildx` pushes alongside a tagged image) and expires them after 7 days.
 - `action.type: "expire"` deletes the matching images.
@@ -469,9 +469,9 @@ Apply lifecycle policy:
 
 ```bash
 aws ecr put-lifecycle-policy --repository-name launchboard-backend --region $AWS_REGION \
-  --lifecycle-policy-text file://deployment/phase-13-performance-and-load-validation/ecr/lifecycle-policy.json
+  --lifecycle-policy-text file://deployment/phase-15-performance-and-load-validation/ecr/lifecycle-policy.json
 aws ecr put-lifecycle-policy --repository-name launchboard-frontend --region $AWS_REGION \
-  --lifecycle-policy-text file://deployment/phase-13-performance-and-load-validation/ecr/lifecycle-policy.json
+  --lifecycle-policy-text file://deployment/phase-15-performance-and-load-validation/ecr/lifecycle-policy.json
 ```
 
 `--lifecycle-policy-text file://...` attaches the JSON policy you just wrote to each repository.
@@ -479,7 +479,7 @@ aws ecr put-lifecycle-policy --repository-name launchboard-frontend --region $AW
 ### Dockerfile.backend
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/Dockerfile.backend
+vim deployment/phase-15-performance-and-load-validation/Dockerfile.backend
 ```
 
 Paste:
@@ -549,7 +549,7 @@ Line explanation:
 ### Dockerfile.frontend
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/Dockerfile.frontend
+vim deployment/phase-15-performance-and-load-validation/Dockerfile.frontend
 ```
 
 Paste:
@@ -570,7 +570,7 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
-COPY deployment/phase-13-performance-and-load-validation/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deployment/phase-15-performance-and-load-validation/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
@@ -591,7 +591,7 @@ Line explanation:
 ### nginx-frontend.conf
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/nginx-frontend.conf
+vim deployment/phase-15-performance-and-load-validation/nginx-frontend.conf
 ```
 
 Paste:
@@ -662,27 +662,27 @@ aws ecr get-login-password --region $AWS_REGION \
 ```
 
 ```bash
-docker build -f deployment/phase-13-performance-and-load-validation/Dockerfile.backend \
-  -t launchboard-backend:phase-13 .
-docker build -f deployment/phase-13-performance-and-load-validation/Dockerfile.frontend \
+docker build -f deployment/phase-15-performance-and-load-validation/Dockerfile.backend \
+  -t launchboard-backend:phase-15 .
+docker build -f deployment/phase-15-performance-and-load-validation/Dockerfile.frontend \
   --build-arg VITE_API_URL=/api \
-  -t launchboard-frontend:phase-13 .
+  -t launchboard-frontend:phase-15 .
 ```
 
 ```bash
-docker tag launchboard-backend:phase-13 $ECR_REGISTRY/launchboard-backend:phase-13
-docker tag launchboard-frontend:phase-13 $ECR_REGISTRY/launchboard-frontend:phase-13
+docker tag launchboard-backend:phase-15 $ECR_REGISTRY/launchboard-backend:phase-15
+docker tag launchboard-frontend:phase-15 $ECR_REGISTRY/launchboard-frontend:phase-15
 
-docker push $ECR_REGISTRY/launchboard-backend:phase-13
-docker push $ECR_REGISTRY/launchboard-frontend:phase-13
+docker push $ECR_REGISTRY/launchboard-backend:phase-15
+docker push $ECR_REGISTRY/launchboard-frontend:phase-15
 ```
 
 Command explanation:
 
 - `ECR_REGISTRY=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com` builds the registry hostname once into a variable, instead of repeating the full expression on every later line.
 - `aws ecr get-login-password | docker login ...` exchanges your AWS credentials for a short-lived Docker registry password (valid 12 hours) and feeds it to `docker login` over stdin, so the password never appears in a process listing or log line.
-- `docker build -t launchboard-backend:phase-13` builds with a short local tag first; tagging the registry path is a separate step.
-- `docker tag ... $ECR_REGISTRY/launchboard-backend:phase-13` adds the full registry path as a second name for the same image, which is what `docker push` needs to know where to send it.
+- `docker build -t launchboard-backend:phase-15` builds with a short local tag first; tagging the registry path is a separate step.
+- `docker tag ... $ECR_REGISTRY/launchboard-backend:phase-15` adds the full registry path as a second name for the same image, which is what `docker push` needs to know where to send it.
 - `docker push` uploads the image layers to ECR. The first push uploads every layer; later pushes only upload layers that changed.
 
 Verify:
@@ -707,12 +707,12 @@ Reference:
 
 ## Step 7: Deploy The Application
 
-All manifests go inside `deployment/phase-13-performance-and-load-validation/app-k8s/`.
+All manifests go inside `deployment/phase-15-performance-and-load-validation/app-k8s/`.
 
 ### namespace.yaml
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/app-k8s/namespace.yaml
+vim deployment/phase-15-performance-and-load-validation/app-k8s/namespace.yaml
 ```
 
 ```yaml
@@ -730,7 +730,7 @@ A Namespace is a logical boundary inside Kubernetes; every other resource below 
 ### storageclass.yaml
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/app-k8s/storageclass.yaml
+vim deployment/phase-15-performance-and-load-validation/app-k8s/storageclass.yaml
 ```
 
 ```yaml
@@ -753,7 +753,7 @@ parameters:
 ### configmap.yaml
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/app-k8s/configmap.yaml
+vim deployment/phase-15-performance-and-load-validation/app-k8s/configmap.yaml
 ```
 
 ```yaml
@@ -776,7 +776,7 @@ data:
 ### secret.example.yaml
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/app-k8s/secret.example.yaml
+vim deployment/phase-15-performance-and-load-validation/app-k8s/secret.example.yaml
 ```
 
 ```yaml
@@ -796,7 +796,7 @@ Example only — never commit real credentials into this file. Copy it to `secre
 ### pvc.yaml
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/app-k8s/pvc.yaml
+vim deployment/phase-15-performance-and-load-validation/app-k8s/pvc.yaml
 ```
 
 ```yaml
@@ -819,7 +819,7 @@ spec:
 ### launchboard-postgres-deployment.yaml
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/app-k8s/launchboard-postgres-deployment.yaml
+vim deployment/phase-15-performance-and-load-validation/app-k8s/launchboard-postgres-deployment.yaml
 ```
 
 ```yaml
@@ -924,7 +924,7 @@ spec:
 ### launchboard-postgres-service.yaml
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/app-k8s/launchboard-postgres-service.yaml
+vim deployment/phase-15-performance-and-load-validation/app-k8s/launchboard-postgres-service.yaml
 ```
 
 ```yaml
@@ -948,7 +948,7 @@ spec:
 ### launchboard-migration-job.yaml
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/app-k8s/launchboard-migration-job.yaml
+vim deployment/phase-15-performance-and-load-validation/app-k8s/launchboard-migration-job.yaml
 ```
 
 ```yaml
@@ -973,7 +973,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: migrate
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-13
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-15
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -1003,14 +1003,14 @@ spec:
               memory: 256Mi
 ```
 
-- `image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-13` is a placeholder you replace with `sed` below — it reuses the backend image because the migration container just runs `alembic upgrade head` instead of starting Uvicorn.
+- `image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-15` is a placeholder you replace with `sed` below — it reuses the backend image because the migration container just runs `alembic upgrade head` instead of starting Uvicorn.
 - A Job runs its Pod once to completion and stops, unlike a Deployment. `restartPolicy: OnFailure` retries only on failure.
 - The `until python -c "import socket; ..."` loop blocks until PostgreSQL accepts TCP connections, preventing `alembic upgrade head` from running before the database is ready.
 
 ### launchboard-backend-deployment.yaml
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/app-k8s/launchboard-backend-deployment.yaml
+vim deployment/phase-15-performance-and-load-validation/app-k8s/launchboard-backend-deployment.yaml
 ```
 
 ```yaml
@@ -1044,7 +1044,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: backend
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-13
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-15
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -1097,7 +1097,7 @@ spec:
 ### launchboard-backend-service.yaml
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/app-k8s/launchboard-backend-service.yaml
+vim deployment/phase-15-performance-and-load-validation/app-k8s/launchboard-backend-service.yaml
 ```
 
 ```yaml
@@ -1121,7 +1121,7 @@ spec:
 ### launchboard-frontend-deployment.yaml
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/app-k8s/launchboard-frontend-deployment.yaml
+vim deployment/phase-15-performance-and-load-validation/app-k8s/launchboard-frontend-deployment.yaml
 ```
 
 ```yaml
@@ -1156,7 +1156,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: frontend
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-frontend:phase-13
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-frontend:phase-15
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -1192,7 +1192,7 @@ spec:
 ### launchboard-frontend-service.yaml
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/app-k8s/launchboard-frontend-service.yaml
+vim deployment/phase-15-performance-and-load-validation/app-k8s/launchboard-frontend-service.yaml
 ```
 
 ```yaml
@@ -1216,7 +1216,7 @@ Port 80 is what the Ingress targets; port 8080 is the Pod's actual non-root port
 ### ingress.yaml
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/app-k8s/ingress.yaml
+vim deployment/phase-15-performance-and-load-validation/app-k8s/ingress.yaml
 ```
 
 ```yaml
@@ -1230,7 +1230,7 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
-    alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-13
+    alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-15
 spec:
   ingressClassName: alb
   rules:
@@ -1253,7 +1253,7 @@ spec:
 ### hpa.yaml
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/app-k8s/hpa.yaml
+vim deployment/phase-15-performance-and-load-validation/app-k8s/hpa.yaml
 ```
 
 ```yaml
@@ -1283,7 +1283,7 @@ This is the object the whole phase exists to exercise. `minReplicas: 2`/`maxRepl
 ### kustomization.yaml
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/app-k8s/kustomization.yaml
+vim deployment/phase-15-performance-and-load-validation/app-k8s/kustomization.yaml
 ```
 
 ```yaml
@@ -1310,7 +1310,7 @@ Lists every manifest so a single `kubectl apply -k` applies them all in order. `
 Replace the ECR account ID and region placeholders in the three manifests that reference container images:
 
 ```bash
-cd deployment/phase-13-performance-and-load-validation/app-k8s
+cd deployment/phase-15-performance-and-load-validation/app-k8s
 sed -i "s|YOUR_ACCOUNT_ID|$AWS_ACCOUNT_ID|g; s|YOUR_AWS_REGION|$AWS_REGION|g" \
   launchboard-backend-deployment.yaml \
   launchboard-frontend-deployment.yaml \
@@ -1330,8 +1330,8 @@ Apply:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-kubectl apply -f deployment/phase-13-performance-and-load-validation/app-k8s/secret.yaml
-kubectl apply -k deployment/phase-13-performance-and-load-validation/app-k8s
+kubectl apply -f deployment/phase-15-performance-and-load-validation/app-k8s/secret.yaml
+kubectl apply -k deployment/phase-15-performance-and-load-validation/app-k8s
 kubectl -n devops-launchboard get pods
 ```
 
@@ -1352,16 +1352,16 @@ helm repo add eks https://aws.github.io/eks-charts
 helm repo update
 
 eksctl create iamserviceaccount \
-  --cluster devops-launchboard-phase-13 \
+  --cluster devops-launchboard-phase-15 \
   --namespace kube-system \
   --name aws-load-balancer-controller \
-  --role-name devops-launchboard-phase-13-alb-controller \
+  --role-name devops-launchboard-phase-15-alb-controller \
   --attach-policy-arn arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess \
   --approve
 
 helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
   --namespace kube-system \
-  --set clusterName=devops-launchboard-phase-13 \
+  --set clusterName=devops-launchboard-phase-15 \
   --set serviceAccount.create=false \
   --set serviceAccount.name=aws-load-balancer-controller
 ```
@@ -1421,7 +1421,7 @@ Reference:
 Create values file:
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/monitoring/metrics-server-values.yaml
+vim deployment/phase-15-performance-and-load-validation/monitoring/metrics-server-values.yaml
 ```
 
 Paste:
@@ -1446,7 +1446,7 @@ helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
 helm repo update
 helm upgrade --install metrics-server metrics-server/metrics-server \
   --namespace kube-system \
-  -f deployment/phase-13-performance-and-load-validation/monitoring/metrics-server-values.yaml
+  -f deployment/phase-15-performance-and-load-validation/monitoring/metrics-server-values.yaml
 ```
 
 Command explanation:
@@ -1478,7 +1478,7 @@ Reference:
 Create:
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/tests/k6/smoke-test.js
+vim deployment/phase-15-performance-and-load-validation/tests/k6/smoke-test.js
 ```
 
 Paste:
@@ -1534,7 +1534,7 @@ Run:
 docker run --rm -i \
   -e BASE_URL=$BASE_URL \
   -v "$PWD:/workspace" \
-  grafana/k6:latest run /workspace/deployment/phase-13-performance-and-load-validation/tests/k6/smoke-test.js
+  grafana/k6:latest run /workspace/deployment/phase-15-performance-and-load-validation/tests/k6/smoke-test.js
 ```
 
 Command explanation:
@@ -1552,7 +1552,7 @@ Smoke testing confirms the app works before adding real load. If this fails, loa
 Create:
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/tests/k6/load-test.js
+vim deployment/phase-15-performance-and-load-validation/tests/k6/load-test.js
 ```
 
 Paste:
@@ -1611,7 +1611,7 @@ Run:
 docker run --rm -i \
   -e BASE_URL=$BASE_URL \
   -v "$PWD:/workspace" \
-  grafana/k6:latest run /workspace/deployment/phase-13-performance-and-load-validation/tests/k6/load-test.js
+  grafana/k6:latest run /workspace/deployment/phase-15-performance-and-load-validation/tests/k6/load-test.js
 ```
 
 Watch scaling in another terminal:
@@ -1631,7 +1631,7 @@ The load test simulates expected traffic. The goal is not to break the system. T
 Create:
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/tests/k6/stress-test.js
+vim deployment/phase-15-performance-and-load-validation/tests/k6/stress-test.js
 ```
 
 Paste:
@@ -1680,7 +1680,7 @@ Run:
 docker run --rm -i \
   -e BASE_URL=$BASE_URL \
   -v "$PWD:/workspace" \
-  grafana/k6:latest run /workspace/deployment/phase-13-performance-and-load-validation/tests/k6/stress-test.js
+  grafana/k6:latest run /workspace/deployment/phase-15-performance-and-load-validation/tests/k6/stress-test.js
 ```
 
 Why this test exists:
@@ -1692,7 +1692,7 @@ The stress test increases traffic beyond normal expectations. It helps students 
 Create:
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/tests/k6/soak-test.js
+vim deployment/phase-15-performance-and-load-validation/tests/k6/soak-test.js
 ```
 
 Paste:
@@ -1738,7 +1738,7 @@ Run:
 docker run --rm -i \
   -e BASE_URL=$BASE_URL \
   -v "$PWD:/workspace" \
-  grafana/k6:latest run /workspace/deployment/phase-13-performance-and-load-validation/tests/k6/soak-test.js
+  grafana/k6:latest run /workspace/deployment/phase-15-performance-and-load-validation/tests/k6/soak-test.js
 ```
 
 Why this test exists:
@@ -1779,7 +1779,7 @@ k6 tells you how users experience the app. Kubernetes metrics tell you how the i
 Create:
 
 ```bash
-vim deployment/phase-13-performance-and-load-validation/reports/performance-report-template.md
+vim deployment/phase-15-performance-and-load-validation/reports/performance-report-template.md
 ```
 
 Paste:
@@ -1794,9 +1794,9 @@ Paste:
 | Date |  |
 | Tester |  |
 | AWS Region |  |
-| Cluster Name | devops-launchboard-phase-13 |
-| Backend Image Tag | phase-13 |
-| Frontend Image Tag | phase-13 |
+| Cluster Name | devops-launchboard-phase-15 |
+| Backend Image Tag | phase-15 |
+| Frontend Image Tag | phase-15 |
 | Test Tool | k6 |
 
 ## Environment
@@ -1856,9 +1856,9 @@ Section explanation:
 Copy it for your final result:
 
 ```bash
-cp deployment/phase-13-performance-and-load-validation/reports/performance-report-template.md \
-  deployment/phase-13-performance-and-load-validation/reports/performance-report.md
-vim deployment/phase-13-performance-and-load-validation/reports/performance-report.md
+cp deployment/phase-15-performance-and-load-validation/reports/performance-report-template.md \
+  deployment/phase-15-performance-and-load-validation/reports/performance-report.md
+vim deployment/phase-15-performance-and-load-validation/reports/performance-report.md
 ```
 
 The template stays unmodified as a reusable starting point; `performance-report.md` is the filled-in copy specific to this test run.
@@ -1940,14 +1940,14 @@ Repeat the test.
 Delete app:
 
 ```bash
-kubectl delete -f deployment/phase-13-performance-and-load-validation/app-k8s/secret.yaml
-kubectl delete -k deployment/phase-13-performance-and-load-validation/app-k8s
+kubectl delete -f deployment/phase-15-performance-and-load-validation/app-k8s/secret.yaml
+kubectl delete -k deployment/phase-15-performance-and-load-validation/app-k8s
 ```
 
 Delete cluster:
 
 ```bash
-eksctl delete cluster -f deployment/phase-13-performance-and-load-validation/cluster/eksctl-cluster.yaml
+eksctl delete cluster -f deployment/phase-15-performance-and-load-validation/cluster/eksctl-cluster.yaml
 ```
 
 Delete ECR repositories:
@@ -2002,9 +2002,9 @@ Performance labs can create cloud charges through EKS, EC2, EBS, ALB, ECR, Cloud
 Move to:
 
 ```text
-Phase 14: Infrastructure As Code With Terraform
+Phase 16: Production Capstone
 ```
 
 Why:
 
-Every phase so far created infrastructure by hand (console clicks) or with per-tool CLIs (`eksctl`, `aws`). Terraform makes infrastructure itself reviewable, repeatable code - the first lab teaches the fundamentals on a single EC2 instance, the second deploys the app the way a real company does: custom VPC, Auto Scaling Group behind an ALB, and RDS, all from `terraform apply`.
+You have now used every tool in the journey: Docker, Compose, Swarm, Kubernetes, EKS, CI/CD, Terraform, Ansible, observability, security, advanced deployments, disaster recovery, and load testing. The capstone assembles the best pieces into one production-grade deployment — the way you would actually run this application for real users.

@@ -1,10 +1,10 @@
-# Phase 15 (Part 2): Ansible Production
+# Phase 10 (Part 2): Ansible Production
 
 ## Fresh Start Assumption
 
 This phase starts from a clean AWS environment.
 
-You must complete `phase-15-ansible-basics` first — this guide assumes you know inventories, modules, playbooks, variables, templates, handlers, and idempotency.
+You must complete `phase-10-ansible-basics` first — this guide assumes you know inventories, modules, playbooks, variables, templates, handlers, and idempotency.
 
 This guide assumes:
 
@@ -72,7 +72,7 @@ About **$0.14/hour** total. Terminate all five instances after each session.
 ## Files Included In This Phase
 
 ```text
-deployment/phase-15-configuration-management-ansible/phase-15-ansible-production/
+deployment/phase-10-configuration-management-ansible/phase-10-ansible-production/
 +-- ansible.cfg
 +-- inventory.ini.example            (copy to inventory.ini)
 +-- site.yml                         (full environment: all tiers, in order)
@@ -115,42 +115,42 @@ All Ubuntu Server 24.04 LTS, key pair `devops-launchboard-key`:
 
 | Name | Type | Storage | Role |
 | --- | --- | --- | --- |
-| `devops-launchboard-phase-15-control` | t3.small | 20 GB | Control node |
-| `devops-launchboard-phase-15-lb` | t3.small | 20 GB | Load balancer |
-| `devops-launchboard-phase-15-app-1` | t3.medium | 30 GB | App server |
-| `devops-launchboard-phase-15-app-2` | t3.medium | 30 GB | App server |
-| `devops-launchboard-phase-15-db` | t3.small | 20 GB | Database |
+| `devops-launchboard-phase-10-control` | t3.small | 20 GB | Control node |
+| `devops-launchboard-phase-10-lb` | t3.small | 20 GB | Load balancer |
+| `devops-launchboard-phase-10-app-1` | t3.medium | 30 GB | App server |
+| `devops-launchboard-phase-10-app-2` | t3.medium | 30 GB | App server |
+| `devops-launchboard-phase-10-db` | t3.small | 20 GB | Database |
 
 Create four security groups first (EC2 > Security Groups > Create), all in the default VPC:
 
-**`phase-15-control-sg`** (control node):
+**`phase-10-control-sg`** (control node):
 
 | Type | Port | Source |
 | --- | ---: | --- |
 | SSH | 22 | Your IP |
 
-**`phase-15-lb-sg`** (load balancer):
+**`phase-10-lb-sg`** (load balancer):
 
 | Type | Port | Source |
 | --- | ---: | --- |
-| SSH | 22 | `phase-15-control-sg` |
+| SSH | 22 | `phase-10-control-sg` |
 | HTTP | 80 | `0.0.0.0/0` |
 
-**`phase-15-app-sg`** (app servers):
+**`phase-10-app-sg`** (app servers):
 
 | Type | Port | Source |
 | --- | ---: | --- |
-| SSH | 22 | `phase-15-control-sg` |
-| HTTP | 80 | `phase-15-lb-sg` |
+| SSH | 22 | `phase-10-control-sg` |
+| HTTP | 80 | `phase-10-lb-sg` |
 
-**`phase-15-db-sg`** (database):
+**`phase-10-db-sg`** (database):
 
 | Type | Port | Source |
 | --- | ---: | --- |
-| SSH | 22 | `phase-15-control-sg` |
-| PostgreSQL | 5432 | `phase-15-app-sg` |
+| SSH | 22 | `phase-10-control-sg` |
+| PostgreSQL | 5432 | `phase-10-app-sg` |
 
-Using security groups as sources (instead of IPs) is the same referencing pattern Terraform declared in Phase 14: "app servers may reach the database" survives any instance replacement. Note the tier isolation: nothing reaches the app servers except the LB, nothing reaches the database except the app servers.
+Using security groups as sources (instead of IPs) is the same referencing pattern Terraform declared in Phase 9: "app servers may reach the database" survives any instance replacement. Note the tier isolation: nothing reaches the app servers except the LB, nothing reaches the database except the app servers.
 
 Write down the **public and private IP** of every instance (EC2 > Instances > select > Details). Public IPs are for SSH from the control node; private IPs are how the tiers talk to each other.
 
@@ -276,7 +276,7 @@ cors_origins: "http://{{ lb_public_ip }}"
 app_repo: https://github.com/ashraful2430/N-tier-application.git
 app_dir: /opt/launchboard
 app_version: main
-image_tag: phase-15
+image_tag: phase-10
 ```
 
 Line explanation:
@@ -491,7 +491,7 @@ Paste:
 Line explanation:
 
 - `docker_volume` + the `volumes:` mount give the database persistent storage that survives container recreation — the same reason every Kubernetes phase used a PVC.
-- `ports: "5432:5432"` publishes PostgreSQL on the host. The **security group** (5432 only from `phase-15-app-sg`) is what keeps it private — network policy enforced at the AWS layer, not the application layer.
+- `ports: "5432:5432"` publishes PostgreSQL on the host. The **security group** (5432 only from `phase-10-app-sg`) is what keeps it private — network policy enforced at the AWS layer, not the application layer.
 - `{{ db_password }}` resolves through the vault indirection: `db_password` → `vault_db_password` → decrypted at runtime with your vault password.
 - `wait_for` blocks until the port actually accepts connections, so the play that runs *after* this one (the app tier, which immediately runs migrations) never races a starting database.
 
@@ -589,7 +589,7 @@ Paste:
 
 Line explanation:
 
-- `docker_image` with `source: build` builds from the cloned repo using the Phase 4 Dockerfiles (whose frontend Nginx config proxies `/api`, `/health`, `/ready` to a container named `launchboard-backend` — exactly the name used below). `force_source: true` rebuilds on every run so a redeploy always picks up the latest `app_version` code. Building on each app server keeps the lab registry-free; the registry-based build-once flow is what Phase 14 production and Phase 7 CI/CD teach.
+- `docker_image` with `source: build` builds from the cloned repo using the Phase 4 Dockerfiles (whose frontend Nginx config proxies `/api`, `/health`, `/ready` to a container named `launchboard-backend` — exactly the name used below). `force_source: true` rebuilds on every run so a redeploy always picks up the latest `app_version` code. Building on each app server keeps the lab registry-free; the registry-based build-once flow is what Phase 9 production and Phase 7 CI/CD teach.
 - The migration task runs `alembic upgrade head` as a one-shot container: `detach: false` waits for it to finish (a failure fails the play — you never start an app against a half-migrated schema), `cleanup: true` removes the container afterwards.
 - `run_once: true` executes the task on only one host even though the play targets the whole group — the standard pattern for "do this once per deployment, not once per server."
 - `recreate: true` on the backend/frontend containers forces replacement with the newly built image. Without it, `docker_container` would see a running container with the right name and report `ok`.
@@ -821,7 +821,7 @@ The `docker` role did not run on that host (check `site.yml` play targets), or y
 
 ### Problem 4: Migration task fails with connection refused / timeout to port 5432
 
-The app servers cannot reach the database. Check: the `phase-15-db-sg` inbound rule allows 5432 from `phase-15-app-sg` (not from an IP); `db_host` resolves to the database's **private** IP (`ansible-inventory --host launchboard-db` shows what Ansible sees); and the postgres play ran before the app play (it does, in `site.yml` order).
+The app servers cannot reach the database. Check: the `phase-10-db-sg` inbound rule allows 5432 from `phase-10-app-sg` (not from an IP); `db_host` resolves to the database's **private** IP (`ansible-inventory --host launchboard-db` shows what Ansible sees); and the postgres play ran before the app play (it does, in `site.yml` order).
 
 ### Problem 5: Backend starts but the UI shows CORS errors in the browser console
 
@@ -867,9 +867,9 @@ Nginx is up but no upstream answers. Check the rendered config on the LB (`ansib
 Move to:
 
 ```text
-Phase 16: Production Capstone
+Phase 11: Observability
 ```
 
 Why:
 
-You have now used every tool in the journey: Docker, Compose, Swarm, Kubernetes, EKS, CI/CD, observability, security, DR, load testing, Terraform, and Ansible. The capstone assembles the Kubernetes track's best pieces into one production-grade deployment — the way you would actually run this application for real users.
+You can now create infrastructure with Terraform and configure it with Ansible. The next phases harden the Kubernetes track for production, starting with observability: Prometheus metrics, Grafana dashboards, centralized logs with the EFK stack, and Jaeger tracing — because you cannot operate what you cannot see.

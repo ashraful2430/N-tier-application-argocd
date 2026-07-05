@@ -6,7 +6,7 @@ variable "aws_region" {
 variable "project_name" {
   description = "Name prefix for all resources"
   type        = string
-  default     = "launchboard-phase-14"
+  default     = "launchboard-phase-9"
 }
 
 variable "vpc_cidr" {
@@ -42,7 +42,7 @@ variable "asg_max_size" {
 variable "image_tag" {
   description = "Tag of the app images in ECR"
   type        = string
-  default     = "phase-14"
+  default     = "phase-9"
 }
 
 variable "db_name" {

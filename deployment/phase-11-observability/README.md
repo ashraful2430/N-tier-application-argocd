@@ -1,4 +1,4 @@
-# Phase 9: Observability
+# Phase 11: Observability
 
 ## Fresh Start Assumption
 
@@ -129,7 +129,7 @@ Create an AWS Budget before starting: AWS Console > Billing > Budgets > Create b
 ## Files Included In This Phase
 
 ```text
-deployment/phase-09-observability/
+deployment/phase-11-observability/
 +-- cluster/
 |   +-- eksctl-cluster.yaml                    (EKS cluster definition)
 +-- ecr/
@@ -181,7 +181,7 @@ Create one Ubuntu EC2 workstation:
 
 | Field | Value |
 | --- | --- |
-| Name | `devops-launchboard-phase-9-workstation` |
+| Name | `devops-launchboard-phase-11-workstation` |
 | AMI | Ubuntu Server 24.04 LTS |
 | Instance Type | `t3.small` |
 | Storage | 30 GB gp3 |
@@ -333,7 +333,7 @@ Create GitHub SSH key:
 cd ~
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
-ssh-keygen -t ed25519 -C "devops-launchboard-phase-9" -f ~/.ssh/devops_launchboard_github_key
+ssh-keygen -t ed25519 -C "devops-launchboard-phase-11" -f ~/.ssh/devops_launchboard_github_key
 cat ~/.ssh/devops_launchboard_github_key.pub
 ```
 
@@ -384,12 +384,12 @@ Reference:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-mkdir -p deployment/phase-09-observability/cluster
-mkdir -p deployment/phase-09-observability/ecr
-mkdir -p deployment/phase-09-observability/app-k8s
-mkdir -p deployment/phase-09-observability/helm
-mkdir -p deployment/phase-09-observability/elk-stack
-mkdir -p deployment/phase-09-observability/jaeger
+mkdir -p deployment/phase-11-observability/cluster
+mkdir -p deployment/phase-11-observability/ecr
+mkdir -p deployment/phase-11-observability/app-k8s
+mkdir -p deployment/phase-11-observability/helm
+mkdir -p deployment/phase-11-observability/elk-stack
+mkdir -p deployment/phase-11-observability/jaeger
 ```
 
 Each folder owns one part of the phase: `cluster/` for the eksctl config, `ecr/` for image lifecycle policy, `app-k8s/` for the application manifests, `helm/` for Prometheus/Grafana values, `elk-stack/` for the logging pipeline, and `jaeger/` for tracing.
@@ -401,7 +401,7 @@ This file is the blueprint for the entire EKS infrastructure. One `eksctl create
 ### eksctl-cluster.yaml
 
 ```bash
-vim deployment/phase-09-observability/cluster/eksctl-cluster.yaml
+vim deployment/phase-11-observability/cluster/eksctl-cluster.yaml
 ```
 
 Paste:
@@ -411,7 +411,7 @@ apiVersion: eksctl.io/v1alpha5
 kind: ClusterConfig
 
 metadata:
-  name: devops-launchboard-phase-9
+  name: devops-launchboard-phase-11
   region: YOUR_AWS_REGION
   version: "1.34"
 
@@ -443,7 +443,7 @@ managedNodeGroups:
       workload: launchboard
     tags:
       Project: devops-launchboard
-      Environment: phase-9
+      Environment: phase-11
       Owner: student
 
 cloudWatch:
@@ -473,7 +473,7 @@ availabilityZones:
 
 Line explanation:
 
-- `metadata.name: devops-launchboard-phase-9` names the EKS cluster. eksctl creates CloudFormation stacks named `eksctl-devops-launchboard-phase-9-cluster` and `eksctl-devops-launchboard-phase-9-nodegroup-launchboard-workers`.
+- `metadata.name: devops-launchboard-phase-11` names the EKS cluster. eksctl creates CloudFormation stacks named `eksctl-devops-launchboard-phase-11-cluster` and `eksctl-devops-launchboard-phase-11-nodegroup-launchboard-workers`.
 - `metadata.version: "1.34"` pins the Kubernetes version, quoted as a string because YAML would otherwise interpret `1.34` as a number.
 - `availabilityZones` spreads the VPC subnets across two AZs for high availability; EKS requires at least two.
 - `iam.withOIDC: true` creates an OIDC provider for the cluster — the foundation of IAM Roles for Service Accounts (IRSA), which lets Kubernetes ServiceAccounts assume IAM roles without storing AWS credentials in the cluster. The EBS CSI driver and the AWS Load Balancer Controller you install later both need this.
@@ -493,12 +493,12 @@ Reference:
 - EKS OIDC: https://docs.aws.amazon.com/eks/latest/userguide/enable-iam-roles-for-service-accounts.html
 - EBS CSI driver: https://docs.aws.amazon.com/eks/latest/userguide/ebs-csi.html
 
-Note: `desiredCapacity: 2` starts with 2 nodes. If Elasticsearch runs out of memory alongside the application, increase to 3 nodes: edit this file and run `eksctl scale nodegroup --cluster devops-launchboard-phase-9 --name launchboard-workers --nodes 3 --region $AWS_REGION`.
+Note: `desiredCapacity: 2` starts with 2 nodes. If Elasticsearch runs out of memory alongside the application, increase to 3 nodes: edit this file and run `eksctl scale nodegroup --cluster devops-launchboard-phase-11 --name launchboard-workers --nodes 3 --region $AWS_REGION`.
 
 ### ECR lifecycle policy
 
 ```bash
-vim deployment/phase-09-observability/ecr/lifecycle-policy.json
+vim deployment/phase-11-observability/ecr/lifecycle-policy.json
 ```
 
 Paste:
@@ -508,10 +508,10 @@ Paste:
   "rules": [
     {
       "rulePriority": 1,
-      "description": "Keep the latest 10 phase 9 images",
+      "description": "Keep the latest 10 phase 11 images",
       "selection": {
         "tagStatus": "tagged",
-        "tagPrefixList": ["phase-9"],
+        "tagPrefixList": ["phase-11"],
         "countType": "imageCountMoreThan",
         "countNumber": 10
       },
@@ -565,7 +565,7 @@ deployment/phase-04-docker-compose/.env
 ### Dockerfile.backend
 
 ```bash
-vim deployment/phase-09-observability/Dockerfile.backend
+vim deployment/phase-11-observability/Dockerfile.backend
 ```
 
 Paste:
@@ -634,7 +634,7 @@ Line explanation:
 ### Dockerfile.frontend
 
 ```bash
-vim deployment/phase-09-observability/Dockerfile.frontend
+vim deployment/phase-11-observability/Dockerfile.frontend
 ```
 
 Paste:
@@ -655,7 +655,7 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
-COPY deployment/phase-09-observability/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deployment/phase-11-observability/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
@@ -671,13 +671,13 @@ Line explanation:
 - `FROM node:22-alpine AS builder` uses a minimal Node.js image only to compile the React app; Node.js does not appear in the final image.
 - `RUN npm ci` installs exact versions from `package-lock.json` for reproducible builds.
 - `FROM nginxinc/nginx-unprivileged:1.27-alpine` is the official Nginx image designed to run as a non-root user on port 8080.
-- `COPY deployment/phase-09-observability/nginx-frontend.conf ...` installs this phase's own config — the one line that differs from Phase 8.
+- `COPY deployment/phase-11-observability/nginx-frontend.conf ...` installs this phase's own config — the one line that differs from Phase 8.
 - `COPY --from=builder --chown=101:101 ...` copies the compiled app into the web root, owned by UID/GID 101, the nginx user baked into the unprivileged image.
 
 ### nginx-frontend.conf
 
 ```bash
-vim deployment/phase-09-observability/nginx-frontend.conf
+vim deployment/phase-11-observability/nginx-frontend.conf
 ```
 
 Paste:
@@ -745,12 +745,12 @@ Reference:
 
 ### Application Kubernetes manifests
 
-All manifests go inside `deployment/phase-09-observability/app-k8s/`. Three placeholders appear throughout: replace `YOUR_ACCOUNT_ID` (from `aws sts get-caller-identity --query Account --output text`), `YOUR_AWS_REGION` (the region you chose in Step 7), and `YOUR_ALB_DNS_NAME` (available only after applying the Ingress in Step 11).
+All manifests go inside `deployment/phase-11-observability/app-k8s/`. Three placeholders appear throughout: replace `YOUR_ACCOUNT_ID` (from `aws sts get-caller-identity --query Account --output text`), `YOUR_AWS_REGION` (the region you chose in Step 7), and `YOUR_ALB_DNS_NAME` (available only after applying the Ingress in Step 11).
 
 #### namespace.yaml
 
 ```bash
-vim deployment/phase-09-observability/app-k8s/namespace.yaml
+vim deployment/phase-11-observability/app-k8s/namespace.yaml
 ```
 
 ```yaml
@@ -768,7 +768,7 @@ A Namespace is a logical boundary inside Kubernetes; every other resource below 
 #### storageclass.yaml
 
 ```bash
-vim deployment/phase-09-observability/app-k8s/storageclass.yaml
+vim deployment/phase-11-observability/app-k8s/storageclass.yaml
 ```
 
 ```yaml
@@ -797,7 +797,7 @@ Reference:
 #### configmap.yaml
 
 ```bash
-vim deployment/phase-09-observability/app-k8s/configmap.yaml
+vim deployment/phase-11-observability/app-k8s/configmap.yaml
 ```
 
 ```yaml
@@ -820,7 +820,7 @@ data:
 #### secret.example.yaml
 
 ```bash
-vim deployment/phase-09-observability/app-k8s/secret.example.yaml
+vim deployment/phase-11-observability/app-k8s/secret.example.yaml
 ```
 
 ```yaml
@@ -840,7 +840,7 @@ Example only — the real Secret is created with `kubectl create secret` in Step
 #### pvc.yaml
 
 ```bash
-vim deployment/phase-09-observability/app-k8s/pvc.yaml
+vim deployment/phase-11-observability/app-k8s/pvc.yaml
 ```
 
 ```yaml
@@ -863,7 +863,7 @@ spec:
 #### launchboard-postgres-deployment.yaml
 
 ```bash
-vim deployment/phase-09-observability/app-k8s/launchboard-postgres-deployment.yaml
+vim deployment/phase-11-observability/app-k8s/launchboard-postgres-deployment.yaml
 ```
 
 ```yaml
@@ -956,7 +956,7 @@ spec:
 #### launchboard-postgres-service.yaml
 
 ```bash
-vim deployment/phase-09-observability/app-k8s/launchboard-postgres-service.yaml
+vim deployment/phase-11-observability/app-k8s/launchboard-postgres-service.yaml
 ```
 
 ```yaml
@@ -980,7 +980,7 @@ spec:
 #### launchboard-migration-job.yaml
 
 ```bash
-vim deployment/phase-09-observability/app-k8s/launchboard-migration-job.yaml
+vim deployment/phase-11-observability/app-k8s/launchboard-migration-job.yaml
 ```
 
 ```yaml
@@ -999,7 +999,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: migrate
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-9
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-11
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -1025,14 +1025,14 @@ spec:
 ```
 
 - A Job runs its Pod once to completion and stops, unlike a Deployment. `restartPolicy: OnFailure` retries only on failure, not after success; `backoffLimit: 3` stops retrying after 3 failures.
-- `image` pulls from your private ECR repository — replace both placeholders, e.g. `123456789012.dkr.ecr.us-east-1.amazonaws.com/launchboard-backend:phase-9`.
-- `imagePullPolicy: IfNotPresent` skips re-pulling if the node already has this exact tag cached, which is fine since this phase pushes one image with a static `phase-9` tag rather than a unique tag per push. EKS worker nodes authenticate to ECR with temporary IAM credentials the kubelet refreshes automatically (via the `ecr-credential-provider` built into the EKS-optimized AMI), so no `imagePullSecret` is needed either way.
+- `image` pulls from your private ECR repository — replace both placeholders, e.g. `123456789012.dkr.ecr.us-east-1.amazonaws.com/launchboard-backend:phase-11`.
+- `imagePullPolicy: IfNotPresent` skips re-pulling if the node already has this exact tag cached, which is fine since this phase pushes one image with a static `phase-11` tag rather than a unique tag per push. EKS worker nodes authenticate to ECR with temporary IAM credentials the kubelet refreshes automatically (via the `ecr-credential-provider` built into the EKS-optimized AMI), so no `imagePullSecret` is needed either way.
 - The `until python -c "import socket; ..."` loop blocks until PostgreSQL accepts connections, preventing `alembic upgrade head` from running too early.
 
 #### launchboard-backend-deployment.yaml
 
 ```bash
-vim deployment/phase-09-observability/app-k8s/launchboard-backend-deployment.yaml
+vim deployment/phase-11-observability/app-k8s/launchboard-backend-deployment.yaml
 ```
 
 ```yaml
@@ -1066,7 +1066,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: backend
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-9
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-11
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -1114,7 +1114,7 @@ spec:
 #### launchboard-backend-service.yaml
 
 ```bash
-vim deployment/phase-09-observability/app-k8s/launchboard-backend-service.yaml
+vim deployment/phase-11-observability/app-k8s/launchboard-backend-service.yaml
 ```
 
 ```yaml
@@ -1138,7 +1138,7 @@ spec:
 #### launchboard-frontend-deployment.yaml
 
 ```bash
-vim deployment/phase-09-observability/app-k8s/launchboard-frontend-deployment.yaml
+vim deployment/phase-11-observability/app-k8s/launchboard-frontend-deployment.yaml
 ```
 
 ```yaml
@@ -1173,7 +1173,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: frontend
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-frontend:phase-9
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-frontend:phase-11
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -1204,7 +1204,7 @@ spec:
 #### launchboard-frontend-service.yaml
 
 ```bash
-vim deployment/phase-09-observability/app-k8s/launchboard-frontend-service.yaml
+vim deployment/phase-11-observability/app-k8s/launchboard-frontend-service.yaml
 ```
 
 ```yaml
@@ -1228,7 +1228,7 @@ Port 80 is what the Ingress targets; port 8080 is the Pod's actual non-root port
 #### ingress.yaml
 
 ```bash
-vim deployment/phase-09-observability/app-k8s/ingress.yaml
+vim deployment/phase-11-observability/app-k8s/ingress.yaml
 ```
 
 ```yaml
@@ -1242,7 +1242,7 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
-    alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-9
+    alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-11
 spec:
   ingressClassName: alb
   rules:
@@ -1260,13 +1260,13 @@ spec:
 - `spec.ingressClassName: alb` tells the AWS Load Balancer Controller (installed in Step 10) to handle this Ingress and create a real Application Load Balancer.
 - `alb.ingress.kubernetes.io/target-type: ip` sends ALB traffic directly to Pod IPs via the AWS VPC CNI, more efficient than routing through a NodePort.
 - `alb.ingress.kubernetes.io/healthcheck-path` points the ALB's own health check at the frontend's `/healthz` endpoint.
-- `alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-9` gives the ALB a predictable name in the EC2 Console instead of an auto-generated one.
+- `alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-11` gives the ALB a predictable name in the EC2 Console instead of an auto-generated one.
 - `spec.rules` routes all traffic to the frontend Service; the frontend's own Nginx then proxies `/api`, `/health`, and `/ready` to the backend.
 
 #### hpa.yaml
 
 ```bash
-vim deployment/phase-09-observability/app-k8s/hpa.yaml
+vim deployment/phase-11-observability/app-k8s/hpa.yaml
 ```
 
 ```yaml
@@ -1296,7 +1296,7 @@ spec:
 #### kustomization.yaml
 
 ```bash
-vim deployment/phase-09-observability/app-k8s/kustomization.yaml
+vim deployment/phase-11-observability/app-k8s/kustomization.yaml
 ```
 
 ```yaml
@@ -1332,7 +1332,7 @@ Set variables you will reuse throughout the phase:
 ```bash
 export AWS_REGION=YOUR_AWS_REGION
 export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-export CLUSTER_NAME=devops-launchboard-phase-9
+export CLUSTER_NAME=devops-launchboard-phase-11
 echo "Account: $ACCOUNT_ID  Region: $AWS_REGION  Cluster: $CLUSTER_NAME"
 ```
 
@@ -1340,7 +1340,7 @@ Create the cluster (20 to 40 minutes):
 
 ```bash
 cd /opt/devops-launchboard/app-source
-eksctl create cluster -f deployment/phase-09-observability/cluster/eksctl-cluster.yaml
+eksctl create cluster -f deployment/phase-11-observability/cluster/eksctl-cluster.yaml
 ```
 
 Verify:
@@ -1355,7 +1355,7 @@ Expected: 2 nodes Ready, EBS CSI driver Pods running.
 
 What this command creates: `eksctl create cluster -f` reads the config from Step 7 and runs a series of CloudFormation stacks that create, in order, the VPC and subnets (~5 min), the EKS control plane (~10-15 min), the OIDC provider, the managed node group (~5-10 min), and finally the EBS CSI driver add-on. The whole process takes 20 to 40 minutes; watch the terminal output to see each phase progress. `eksctl` also writes the cluster's kubeconfig to `~/.kube/config` automatically, which is why `kubectl` works immediately afterward with no separate configuration step.
 
-If cluster creation fails, run `eksctl utils describe-stacks --region $AWS_REGION --cluster devops-launchboard-phase-9` and read the CloudFormation events — they show the real cause, usually a missing IAM permission, a region typo, or an EC2 instance quota that is too low.
+If cluster creation fails, run `eksctl utils describe-stacks --region $AWS_REGION --cluster devops-launchboard-phase-11` and read the CloudFormation events — they show the real cause, usually a missing IAM permission, a region typo, or an EC2 instance quota that is too low.
 
 Reference:
 
@@ -1380,12 +1380,12 @@ Attach the lifecycle policy from Step 6 to both repositories:
 ```bash
 aws ecr put-lifecycle-policy \
   --repository-name launchboard-backend \
-  --lifecycle-policy-text file://deployment/phase-09-observability/ecr/lifecycle-policy.json \
+  --lifecycle-policy-text file://deployment/phase-11-observability/ecr/lifecycle-policy.json \
   --region "$AWS_REGION"
 
 aws ecr put-lifecycle-policy \
   --repository-name launchboard-frontend \
-  --lifecycle-policy-text file://deployment/phase-09-observability/ecr/lifecycle-policy.json \
+  --lifecycle-policy-text file://deployment/phase-11-observability/ecr/lifecycle-policy.json \
   --region "$AWS_REGION"
 ```
 
@@ -1410,12 +1410,12 @@ Build both images:
 ```bash
 cd /opt/devops-launchboard/app-source
 
-docker build -f deployment/phase-09-observability/Dockerfile.backend \
-  -t launchboard-backend:phase-9 .
+docker build -f deployment/phase-11-observability/Dockerfile.backend \
+  -t launchboard-backend:phase-11 .
 
-docker build -f deployment/phase-09-observability/Dockerfile.frontend \
+docker build -f deployment/phase-11-observability/Dockerfile.frontend \
   --build-arg VITE_API_URL= \
-  -t launchboard-frontend:phase-9 .
+  -t launchboard-frontend:phase-11 .
 ```
 
 The trailing `.` on each command is the build context — it must be the repository root, because both Dockerfiles `COPY backend/...` / `COPY frontend/...` relative to it. `--build-arg VITE_API_URL=` left empty means the frontend uses relative `/api` paths, proxied by its own Nginx config.
@@ -1423,11 +1423,11 @@ The trailing `.` on each command is the build context — it must be the reposit
 Tag and push both images:
 
 ```bash
-docker tag launchboard-backend:phase-9 $ECR_REGISTRY/launchboard-backend:phase-9
-docker tag launchboard-frontend:phase-9 $ECR_REGISTRY/launchboard-frontend:phase-9
+docker tag launchboard-backend:phase-11 $ECR_REGISTRY/launchboard-backend:phase-11
+docker tag launchboard-frontend:phase-11 $ECR_REGISTRY/launchboard-frontend:phase-11
 
-docker push $ECR_REGISTRY/launchboard-backend:phase-9
-docker push $ECR_REGISTRY/launchboard-frontend:phase-9
+docker push $ECR_REGISTRY/launchboard-backend:phase-11
+docker push $ECR_REGISTRY/launchboard-frontend:phase-11
 ```
 
 `docker tag <local-name> <new-name>` does not copy or rebuild anything — it adds a second name pointing at the same image bytes already on disk, this time including the ECR registry hostname `docker push` needs to know where to upload to. Because EKS worker nodes authenticate to ECR automatically via IAM (no `imagePullSecret` needed) and images never leave your AWS account, pulls are fast and free of Docker Hub's rate limits.
@@ -1444,14 +1444,14 @@ curl -o aws-load-balancer-controller-policy.json \
   https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
 
 aws iam create-policy \
-  --policy-name AWSLoadBalancerControllerIAMPolicyPhase9 \
+  --policy-name AWSLoadBalancerControllerIAMPolicyPhase11 \
   --policy-document file://aws-load-balancer-controller-policy.json
 
 eksctl create iamserviceaccount \
   --cluster "$CLUSTER_NAME" \
   --namespace kube-system \
   --name aws-load-balancer-controller \
-  --attach-policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicyPhase9" \
+  --attach-policy-arn "arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicyPhase11" \
   --approve \
   --region "$AWS_REGION"
 
@@ -1489,15 +1489,15 @@ Replace image placeholders in manifests:
 ```bash
 cd /opt/devops-launchboard/app-source
 sed -i "s|YOUR_ACCOUNT_ID|${ACCOUNT_ID}|g; s|YOUR_AWS_REGION|${AWS_REGION}|g" \
-  deployment/phase-09-observability/app-k8s/launchboard-backend-deployment.yaml \
-  deployment/phase-09-observability/app-k8s/launchboard-migration-job.yaml \
-  deployment/phase-09-observability/app-k8s/launchboard-frontend-deployment.yaml
+  deployment/phase-11-observability/app-k8s/launchboard-backend-deployment.yaml \
+  deployment/phase-11-observability/app-k8s/launchboard-migration-job.yaml \
+  deployment/phase-11-observability/app-k8s/launchboard-frontend-deployment.yaml
 ```
 
 Create namespace and Secret:
 
 ```bash
-kubectl apply -f deployment/phase-09-observability/app-k8s/namespace.yaml
+kubectl apply -f deployment/phase-11-observability/app-k8s/namespace.yaml
 
 kubectl create secret generic launchboard-secret \
   --namespace devops-launchboard \
@@ -1508,7 +1508,7 @@ kubectl create secret generic launchboard-secret \
 Apply:
 
 ```bash
-kubectl apply -k deployment/phase-09-observability/app-k8s
+kubectl apply -k deployment/phase-11-observability/app-k8s
 ```
 
 Wait:
@@ -1533,13 +1533,13 @@ ALB_DNS=$(kubectl -n devops-launchboard get ingress launchboard-ingress \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 echo "ALB DNS: $ALB_DNS"
 
-vim deployment/phase-09-observability/app-k8s/configmap.yaml
+vim deployment/phase-11-observability/app-k8s/configmap.yaml
 ```
 
 Set `CORS_ORIGINS` to `http://YOUR_ALB_DNS_NAME` with the real DNS, then:
 
 ```bash
-kubectl apply -f deployment/phase-09-observability/app-k8s/configmap.yaml
+kubectl apply -f deployment/phase-11-observability/app-k8s/configmap.yaml
 kubectl -n devops-launchboard rollout restart deployment/launchboard-backend
 ```
 
@@ -1564,7 +1564,7 @@ Reference:
 All observability tools live in a separate namespace to keep them isolated from the application.
 
 ```bash
-vim deployment/phase-09-observability/observability-namespace.yaml
+vim deployment/phase-11-observability/observability-namespace.yaml
 ```
 
 Paste:
@@ -1581,7 +1581,7 @@ metadata:
 Apply:
 
 ```bash
-kubectl apply -f deployment/phase-09-observability/observability-namespace.yaml
+kubectl apply -f deployment/phase-11-observability/observability-namespace.yaml
 ```
 
 Verify:
@@ -1610,7 +1610,7 @@ What each component does:
 ### Create Helm values
 
 ```bash
-vim deployment/phase-09-observability/helm/kube-prometheus-stack-values.yaml
+vim deployment/phase-11-observability/helm/kube-prometheus-stack-values.yaml
 ```
 
 Paste:
@@ -1738,7 +1738,7 @@ helm repo update
 
 helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
   --namespace observability \
-  --values deployment/phase-09-observability/helm/kube-prometheus-stack-values.yaml \
+  --values deployment/phase-11-observability/helm/kube-prometheus-stack-values.yaml \
   --timeout 10m
 ```
 
@@ -1858,7 +1858,7 @@ Kibana (Deployment) queries Elasticsearch and shows a search UI
 ### elasticsearch.yaml
 
 ```bash
-vim deployment/phase-09-observability/elk-stack/elasticsearch.yaml
+vim deployment/phase-11-observability/elk-stack/elasticsearch.yaml
 ```
 
 Paste:
@@ -1979,7 +1979,7 @@ Line explanation:
 ### kibana.yaml
 
 ```bash
-vim deployment/phase-09-observability/elk-stack/kibana.yaml
+vim deployment/phase-11-observability/elk-stack/kibana.yaml
 ```
 
 Paste:
@@ -2064,7 +2064,7 @@ Line explanation:
 Fluent Bit is the log collector. It runs as a DaemonSet (one Pod per node) and reads the container log files that kubelet writes to `/var/log/containers/`.
 
 ```bash
-vim deployment/phase-09-observability/elk-stack/fluent-bit.yaml
+vim deployment/phase-11-observability/elk-stack/fluent-bit.yaml
 ```
 
 Paste:
@@ -2230,9 +2230,9 @@ Line explanation for the DaemonSet:
 ### Apply the EFK stack
 
 ```bash
-kubectl apply -f deployment/phase-09-observability/elk-stack/elasticsearch.yaml
-kubectl apply -f deployment/phase-09-observability/elk-stack/kibana.yaml
-kubectl apply -f deployment/phase-09-observability/elk-stack/fluent-bit.yaml
+kubectl apply -f deployment/phase-11-observability/elk-stack/elasticsearch.yaml
+kubectl apply -f deployment/phase-11-observability/elk-stack/kibana.yaml
+kubectl apply -f deployment/phase-11-observability/elk-stack/fluent-bit.yaml
 ```
 
 Wait for each component:
@@ -2301,7 +2301,7 @@ In this lab, Jaeger runs in "all-in-one" mode: collector, query engine, UI, and 
 The app does not send traces to Jaeger yet. This step deploys the tracing platform and makes it ready to receive traces. Adding OpenTelemetry instrumentation to the FastAPI backend (which sends spans to Jaeger) is a natural next step that you can explore independently.
 
 ```bash
-vim deployment/phase-09-observability/jaeger/jaeger.yaml
+vim deployment/phase-11-observability/jaeger/jaeger.yaml
 ```
 
 Paste:
@@ -2404,7 +2404,7 @@ Line explanation:
 Apply:
 
 ```bash
-kubectl apply -f deployment/phase-09-observability/jaeger/jaeger.yaml
+kubectl apply -f deployment/phase-11-observability/jaeger/jaeger.yaml
 kubectl -n observability rollout status deployment/jaeger --timeout=180s
 ```
 
@@ -2509,7 +2509,7 @@ kubectl top nodes
 Common causes: not enough CPU or memory on the worker nodes. The kube-prometheus-stack plus EFK plus the application can exceed what 2 × t3.medium (4 GB each) can handle, especially when Elasticsearch is running. Fix: scale the node group to 3 nodes:
 
 ```bash
-eksctl scale nodegroup --cluster devops-launchboard-phase-9 \
+eksctl scale nodegroup --cluster devops-launchboard-phase-11 \
   --name launchboard-workers --nodes 3 --region "$AWS_REGION"
 ```
 
@@ -2534,7 +2534,7 @@ kubectl -n observability logs daemonset/fluent-bit
 The config has a `DB /var/log/flb_kube.db` line in the `[INPUT]` block. The `/var/log` hostPath volume is mounted read-only so Fluent Bit cannot create that file. Remove the `DB` line from the ConfigMap and re-apply:
 
 ```bash
-vim deployment/phase-09-observability/elk-stack/fluent-bit.yaml
+vim deployment/phase-11-observability/elk-stack/fluent-bit.yaml
 ```
 
 Delete this line from the `[INPUT]` block:
@@ -2546,7 +2546,7 @@ Delete this line from the `[INPUT]` block:
 Then apply and wait:
 
 ```bash
-kubectl apply -f deployment/phase-09-observability/elk-stack/fluent-bit.yaml
+kubectl apply -f deployment/phase-11-observability/elk-stack/fluent-bit.yaml
 kubectl -n observability rollout status daemonset/fluent-bit --timeout=120s
 ```
 
@@ -2590,10 +2590,10 @@ Delete observability tools:
 
 ```bash
 helm uninstall kube-prometheus-stack --namespace observability
-kubectl delete -f deployment/phase-09-observability/jaeger/jaeger.yaml
-kubectl delete -f deployment/phase-09-observability/elk-stack/fluent-bit.yaml
-kubectl delete -f deployment/phase-09-observability/elk-stack/kibana.yaml
-kubectl delete -f deployment/phase-09-observability/elk-stack/elasticsearch.yaml
+kubectl delete -f deployment/phase-11-observability/jaeger/jaeger.yaml
+kubectl delete -f deployment/phase-11-observability/elk-stack/fluent-bit.yaml
+kubectl delete -f deployment/phase-11-observability/elk-stack/kibana.yaml
+kubectl delete -f deployment/phase-11-observability/elk-stack/elasticsearch.yaml
 kubectl delete namespace observability
 ```
 
@@ -2612,7 +2612,7 @@ Delete the Load Balancer Controller:
 ```bash
 helm uninstall aws-load-balancer-controller --namespace kube-system
 eksctl delete iamserviceaccount \
-  --cluster devops-launchboard-phase-9 \
+  --cluster devops-launchboard-phase-11 \
   --namespace kube-system \
   --name aws-load-balancer-controller \
   --region "$AWS_REGION"
@@ -2621,7 +2621,7 @@ eksctl delete iamserviceaccount \
 Delete the EKS cluster (10 to 20 minutes):
 
 ```bash
-eksctl delete cluster --name devops-launchboard-phase-9 --region "$AWS_REGION"
+eksctl delete cluster --name devops-launchboard-phase-11 --region "$AWS_REGION"
 ```
 
 Delete ECR repositories:
@@ -2634,7 +2634,7 @@ aws ecr delete-repository --repository-name launchboard-frontend --force --regio
 Delete the IAM policy:
 
 ```bash
-POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicyPhase9"
+POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicyPhase11"
 aws iam delete-policy --policy-arn "$POLICY_ARN"
 ```
 
@@ -2713,7 +2713,7 @@ Terminate the workstation EC2 from the AWS Console.
 Move to:
 
 ```text
-Phase 10: Security
+Phase 12: Security
 ```
 
 Why:

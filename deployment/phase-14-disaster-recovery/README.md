@@ -1,4 +1,4 @@
-# Phase 12: Disaster Recovery
+# Phase 14: Disaster Recovery
 
 ## Fresh Start Assumption
 
@@ -71,7 +71,7 @@ Backups are not useful until restore is tested. This phase focuses on both backu
 | Item | Recommended Value |
 | --- | --- |
 | AWS Region | `us-east-1` or the closest region |
-| Cluster Name | `devops-launchboard-phase-12` |
+| Cluster Name | `devops-launchboard-phase-14` |
 | Kubernetes Version | `1.34` |
 | Node Type | `t3.medium` |
 | Desired Nodes | `2` |
@@ -183,8 +183,8 @@ Run:
 cd ~
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
-ssh-keygen -t ed25519 -C "devops-launchboard-phase-12" -f ~/.ssh/devops_launchboard_phase_12
-cat ~/.ssh/devops_launchboard_phase_12.pub
+ssh-keygen -t ed25519 -C "devops-launchboard-phase-14" -f ~/.ssh/devops_launchboard_phase_14
+cat ~/.ssh/devops_launchboard_phase_14.pub
 ```
 
 Add the public key to GitHub, then create SSH config:
@@ -199,7 +199,7 @@ Paste:
 Host github.com
   HostName github.com
   User git
-  IdentityFile ~/.ssh/devops_launchboard_phase_12
+  IdentityFile ~/.ssh/devops_launchboard_phase_14
   IdentitiesOnly yes
 ```
 
@@ -207,8 +207,8 @@ Run:
 
 ```bash
 chmod 600 ~/.ssh/config
-chmod 600 ~/.ssh/devops_launchboard_phase_12
-chmod 644 ~/.ssh/devops_launchboard_phase_12.pub
+chmod 600 ~/.ssh/devops_launchboard_phase_14
+chmod 644 ~/.ssh/devops_launchboard_phase_14.pub
 ssh -T git@github.com
 ```
 
@@ -226,18 +226,18 @@ Why this step exists:
 
 The machine must have the source code before it can build images or create deployment files. SSH keeps GitHub access key-based instead of password-based.
 
-## Step 4: Create Phase 12 Folders
+## Step 4: Create Phase 14 Folders
 
 Run:
 
 ```bash
-mkdir -p deployment/phase-12-disaster-recovery/cluster
-mkdir -p deployment/phase-12-disaster-recovery/ecr
-mkdir -p deployment/phase-12-disaster-recovery/app-k8s
-mkdir -p deployment/phase-12-disaster-recovery/backup
-mkdir -p deployment/phase-12-disaster-recovery/disaster-recovery
-mkdir -p deployment/phase-12-disaster-recovery/chaos-engineering
-mkdir -p deployment/phase-12-disaster-recovery/runbooks
+mkdir -p deployment/phase-14-disaster-recovery/cluster
+mkdir -p deployment/phase-14-disaster-recovery/ecr
+mkdir -p deployment/phase-14-disaster-recovery/app-k8s
+mkdir -p deployment/phase-14-disaster-recovery/backup
+mkdir -p deployment/phase-14-disaster-recovery/disaster-recovery
+mkdir -p deployment/phase-14-disaster-recovery/chaos-engineering
+mkdir -p deployment/phase-14-disaster-recovery/runbooks
 ```
 
 Why these folders exist:
@@ -255,7 +255,7 @@ Why these folders exist:
 Create:
 
 ```bash
-vim deployment/phase-12-disaster-recovery/cluster/eksctl-cluster.yaml
+vim deployment/phase-14-disaster-recovery/cluster/eksctl-cluster.yaml
 ```
 
 Paste:
@@ -265,7 +265,7 @@ apiVersion: eksctl.io/v1alpha5
 kind: ClusterConfig
 
 metadata:
-  name: devops-launchboard-phase-12
+  name: devops-launchboard-phase-14
   region: YOUR_AWS_REGION
   version: "1.34"
 
@@ -297,7 +297,7 @@ managedNodeGroups:
       workload: launchboard
     tags:
       Project: devops-launchboard
-      Environment: phase-12
+      Environment: phase-14
       Owner: student
 
 cloudWatch:
@@ -327,7 +327,7 @@ availabilityZones:
 
 Line explanation:
 
-- `metadata.name: devops-launchboard-phase-12` names the cluster; eksctl creates CloudFormation stacks named after it.
+- `metadata.name: devops-launchboard-phase-14` names the cluster; eksctl creates CloudFormation stacks named after it.
 - `metadata.version: "1.34"` pins the Kubernetes version, quoted because YAML would otherwise read `1.34` as a number.
 - `iam.withOIDC: true` creates an OIDC provider — the foundation of IAM Roles for Service Accounts (IRSA), which lets Kubernetes ServiceAccounts assume IAM roles without storing AWS credentials in the cluster. Both the EBS CSI driver and Velero (installed later in this phase) need this.
 - `vpc.nat.gateway: Single` creates one shared NAT Gateway instead of one per AZ, at roughly half the cost.
@@ -338,7 +338,7 @@ Line explanation:
 Create the cluster (20–40 minutes):
 
 ```bash
-eksctl create cluster -f deployment/phase-12-disaster-recovery/cluster/eksctl-cluster.yaml
+eksctl create cluster -f deployment/phase-14-disaster-recovery/cluster/eksctl-cluster.yaml
 kubectl get nodes
 ```
 
@@ -363,7 +363,7 @@ aws ecr create-repository --repository-name launchboard-frontend --region $AWS_R
 Create lifecycle policy:
 
 ```bash
-vim deployment/phase-12-disaster-recovery/ecr/lifecycle-policy.json
+vim deployment/phase-14-disaster-recovery/ecr/lifecycle-policy.json
 ```
 
 Paste:
@@ -373,10 +373,10 @@ Paste:
   "rules": [
     {
       "rulePriority": 1,
-      "description": "Keep the latest 10 phase 12 images",
+      "description": "Keep the latest 10 phase 14 images",
       "selection": {
         "tagStatus": "tagged",
-        "tagPrefixList": ["phase-12"],
+        "tagPrefixList": ["phase-14"],
         "countType": "imageCountMoreThan",
         "countNumber": 10
       },
@@ -406,25 +406,25 @@ Apply:
 ```bash
 aws ecr put-lifecycle-policy \
   --repository-name launchboard-backend \
-  --lifecycle-policy-text file://deployment/phase-12-disaster-recovery/ecr/lifecycle-policy.json \
+  --lifecycle-policy-text file://deployment/phase-14-disaster-recovery/ecr/lifecycle-policy.json \
   --region $AWS_REGION
 
 aws ecr put-lifecycle-policy \
   --repository-name launchboard-frontend \
-  --lifecycle-policy-text file://deployment/phase-12-disaster-recovery/ecr/lifecycle-policy.json \
+  --lifecycle-policy-text file://deployment/phase-14-disaster-recovery/ecr/lifecycle-policy.json \
   --region $AWS_REGION
 ```
 
 Line explanation:
 
-- `rulePriority: 1` keeps only the 10 most recent images tagged with the `phase-12` prefix — older ones beyond the 10 most recent are expired automatically.
+- `rulePriority: 1` keeps only the 10 most recent images tagged with the `phase-14` prefix — older ones beyond the 10 most recent are expired automatically.
 - `rulePriority: 2` deletes untagged images (orphaned layers left behind when a tag is moved or overwritten) after 7 days.
 - `put-lifecycle-policy` attaches this same policy to both repositories, so neither one accumulates old release images forever.
 
 ### Dockerfile.backend
 
 ```bash
-vim deployment/phase-12-disaster-recovery/Dockerfile.backend
+vim deployment/phase-14-disaster-recovery/Dockerfile.backend
 ```
 
 Paste:
@@ -492,7 +492,7 @@ Line explanation:
 ### Dockerfile.frontend
 
 ```bash
-vim deployment/phase-12-disaster-recovery/Dockerfile.frontend
+vim deployment/phase-14-disaster-recovery/Dockerfile.frontend
 ```
 
 Paste:
@@ -513,7 +513,7 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 
-COPY deployment/phase-12-disaster-recovery/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY deployment/phase-14-disaster-recovery/nginx-frontend.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
 
 EXPOSE 8080
@@ -529,7 +529,7 @@ This uses the `nginxinc/nginx-unprivileged` image (UID 101), consistent with the
 ### nginx-frontend.conf
 
 ```bash
-vim deployment/phase-12-disaster-recovery/nginx-frontend.conf
+vim deployment/phase-14-disaster-recovery/nginx-frontend.conf
 ```
 
 Paste:
@@ -598,18 +598,18 @@ ECR_REGISTRY=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 aws ecr get-login-password --region $AWS_REGION \
   | docker login --username AWS --password-stdin $ECR_REGISTRY
 
-docker build -f deployment/phase-12-disaster-recovery/Dockerfile.backend \
-  -t launchboard-backend:phase-12 .
+docker build -f deployment/phase-14-disaster-recovery/Dockerfile.backend \
+  -t launchboard-backend:phase-14 .
 
-docker build -f deployment/phase-12-disaster-recovery/Dockerfile.frontend \
+docker build -f deployment/phase-14-disaster-recovery/Dockerfile.frontend \
   --build-arg VITE_API_URL=/api \
-  -t launchboard-frontend:phase-12 .
+  -t launchboard-frontend:phase-14 .
 
-docker tag launchboard-backend:phase-12 $ECR_REGISTRY/launchboard-backend:phase-12
-docker tag launchboard-frontend:phase-12 $ECR_REGISTRY/launchboard-frontend:phase-12
+docker tag launchboard-backend:phase-14 $ECR_REGISTRY/launchboard-backend:phase-14
+docker tag launchboard-frontend:phase-14 $ECR_REGISTRY/launchboard-frontend:phase-14
 
-docker push $ECR_REGISTRY/launchboard-backend:phase-12
-docker push $ECR_REGISTRY/launchboard-frontend:phase-12
+docker push $ECR_REGISTRY/launchboard-backend:phase-14
+docker push $ECR_REGISTRY/launchboard-frontend:phase-14
 ```
 
 Line explanation:
@@ -630,12 +630,12 @@ Reference:
 
 ## Step 7: Deploy The Application
 
-All manifests go inside `deployment/phase-12-disaster-recovery/app-k8s/`. Every container here already sets `allowPrivilegeEscalation: false` and drops all Linux capabilities, the same hardened pattern used from Phase 10 onward.
+All manifests go inside `deployment/phase-14-disaster-recovery/app-k8s/`. Every container here already sets `allowPrivilegeEscalation: false` and drops all Linux capabilities, the same hardened pattern used from Phase 12 onward.
 
 #### namespace.yaml
 
 ```bash
-vim deployment/phase-12-disaster-recovery/app-k8s/namespace.yaml
+vim deployment/phase-14-disaster-recovery/app-k8s/namespace.yaml
 ```
 
 ```yaml
@@ -653,7 +653,7 @@ A Namespace is a logical boundary inside Kubernetes; every other resource below 
 #### storageclass.yaml
 
 ```bash
-vim deployment/phase-12-disaster-recovery/app-k8s/storageclass.yaml
+vim deployment/phase-14-disaster-recovery/app-k8s/storageclass.yaml
 ```
 
 ```yaml
@@ -674,7 +674,7 @@ parameters:
 #### configmap.yaml
 
 ```bash
-vim deployment/phase-12-disaster-recovery/app-k8s/configmap.yaml
+vim deployment/phase-14-disaster-recovery/app-k8s/configmap.yaml
 ```
 
 ```yaml
@@ -697,7 +697,7 @@ data:
 #### secret.example.yaml
 
 ```bash
-vim deployment/phase-12-disaster-recovery/app-k8s/secret.example.yaml
+vim deployment/phase-14-disaster-recovery/app-k8s/secret.example.yaml
 ```
 
 ```yaml
@@ -717,7 +717,7 @@ Example only — you copy this to `secret.yaml` and edit it below, so the placeh
 #### pvc.yaml
 
 ```bash
-vim deployment/phase-12-disaster-recovery/app-k8s/pvc.yaml
+vim deployment/phase-14-disaster-recovery/app-k8s/pvc.yaml
 ```
 
 ```yaml
@@ -740,7 +740,7 @@ spec:
 #### launchboard-postgres-deployment.yaml
 
 ```bash
-vim deployment/phase-12-disaster-recovery/app-k8s/launchboard-postgres-deployment.yaml
+vim deployment/phase-14-disaster-recovery/app-k8s/launchboard-postgres-deployment.yaml
 ```
 
 ```yaml
@@ -841,7 +841,7 @@ This is the Deployment whose PVC you back up with Velero and restore from a Post
 #### launchboard-postgres-service.yaml
 
 ```bash
-vim deployment/phase-12-disaster-recovery/app-k8s/launchboard-postgres-service.yaml
+vim deployment/phase-14-disaster-recovery/app-k8s/launchboard-postgres-service.yaml
 ```
 
 ```yaml
@@ -865,7 +865,7 @@ spec:
 #### launchboard-migration-job.yaml
 
 ```bash
-vim deployment/phase-12-disaster-recovery/app-k8s/launchboard-migration-job.yaml
+vim deployment/phase-14-disaster-recovery/app-k8s/launchboard-migration-job.yaml
 ```
 
 ```yaml
@@ -890,7 +890,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: migrate
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-12
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-14
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -920,12 +920,12 @@ spec:
               memory: 256Mi
 ```
 
-`image` pulls from your private ECR repository — replace both placeholders, e.g. `123456789012.dkr.ecr.us-east-1.amazonaws.com/launchboard-backend:phase-12`. A Job runs its Pod once to completion and stops, unlike a Deployment; the `until python -c "import socket"; ...` loop blocks until PostgreSQL accepts connections, preventing `alembic upgrade head` from running too early.
+`image` pulls from your private ECR repository — replace both placeholders, e.g. `123456789012.dkr.ecr.us-east-1.amazonaws.com/launchboard-backend:phase-14`. A Job runs its Pod once to completion and stops, unlike a Deployment; the `until python -c "import socket"; ...` loop blocks until PostgreSQL accepts connections, preventing `alembic upgrade head` from running too early.
 
 #### launchboard-backend-deployment.yaml
 
 ```bash
-vim deployment/phase-12-disaster-recovery/app-k8s/launchboard-backend-deployment.yaml
+vim deployment/phase-14-disaster-recovery/app-k8s/launchboard-backend-deployment.yaml
 ```
 
 ```yaml
@@ -959,7 +959,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: backend
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-12
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-14
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -1009,7 +1009,7 @@ spec:
 #### launchboard-backend-service.yaml
 
 ```bash
-vim deployment/phase-12-disaster-recovery/app-k8s/launchboard-backend-service.yaml
+vim deployment/phase-14-disaster-recovery/app-k8s/launchboard-backend-service.yaml
 ```
 
 ```yaml
@@ -1033,7 +1033,7 @@ spec:
 #### launchboard-frontend-deployment.yaml
 
 ```bash
-vim deployment/phase-12-disaster-recovery/app-k8s/launchboard-frontend-deployment.yaml
+vim deployment/phase-14-disaster-recovery/app-k8s/launchboard-frontend-deployment.yaml
 ```
 
 ```yaml
@@ -1068,7 +1068,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: frontend
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-frontend:phase-12
+          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-frontend:phase-14
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -1104,7 +1104,7 @@ spec:
 #### launchboard-frontend-service.yaml
 
 ```bash
-vim deployment/phase-12-disaster-recovery/app-k8s/launchboard-frontend-service.yaml
+vim deployment/phase-14-disaster-recovery/app-k8s/launchboard-frontend-service.yaml
 ```
 
 ```yaml
@@ -1128,7 +1128,7 @@ Port 80 is what the Ingress targets; port 8080 is the Pod's actual non-root port
 #### ingress.yaml
 
 ```bash
-vim deployment/phase-12-disaster-recovery/app-k8s/ingress.yaml
+vim deployment/phase-14-disaster-recovery/app-k8s/ingress.yaml
 ```
 
 ```yaml
@@ -1142,7 +1142,7 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
     alb.ingress.kubernetes.io/healthcheck-path: /healthz
-    alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-12
+    alb.ingress.kubernetes.io/load-balancer-name: launchboard-phase-14
 spec:
   ingressClassName: alb
   rules:
@@ -1162,7 +1162,7 @@ spec:
 #### hpa.yaml
 
 ```bash
-vim deployment/phase-12-disaster-recovery/app-k8s/hpa.yaml
+vim deployment/phase-14-disaster-recovery/app-k8s/hpa.yaml
 ```
 
 ```yaml
@@ -1192,7 +1192,7 @@ If average backend CPU usage exceeds 70% of requested CPU, the HPA scales up to 
 #### kustomization.yaml
 
 ```bash
-vim deployment/phase-12-disaster-recovery/app-k8s/kustomization.yaml
+vim deployment/phase-14-disaster-recovery/app-k8s/kustomization.yaml
 ```
 
 ```yaml
@@ -1224,7 +1224,7 @@ Reference:
 Prepare and apply the Secret:
 
 ```bash
-cd deployment/phase-12-disaster-recovery/app-k8s
+cd deployment/phase-14-disaster-recovery/app-k8s
 cp secret.example.yaml secret.yaml
 vim secret.yaml
 ```
@@ -1236,12 +1236,12 @@ cd /opt/devops-launchboard/app-source
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 sed -i "s|YOUR_ACCOUNT_ID|${ACCOUNT_ID}|g; s|YOUR_AWS_REGION|${AWS_REGION}|g" \
-  deployment/phase-12-disaster-recovery/app-k8s/launchboard-backend-deployment.yaml \
-  deployment/phase-12-disaster-recovery/app-k8s/launchboard-migration-job.yaml \
-  deployment/phase-12-disaster-recovery/app-k8s/launchboard-frontend-deployment.yaml
+  deployment/phase-14-disaster-recovery/app-k8s/launchboard-backend-deployment.yaml \
+  deployment/phase-14-disaster-recovery/app-k8s/launchboard-migration-job.yaml \
+  deployment/phase-14-disaster-recovery/app-k8s/launchboard-frontend-deployment.yaml
 
-kubectl apply -f deployment/phase-12-disaster-recovery/app-k8s/secret.yaml
-kubectl apply -k deployment/phase-12-disaster-recovery/app-k8s
+kubectl apply -f deployment/phase-14-disaster-recovery/app-k8s/secret.yaml
+kubectl apply -k deployment/phase-14-disaster-recovery/app-k8s
 kubectl -n devops-launchboard get pods
 ```
 
@@ -1265,16 +1265,16 @@ helm repo add eks https://aws.github.io/eks-charts
 helm repo update
 
 eksctl create iamserviceaccount \
-  --cluster devops-launchboard-phase-12 \
+  --cluster devops-launchboard-phase-14 \
   --namespace kube-system \
   --name aws-load-balancer-controller \
-  --role-name devops-launchboard-phase-12-alb-controller \
+  --role-name devops-launchboard-phase-14-alb-controller \
   --attach-policy-arn arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess \
   --approve
 
 helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
   --namespace kube-system \
-  --set clusterName=devops-launchboard-phase-12 \
+  --set clusterName=devops-launchboard-phase-14 \
   --set serviceAccount.create=false \
   --set serviceAccount.name=aws-load-balancer-controller
 ```
@@ -1288,7 +1288,7 @@ kubectl -n devops-launchboard get ingress
 Command explanation:
 
 - `eksctl create iamserviceaccount` creates an IAM role, a Kubernetes ServiceAccount in `kube-system`, and a trust relationship between them via the cluster's OIDC provider (IRSA) — the controller Pod automatically receives temporary credentials for the role, with no access keys stored in the cluster.
-- `--attach-policy-arn arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess` uses a broad AWS managed policy for simplicity in this phase, since the focus here is backup and recovery, not IAM hardening. Phase 10 walks through downloading the controller's official least-privilege policy instead and attaching a custom policy scoped to only what the controller needs.
+- `--attach-policy-arn arn:aws:iam::aws:policy/ElasticLoadBalancingFullAccess` uses a broad AWS managed policy for simplicity in this phase, since the focus here is backup and recovery, not IAM hardening. Phase 12 walks through downloading the controller's official least-privilege policy instead and attaching a custom policy scoped to only what the controller needs.
 - `helm upgrade --install` deploys the controller from the official EKS Helm chart repository; `--set serviceAccount.create=false` tells Helm to use the ServiceAccount `eksctl` already created instead of making its own.
 
 Why this step exists:
@@ -1334,7 +1334,7 @@ Reference:
 Create:
 
 ```bash
-vim deployment/phase-12-disaster-recovery/backup/velero-aws-policy.json
+vim deployment/phase-14-disaster-recovery/backup/velero-aws-policy.json
 ```
 
 Paste:
@@ -1401,19 +1401,19 @@ Create policy:
 
 ```bash
 aws iam create-policy \
-  --policy-name devops-launchboard-phase-12-velero \
-  --policy-document file://deployment/phase-12-disaster-recovery/backup/velero-aws-policy.json
+  --policy-name devops-launchboard-phase-14-velero \
+  --policy-document file://deployment/phase-14-disaster-recovery/backup/velero-aws-policy.json
 ```
 
 Create service account:
 
 ```bash
 eksctl create iamserviceaccount \
-  --cluster devops-launchboard-phase-12 \
+  --cluster devops-launchboard-phase-14 \
   --namespace velero \
   --name velero \
-  --role-name devops-launchboard-phase-12-velero \
-  --attach-policy-arn arn:aws:iam::$AWS_ACCOUNT_ID:policy/devops-launchboard-phase-12-velero \
+  --role-name devops-launchboard-phase-14-velero \
+  --attach-policy-arn arn:aws:iam::$AWS_ACCOUNT_ID:policy/devops-launchboard-phase-14-velero \
   --approve
 ```
 
@@ -1470,7 +1470,7 @@ Reference:
 Create schedule:
 
 ```bash
-vim deployment/phase-12-disaster-recovery/backup/velero-schedule.yaml
+vim deployment/phase-14-disaster-recovery/backup/velero-schedule.yaml
 ```
 
 Paste:
@@ -1504,7 +1504,7 @@ Line explanation:
 Create manual backup:
 
 ```bash
-vim deployment/phase-12-disaster-recovery/backup/velero-backup.yaml
+vim deployment/phase-14-disaster-recovery/backup/velero-backup.yaml
 ```
 
 Paste:
@@ -1530,8 +1530,8 @@ This is the same `spec` as the Schedule's `template`, but applied directly as a 
 Apply:
 
 ```bash
-kubectl apply -f deployment/phase-12-disaster-recovery/backup/velero-schedule.yaml
-kubectl apply -f deployment/phase-12-disaster-recovery/backup/velero-backup.yaml
+kubectl apply -f deployment/phase-14-disaster-recovery/backup/velero-schedule.yaml
+kubectl apply -f deployment/phase-14-disaster-recovery/backup/velero-backup.yaml
 velero backup get
 velero backup describe launchboard-manual --details
 ```
@@ -1602,7 +1602,7 @@ helm upgrade --install litmuschaos litmuschaos/litmus \
 Create RBAC:
 
 ```bash
-vim deployment/phase-12-disaster-recovery/chaos-engineering/litmus-rbac.yaml
+vim deployment/phase-14-disaster-recovery/chaos-engineering/litmus-rbac.yaml
 ```
 
 Paste:
@@ -1660,12 +1660,12 @@ Line explanation:
 
 - `kind: ServiceAccount` named `litmus-admin` is the identity the chaos experiment runs as — scoped to the `devops-launchboard` namespace, not cluster-wide.
 - `kind: Role` grants `delete` and `patch` on `pods` (so the experiment can actually kill a Pod) plus `get`/`list`/`watch` for it to find target Pods, and read/patch on `deployments` so it can identify and verify the Deployment a Pod belongs to. It deliberately does not grant access to Secrets, ConfigMaps, or other resources.
-- `kind: RoleBinding` connects the Role to the ServiceAccount; this is the same RBAC pattern used for `launchboard-deployer` back in Phase 10.
+- `kind: RoleBinding` connects the Role to the ServiceAccount; this is the same RBAC pattern used for `launchboard-deployer` back in Phase 12.
 
 Create experiment:
 
 ```bash
-vim deployment/phase-12-disaster-recovery/chaos-engineering/pod-delete-chaosengine.yaml
+vim deployment/phase-14-disaster-recovery/chaos-engineering/pod-delete-chaosengine.yaml
 ```
 
 Paste:
@@ -1709,8 +1709,8 @@ Line explanation:
 Apply:
 
 ```bash
-kubectl apply -f deployment/phase-12-disaster-recovery/chaos-engineering/litmus-rbac.yaml
-kubectl apply -f deployment/phase-12-disaster-recovery/chaos-engineering/pod-delete-chaosengine.yaml
+kubectl apply -f deployment/phase-14-disaster-recovery/chaos-engineering/litmus-rbac.yaml
+kubectl apply -f deployment/phase-14-disaster-recovery/chaos-engineering/pod-delete-chaosengine.yaml
 kubectl -n devops-launchboard get chaosengine
 ```
 
@@ -1727,7 +1727,7 @@ Reference:
 Create restore file:
 
 ```bash
-vim deployment/phase-12-disaster-recovery/backup/velero-restore.yaml
+vim deployment/phase-14-disaster-recovery/backup/velero-restore.yaml
 ```
 
 Paste:
@@ -1754,7 +1754,7 @@ Line explanation:
 Practice restore:
 
 ```bash
-kubectl apply -f deployment/phase-12-disaster-recovery/backup/velero-restore.yaml
+kubectl apply -f deployment/phase-14-disaster-recovery/backup/velero-restore.yaml
 
 velero restore get
 velero restore describe launchboard-restore --details
@@ -1800,7 +1800,7 @@ Runbooks turn "what we discussed" into "what is written down" — during a real 
 ### failover-plan.md
 
 ```bash
-vim deployment/phase-12-disaster-recovery/disaster-recovery/failover-plan.md
+vim deployment/phase-14-disaster-recovery/disaster-recovery/failover-plan.md
 ```
 
 Paste:
@@ -1836,7 +1836,7 @@ This is the top-level decision tree: it tells whoever is on call which of the to
 ### rto-rpo.md
 
 ```bash
-vim deployment/phase-12-disaster-recovery/disaster-recovery/rto-rpo.md
+vim deployment/phase-14-disaster-recovery/disaster-recovery/rto-rpo.md
 ```
 
 Paste:
@@ -1870,12 +1870,12 @@ RPO = near current time when a fresh PostgreSQL dump exists
 Backup tools are not enough by themselves. Students must know how fast they need to recover and how much data loss is acceptable before choosing a backup schedule.
 ````
 
-RTO and RPO are the two numbers every other decision in this phase traces back to: the daily Velero schedule from Step 12 (`schedule: "0 3 * * *"`) sets the RPO ceiling at 24 hours, and the existence of a fast `kubectl rollout undo` (Step 17 of Phase 11) is what makes a 30-minute RTO realistic at all.
+RTO and RPO are the two numbers every other decision in this phase traces back to: the daily Velero schedule from Step 12 (`schedule: "0 3 * * *"`) sets the RPO ceiling at 24 hours, and the existence of a fast `kubectl rollout undo` (Step 17 of Phase 13) is what makes a 30-minute RTO realistic at all.
 
 ### incident-response.md
 
 ```bash
-vim deployment/phase-12-disaster-recovery/runbooks/incident-response.md
+vim deployment/phase-14-disaster-recovery/runbooks/incident-response.md
 ```
 
 Paste:
@@ -1924,7 +1924,7 @@ The "Investigation Commands" block is deliberately the first place anyone touche
 ### recovery-checklist.md
 
 ```bash
-vim deployment/phase-12-disaster-recovery/runbooks/recovery-checklist.md
+vim deployment/phase-14-disaster-recovery/runbooks/recovery-checklist.md
 ```
 
 Paste:
@@ -1955,7 +1955,7 @@ This is the same flow as `incident-response.md` and `failover-plan.md`, condense
 ### rollback-procedures.md
 
 ```bash
-vim deployment/phase-12-disaster-recovery/runbooks/rollback-procedures.md
+vim deployment/phase-14-disaster-recovery/runbooks/rollback-procedures.md
 ```
 
 Paste:
@@ -1988,7 +1988,7 @@ kubectl -n devops-launchboard exec -it deploy/launchboard-db -- psql -U launchbo
 ```
 ````
 
-This separates the cheap, fast rollback (`rollout undo` — instant, because the previous ReplicaSet's Pods need no rebuild, the same mechanism taught in Phase 7 and Phase 11) from the expensive, slow one (database restore — explicitly gated behind "schema/data damage is confirmed," because unlike a code rollback, undoing a database write is not always possible).
+This separates the cheap, fast rollback (`rollout undo` — instant, because the previous ReplicaSet's Pods need no rebuild, the same mechanism taught in Phase 7 and Phase 13) from the expensive, slow one (database restore — explicitly gated behind "schema/data damage is confirmed," because unlike a code rollback, undoing a database write is not always possible).
 
 ## Verification Commands
 
@@ -2084,21 +2084,21 @@ Delete Velero backups and install:
 
 ```bash
 velero backup delete launchboard-manual --confirm
-kubectl delete -f deployment/phase-12-disaster-recovery/backup/velero-schedule.yaml
+kubectl delete -f deployment/phase-14-disaster-recovery/backup/velero-schedule.yaml
 kubectl delete namespace velero
 ```
 
 Delete app:
 
 ```bash
-kubectl delete -f deployment/phase-12-disaster-recovery/app-k8s/secret.yaml
-kubectl delete -k deployment/phase-12-disaster-recovery/app-k8s
+kubectl delete -f deployment/phase-14-disaster-recovery/app-k8s/secret.yaml
+kubectl delete -k deployment/phase-14-disaster-recovery/app-k8s
 ```
 
 Delete cluster:
 
 ```bash
-eksctl delete cluster -f deployment/phase-12-disaster-recovery/cluster/eksctl-cluster.yaml
+eksctl delete cluster -f deployment/phase-14-disaster-recovery/cluster/eksctl-cluster.yaml
 ```
 
 Delete ECR and S3:
@@ -2158,9 +2158,9 @@ Disaster recovery labs create snapshots, S3 objects, clusters, nodes, and load b
 Run a game-day exercise where students follow the runbooks without help, then move to:
 
 ```text
-Phase 13: Performance And Load Validation
+Phase 15: Performance And Load Validation
 ```
 
 Why:
 
-After proving the platform can recover from failure, the next question is whether it can handle real traffic - Phase 13 load-tests the deployment with k6 and validates the autoscaler before anything is called production-ready.
+After proving the platform can recover from failure, the next question is whether it can handle real traffic - Phase 15 load-tests the deployment with k6 and validates the autoscaler before anything is called production-ready.
