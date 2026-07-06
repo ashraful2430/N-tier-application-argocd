@@ -6,7 +6,7 @@ variable "aws_region" {
 variable "instance_type" {
   description = "EC2 instance type for the app server"
   type        = string
-  default     = "t3.medium"
+  default     = "t3.small"
 }
 
 variable "key_name" {
@@ -20,7 +20,18 @@ variable "my_ip_cidr" {
 }
 
 variable "db_password" {
-  description = "PostgreSQL password injected into the app .env file"
+  description = "PostgreSQL password injected into the app configuration"
   type        = string
   sensitive   = true
+}
+
+variable "dockerhub_user" {
+  description = "Docker Hub username that owns the pre-built launchboard images"
+  type        = string
+}
+
+variable "image_tag" {
+  description = "Tag of the pre-built launchboard images on Docker Hub"
+  type        = string
+  default     = "phase-9"
 }

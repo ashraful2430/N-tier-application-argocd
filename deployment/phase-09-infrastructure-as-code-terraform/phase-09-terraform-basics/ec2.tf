@@ -11,7 +11,9 @@ resource "aws_instance" "app" {
   }
 
   user_data = templatefile("${path.module}/user-data.sh.tpl", {
-    db_password = var.db_password
+    db_password    = var.db_password
+    backend_image  = "${var.dockerhub_user}/launchboard-backend:${var.image_tag}"
+    frontend_image = "${var.dockerhub_user}/launchboard-frontend:${var.image_tag}"
   })
 
   tags = {

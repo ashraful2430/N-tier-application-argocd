@@ -9,6 +9,7 @@ You do not need to complete any previous phase before using this guide.
 This guide assumes:
 
 - You have an AWS account with permissions to create EC2, VPC, and IAM resources.
+- You have a free Docker Hub account (hub.docker.com) — you publish the app images there once, and the server pulls them. Your Git repository can stay **private**.
 - Terraform and AWS CLI are not installed yet.
 - You will create files with `vim`.
 - You will type commands manually.
@@ -24,6 +25,8 @@ git@github.com:ashraful2430/N-tier-application.git
 
 One EC2 instance that runs the full DevOps LaunchBoard stack (PostgreSQL, FastAPI backend, React frontend) with Docker Compose — the same result as Phase 4, but this time **Terraform creates and configures everything**. You never open the EC2 Console to click "Launch instance."
 
+The app images are built **once on your workstation** and pushed to Docker Hub; the server only pulls and runs them. That split — build the artifact once, run it anywhere — is a first taste of the pipeline the production lab formalizes with ECR, and it means the Git repository never has to be readable by the server (it can stay private).
+
 ```text
         You (terraform apply)
                 |
@@ -36,9 +39,9 @@ Security Group          EC2 Instance (Ubuntu 24.04)
 (22 from you,               |
  80 from anyone)        user data script runs on first boot:
                             - installs Docker + Compose
-                            - clones the repo
-                            - writes .env
-                            - docker compose up -d --build
+                            - writes the compose file
+                            - pulls your images from Docker Hub
+                            - docker compose up -d
                             |
                     +-------+--------+
                     |       |        |
@@ -83,7 +86,7 @@ The `phase-09-terraform-production` lab fixes all three.
 
 | Resource | Approximate Cost |
 | --- | --- |
-| 1 × t3.medium | ~$0.04/hour |
+| 1 × t3.small (app server) | ~$0.02/hour |
 | 30 GB gp3 EBS | ~$0.003/hour |
 
 Running for 8 hours costs well under $1. Run `terraform destroy` after each session.
@@ -111,10 +114,12 @@ Create one Ubuntu EC2 workstation from the AWS Console (this is the last instanc
 | --- | --- |
 | Name | `devops-launchboard-phase-9-workstation` |
 | AMI | Ubuntu Server 24.04 LTS |
-| Instance Type | `t3.small` |
-| Storage | 20 GB gp3 |
+| Instance Type | `t3.medium` |
+| Storage | 30 GB gp3 |
 | Key Pair | `devops-launchboard-key` |
 | Security Group | SSH port 22, your IP only |
+
+The workstation is `t3.medium` (4 GB RAM) because it is where the app images are **built** in Step 5 — the frontend's `npm run build` needs the memory. The app server Terraform creates only pulls images, so it stays a cheaper `t3.small`.
 
 SSH in:
 
@@ -198,6 +203,8 @@ Reference:
 
 ## Step 4: Clone Repository
 
+The workstation needs the source code to build the images in the next step. Because this clone authenticates with your deploy key, the repository can stay **private** — nothing in this lab requires public Git access.
+
 Create GitHub SSH key:
 
 ```bash
@@ -271,7 +278,64 @@ Reference:
 - Generate an SSH key: https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent
 - GitHub deploy keys: https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys#deploy-keys
 
-## Step 5: Create The Terraform Files
+## Step 5: Build And Push The App Images To Docker Hub
+
+The server will not build anything — it pulls ready images. So the images must exist first. You build them here, on the workstation, using the Phase 4 Dockerfiles from the repository you just cloned, and publish them to your Docker Hub account.
+
+Install Docker on the workstation:
+
+```bash
+cd ~
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo ${UBUNTU_CODENAME:-$VERSION_CODENAME}) stable" | sudo tee /etc/apt/sources.list.d/docker.list
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+sudo usermod -aG docker ubuntu
+exit
+```
+
+SSH back in (the group change needs a new session), then log in to Docker Hub:
+
+```bash
+ssh -i devops-launchboard-key.pem ubuntu@YOUR_WORKSTATION_PUBLIC_IP
+docker login -u YOUR_DOCKERHUB_USERNAME
+```
+
+For the password, use a **personal access token**, not your account password: hub.docker.com > your avatar > Account settings > Personal access tokens > Generate new token (Read & Write scope is enough). Tokens can be revoked individually and never unlock your whole account.
+
+Build and push both images:
+
+```bash
+cd /opt/devops-launchboard/app-source
+
+docker build -f deployment/phase-04-docker-compose/Dockerfile.backend \
+  -t YOUR_DOCKERHUB_USERNAME/launchboard-backend:phase-9 .
+
+docker build -f deployment/phase-04-docker-compose/Dockerfile.frontend \
+  --build-arg VITE_API_URL= \
+  -t YOUR_DOCKERHUB_USERNAME/launchboard-frontend:phase-9 .
+
+docker push YOUR_DOCKERHUB_USERNAME/launchboard-backend:phase-9
+docker push YOUR_DOCKERHUB_USERNAME/launchboard-frontend:phase-9
+```
+
+Command explanation:
+
+- The image name format is `USERNAME/REPOSITORY:TAG` — for Docker Hub, the username prefix *is* the registry address (compare with ECR's `ACCOUNT.dkr.ecr.REGION.amazonaws.com/...` in the production lab).
+- `-f deployment/phase-04-docker-compose/Dockerfile.backend` reuses the proven Phase 4 build files; the trailing `.` makes the repository root the build context, which those Dockerfiles expect.
+- `--build-arg VITE_API_URL=` (empty) makes the frontend call the API with relative `/api` paths, proxied by its own Nginx.
+- `docker push` uploads the layers. On a free Docker Hub account these repositories are **public** — anyone can pull them. That is what lets the app server pull anonymously with zero credentials. (Note what that implies: the *built app* inside the images is public even though your source repository is private. Fine for a course app; a company would use a private registry — which is exactly the production lab's ECR setup.)
+
+Verify: open `https://hub.docker.com/u/YOUR_DOCKERHUB_USERNAME` — both repositories should show the `phase-9` tag.
+
+Reference:
+
+- Docker Hub quickstart: https://docs.docker.com/docker-hub/quickstart/
+- Docker Hub access tokens: https://docs.docker.com/security/access-tokens/
+
+## Step 6: Create The Terraform Files
 
 ```bash
 cd /opt/devops-launchboard/app-source
@@ -340,7 +404,7 @@ variable "aws_region" {
 variable "instance_type" {
   description = "EC2 instance type for the app server"
   type        = string
-  default     = "t3.medium"
+  default     = "t3.small"
 }
 
 variable "key_name" {
@@ -354,9 +418,20 @@ variable "my_ip_cidr" {
 }
 
 variable "db_password" {
-  description = "PostgreSQL password injected into the app .env file"
+  description = "PostgreSQL password injected into the app configuration"
   type        = string
   sensitive   = true
+}
+
+variable "dockerhub_user" {
+  description = "Docker Hub username that owns the pre-built launchboard images"
+  type        = string
+}
+
+variable "image_tag" {
+  description = "Tag of the pre-built launchboard images on Docker Hub"
+  type        = string
+  default     = "phase-9"
 }
 ```
 
@@ -364,8 +439,9 @@ Line explanation:
 
 - Each `variable` block declares one input. Variables are how the same configuration deploys to different regions, accounts, or environments without editing `.tf` files.
 - `type = string` makes Terraform reject wrong-typed values at plan time instead of failing halfway through an apply.
-- `instance_type` has a `default`, so it is optional. `aws_region`, `key_name`, `my_ip_cidr`, and `db_password` have no default, so Terraform requires a value for them (from `terraform.tfvars`, a `-var` flag, or an interactive prompt).
+- `instance_type` and `image_tag` have defaults, so they are optional. `aws_region`, `key_name`, `my_ip_cidr`, `db_password`, and `dockerhub_user` have no default, so Terraform requires a value for each (from `terraform.tfvars`, a `-var` flag, or an interactive prompt).
 - `sensitive = true` on `db_password` makes Terraform mask the value in plan/apply output (it prints `(sensitive value)` instead). Note this does **not** encrypt it — the value still appears in plain text inside the state file, which is one of the reasons the production lab moves state into a private S3 bucket.
+- `dockerhub_user` and `image_tag` together identify the images the server pulls: `YOUR_USER/launchboard-backend:phase-9` and `YOUR_USER/launchboard-frontend:phase-9`, the ones you pushed in Step 5. Later, pushing a new tag and changing `image_tag` here *is* a redeploy — Terraform sees the user data changed and replaces the instance with one running the new version.
 
 ### data.tf
 
@@ -472,7 +548,9 @@ resource "aws_instance" "app" {
   }
 
   user_data = templatefile("${path.module}/user-data.sh.tpl", {
-    db_password = var.db_password
+    db_password    = var.db_password
+    backend_image  = "${var.dockerhub_user}/launchboard-backend:${var.image_tag}"
+    frontend_image = "${var.dockerhub_user}/launchboard-frontend:${var.image_tag}"
   })
 
   tags = {
@@ -484,7 +562,7 @@ resource "aws_instance" "app" {
 Line explanation:
 
 - `ami = data.aws_ssm_parameter.ubuntu_ami.value` uses the always-current Ubuntu AMI from the data source.
-- `instance_type = var.instance_type` defaults to `t3.medium` (4 GB RAM). The frontend's `npm run build` inside `docker compose up --build` needs more memory than a `t3.small` (2 GB) reliably provides.
+- `instance_type = var.instance_type` defaults to `t3.small` (2 GB RAM) — enough, because this server only **pulls and runs** prebuilt images. The memory-hungry frontend build already happened on the workstation in Step 5.
 - `key_name` attaches the existing key pair so you can SSH in for debugging. Terraform does not create the key pair — it references one that already exists (you created `devops-launchboard-key` in Step 1 or an earlier phase). At boot, AWS injects the key pair's **public** half into `/home/ubuntu/.ssh/authorized_keys`; the private half only ever exists in your downloaded `.pem` file.
 - Want Terraform to manage the key too? Add an `aws_key_pair` resource that registers a public key you already have locally, and reference it:
 
@@ -497,8 +575,8 @@ Line explanation:
 
   Then set `key_name = aws_key_pair.app.key_name` in the instance. This uploads only the public key (not a secret), eliminates the regional key-pair-not-found error class, and works well if you generated your key with a local tool (ssh-keygen, MobaXterm's MobaKeyGen, PuTTYgen — export OpenSSH format). What you should **not** do is generate the key inside Terraform with the `tls_private_key` resource: it stores the private key in **plaintext in the state file**, turning your SSH credential into state contents — the same problem as `db_password`, but worse.
 - `vpc_security_group_ids = [aws_security_group.app.id]` attaches the security group. Referencing it also tells Terraform to create the security group first.
-- `root_block_device` sizes the root disk to 30 GB (Docker images and build caches need more than the 8 GB default) and encrypts it at rest.
-- `user_data` is a script that cloud-init runs **once, on first boot, as root**. `templatefile()` reads `user-data.sh.tpl` and substitutes every `${db_password}` placeholder with the variable's value before handing the final script to AWS. This is how Terraform passes values from your configuration *into* the instance.
+- `root_block_device` sizes the root disk to 30 GB and encrypts it at rest.
+- `user_data` is a script that cloud-init runs **once, on first boot, as root**. `templatefile()` reads `user-data.sh.tpl` and substitutes three placeholders before handing the final script to AWS: the database password and the two full image names, assembled here from `dockerhub_user` and `image_tag`. This is how Terraform passes values from your configuration *into* the instance.
 - `${path.module}` is the folder containing the current `.tf` files — safer than a relative path, which would break if you ran Terraform from a different working directory.
 
 ### user-data.sh.tpl
@@ -515,41 +593,111 @@ set -eux
 
 # Install Docker from the official repository
 apt-get update
-apt-get install -y ca-certificates curl git
+apt-get install -y ca-certificates curl
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
 apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 usermod -aG docker ubuntu
 
 # Discover this instance's public IP from the metadata service (IMDSv2)
 TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
 PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
 
-# Clone the app and configure the Compose environment
-git clone https://github.com/ashraful2430/N-tier-application.git /opt/launchboard
-cd /opt/launchboard/deployment/phase-04-docker-compose
-cp .env.example .env
-sed -i "s|CHANGE_ME_STRONG_PASSWORD|${db_password}|g" .env
-sed -i "s|http://YOUR_EC2_PUBLIC_IP|http://$PUBLIC_IP|g" .env
+# Write the Compose file - images are pre-built and pulled from Docker Hub
+mkdir -p /opt/launchboard
+cat > /opt/launchboard/docker-compose.yml << COMPOSE
+services:
+  launchboard-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: launchboard
+      POSTGRES_USER: launchboard_user
+      POSTGRES_PASSWORD: ${db_password}
+    volumes:
+      - launchboard-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U launchboard_user -d launchboard"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
 
-# Build and start the full stack
-docker compose up -d --build
+  launchboard-migrate:
+    image: ${backend_image}
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://launchboard_user:${db_password}@launchboard-db:5432/launchboard
+    depends_on:
+      launchboard-db:
+        condition: service_healthy
+    restart: "no"
+
+  launchboard-backend:
+    image: ${backend_image}
+    environment:
+      DATABASE_URL: postgresql+asyncpg://launchboard_user:${db_password}@launchboard-db:5432/launchboard
+      APP_NAME: DevOps LaunchBoard API
+      APP_ENV: production
+      CORS_ORIGINS: http://$PUBLIC_IP
+      SEED_DEMO_DATA: "true"
+    depends_on:
+      launchboard-db:
+        condition: service_healthy
+      launchboard-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  launchboard-frontend:
+    image: ${frontend_image}
+    ports:
+      - "80:8080"
+    depends_on:
+      launchboard-backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  launchboard-postgres-data:
+COMPOSE
+
+# Pull and start the stack
+cd /opt/launchboard
+docker compose pull
+docker compose up -d
 ```
 
 Line explanation:
 
-- `set -eux` makes the script exit on the first error (`-e`), treat unset variables as errors (`-u`), and print each command before running it (`-x`) — the `-x` output lands in `/var/log/cloud-init-output.log` on the instance, which is where you debug user data problems.
-- The Docker install block is the same official-repository installation used in every previous phase, just non-interactive.
-- The two `curl 169.254.169.254` calls query the **EC2 instance metadata service** — a link-local endpoint every instance can reach that answers questions about itself. The first call gets a session token (IMDSv2 requires token-based access), the second asks for the instance's own public IP. This matters because the public IP does not exist until the instance is running, so Terraform cannot substitute it at plan time — the instance must discover it at boot time.
-- `${db_password}` (note: no `$` escape) is a **Terraform template placeholder**, substituted by `templatefile()` before the script ever reaches the instance. `$TOKEN` and `$PUBLIC_IP` are ordinary **shell variables**, resolved at boot time on the instance. `templatefile()` only substitutes `${...}` expressions that match its variable map; plain `$NAME` shell syntax passes through untouched.
-- The clone uses HTTPS (not SSH) because this fresh instance has no GitHub deploy key. HTTPS works for public repositories with no credentials.
-- The two `sed` commands fill in the same two `.env` placeholders you edited by hand in Phase 4: the database password and the CORS origin.
-- `docker compose up -d --build` builds the backend and frontend images from source on the instance and starts all four services (db, migrate, backend, frontend). The first boot takes 4 to 6 minutes because of the image builds.
+- `set -eux` makes the script exit on the first error (`-e`), treat unset variables as errors (`-u`), and print each command before running it (`-x`) — the `-x` trace lands in `/var/log/cloud-init-output.log` on the instance, which is where you debug user data problems (the last `+` line before the log stops is the command that failed).
+- The Docker install block is the same official-repository installation used in every previous phase, just non-interactive. `docker-compose-plugin` is included because Compose orchestrates the stack.
+- The two `curl 169.254.169.254` calls query the **EC2 instance metadata service** — a link-local endpoint every instance can reach that answers questions about itself. The first call gets a session token (IMDSv2 requires token-based access), the second asks for the instance's own public IP, which becomes the backend's CORS origin. The public IP does not exist until the instance is running, so Terraform cannot substitute it at plan time — the instance discovers it at boot.
+- Watch the two kinds of variables. `${db_password}`, `${backend_image}`, and `${frontend_image}` are **Terraform template placeholders** — `templatefile()` already replaced them before the script reached AWS. `$TOKEN` and `$PUBLIC_IP` are ordinary **shell variables**, resolved at boot on the instance. That is also why the heredoc delimiter is deliberately **unquoted** (`<< COMPOSE`, not `<< 'COMPOSE'`): the shell must still expand `$PUBLIC_IP` inside the compose file as it writes it.
+- The compose file mirrors the Phase 4 stack, with `image:` lines instead of `build:` — pulled from Docker Hub, nothing compiled here:
+  - the database gets a named volume and a `pg_isready` healthcheck;
+  - `launchboard-migrate` runs `alembic upgrade head` exactly once (`restart: "no"`), gated on the database being healthy;
+  - the backend starts only after the database is healthy **and** the migration completed (`service_completed_successfully`) — the same ordering the Phase 4 compose file taught;
+  - the frontend waits for the backend to be healthy — its health status comes from the `HEALTHCHECK` baked into the backend image.
+- `docker compose pull` then `up -d`: pulling three images takes well under a minute, so the whole first boot is **about 2 minutes** — compare with 5-6 minutes when images were built on the server.
 
 Security note: user data (including the substituted password) is visible to anyone who can read the instance's metadata or your Terraform state file. Acceptable for a lab; the production lab passes secrets through SSM Parameter Store instead.
+
+### Variation: Clone And Build On Boot Instead
+
+If your repository is public and you prefer not to use a registry at all, the opposite design also works: user data installs Docker, `git clone`s the repository over HTTPS, and runs `docker compose up -d --build` with the Phase 4 compose file — the server builds its own images from source. Trade-offs:
+
+| | Pre-built images (this lab) | Clone and build on boot |
+| --- | --- | --- |
+| Boot to running app | ~2 min | ~5-6 min |
+| Git repository | can stay private | must be publicly readable |
+| Registry account | Docker Hub (free) | none |
+| App server size | t3.small | t3.medium (the frontend build needs RAM) |
+| Classroom risk | Docker Hub pull rate limits behind one NAT | GitHub outage / repo visibility changes |
+
+The production lab supersedes both: images built once on the workstation, pushed to **ECR** (private, IAM-authenticated, no pull limits), pulled by instances via an instance profile.
 
 ### outputs.tf
 
@@ -584,14 +732,16 @@ Outputs are values Terraform prints after `apply` and on demand with `terraform 
 vim terraform.tfvars
 ```
 
-Paste, replacing all three placeholder values:
+Paste, replacing the placeholder values (region, key pair name, your IP, a real password, and your Docker Hub username):
 
 ```hcl
-aws_region    = "us-east-1"
-instance_type = "t3.medium"
-key_name      = "devops-launchboard-key"
-my_ip_cidr    = "YOUR_PUBLIC_IP/32"
-db_password   = "CHANGE_ME_STRONG_PASSWORD"
+aws_region     = "us-east-1"
+instance_type  = "t3.small"
+key_name       = "devops-launchboard-key"
+my_ip_cidr     = "YOUR_PUBLIC_IP/32"
+db_password    = "CHANGE_ME_STRONG_PASSWORD"
+dockerhub_user = "YOUR_DOCKERHUB_USERNAME"
+image_tag      = "phase-9"
 ```
 
 Find your public IP with `curl -s https://checkip.amazonaws.com` (run it on your **local machine**, not the workstation — this must be the IP your SSH connection comes from).
@@ -612,7 +762,7 @@ Reference:
 - templatefile function: https://developer.hashicorp.com/terraform/language/functions/templatefile
 - Input variables: https://developer.hashicorp.com/terraform/language/values/variables
 
-## Step 6: Initialize
+## Step 7: Initialize
 
 ```bash
 terraform init
@@ -629,7 +779,7 @@ What `init` did:
 - Downloaded the AWS provider (~6.x) into a hidden `.terraform/` folder.
 - Wrote `.terraform.lock.hcl`, which pins the **exact** provider version and its checksums. Commit this file — it guarantees teammates and CI use the identical provider build.
 
-## Step 7: Format And Validate
+## Step 8: Format And Validate
 
 ```bash
 terraform fmt
@@ -645,7 +795,7 @@ Expected:
 Success! The configuration is valid.
 ```
 
-## Step 8: Plan
+## Step 9: Plan
 
 ```bash
 terraform plan
@@ -669,7 +819,7 @@ Plan: 2 to add, 0 to change, 0 to destroy.
 
 Two resources: the security group and the instance. The two `data` sources are lookups, not resources, so they do not count.
 
-## Step 9: Apply
+## Step 10: Apply
 
 ```bash
 terraform apply
@@ -697,7 +847,7 @@ public_ip = "54.XX.XX.XX"
 ssh_command = "ssh -i YOUR_KEY.pem ubuntu@54.XX.XX.XX"
 ```
 
-**Wait 4 to 6 minutes** before opening the URL — the apply finishes when the *instance* exists, but the user data script is still installing Docker and building the app images. Then verify:
+**Wait about 2 minutes** before opening the URL — the apply finishes when the *instance* exists, but the user data script is still installing Docker and pulling the images from Docker Hub. Then verify:
 
 ```bash
 APP_IP=$(terraform output -raw public_ip)
@@ -707,7 +857,7 @@ curl -s "http://$APP_IP/api/summary" | jq
 
 Open `http://YOUR_PUBLIC_IP` in the browser — the full LaunchBoard UI should load with demo data.
 
-If it does not come up after 6 minutes, SSH in and read the boot log:
+If it does not come up after 3 minutes, SSH in and read the boot log:
 
 ```bash
 ssh -i devops-launchboard-key.pem ubuntu@$APP_IP
@@ -715,7 +865,7 @@ sudo tail -50 /var/log/cloud-init-output.log
 sudo docker ps
 ```
 
-## Step 10: Understand State
+## Step 11: Understand State
 
 ```bash
 terraform state list
@@ -740,7 +890,7 @@ This prints every attribute Terraform recorded about the instance. The file behi
 2. **State contains secrets in plain text** (your `db_password` is in there). Never commit it.
 3. **Local state does not scale.** It exists only on this machine; a teammate running `terraform apply` from their machine would try to create everything again. The production lab moves state to S3.
 
-## Step 11: Make A Change And See The Diff
+## Step 12: Make A Change And See The Diff
 
 This is the workflow that makes Terraform valuable. Edit the security group description:
 
@@ -770,7 +920,7 @@ terraform plan
 
 Terraform notices reality no longer matches the configuration and proposes removing the tag. Run `terraform apply` and the manual change is reverted. This is why `ManagedBy = "terraform"` matters: hand edits to Terraform-managed resources do not survive.
 
-## Step 12: Destroy
+## Step 13: Destroy
 
 ```bash
 terraform destroy
@@ -827,7 +977,18 @@ The user data script failed partway. SSH in and check:
 sudo tail -100 /var/log/cloud-init-output.log
 ```
 
-Common causes: GitHub unreachable (check the repository is public), Docker build out of memory (use `t3.medium`, not `t3.small`), or apt mirror hiccups (rerun the script section by hand or `terraform destroy` and `apply` again — user data only runs on first boot, so fixing it means recreating the instance: `terraform apply -replace=aws_instance.app`).
+Common causes, with their log signatures:
+
+- `pull access denied for YOUR_USER/launchboard-backend, repository does not exist or may require 'docker login'` — the `dockerhub_user` in `terraform.tfvars` has a typo, or the images were never pushed (Step 5). Verify at `https://hub.docker.com/u/YOUR_USER` and test from the workstation: `docker pull YOUR_USER/launchboard-backend:phase-9`.
+- `toomanyrequests: You have reached your pull rate limit` — Docker Hub limits anonymous pulls per IP, and a classroom behind one NAT shares one IP. Wait for the window to reset, or have each student authenticate the pull (add `docker login` with a token to user data), or move the images to ECR (the production lab's approach, which has no such limit).
+- `fatal: could not read Username for 'https://github.com'` — only possible if you switched to the clone-and-build variation with a private repository; make the repository public or return to pre-built images.
+- apt/GPG errors early in the script — mirror hiccups; recreating the instance usually clears it.
+
+In every case the fix path is the same: user data only runs on **first boot**, so after fixing the cause, recreate the instance rather than re-applying in place:
+
+```bash
+terraform apply -replace=aws_instance.app
+```
 
 ### Problem 4: `Error acquiring the state lock`
 
@@ -857,6 +1018,7 @@ Your current public IP no longer matches `my_ip_cidr` (home IPs rotate). Update 
 [ ] .terraform.lock.hcl committed
 [ ] terraform.tfvars NOT committed (in .gitignore)
 [ ] terraform fmt and validate pass
+[ ] Both images pushed and visible on hub.docker.com
 [ ] Plan reviewed before every apply
 [ ] App reachable at the app_url output
 [ ] State inspected with terraform state list / show
