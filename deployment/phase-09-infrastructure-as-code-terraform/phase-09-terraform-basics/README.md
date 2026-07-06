@@ -485,7 +485,17 @@ Line explanation:
 
 - `ami = data.aws_ssm_parameter.ubuntu_ami.value` uses the always-current Ubuntu AMI from the data source.
 - `instance_type = var.instance_type` defaults to `t3.medium` (4 GB RAM). The frontend's `npm run build` inside `docker compose up --build` needs more memory than a `t3.small` (2 GB) reliably provides.
-- `key_name` attaches the existing key pair so you can SSH in for debugging. Terraform does not create the key pair — it references one that already exists (you created `devops-launchboard-key` in Step 1 or an earlier phase).
+- `key_name` attaches the existing key pair so you can SSH in for debugging. Terraform does not create the key pair — it references one that already exists (you created `devops-launchboard-key` in Step 1 or an earlier phase). At boot, AWS injects the key pair's **public** half into `/home/ubuntu/.ssh/authorized_keys`; the private half only ever exists in your downloaded `.pem` file.
+- Want Terraform to manage the key too? Add an `aws_key_pair` resource that registers a public key you already have locally, and reference it:
+
+  ```hcl
+  resource "aws_key_pair" "app" {
+    key_name   = "launchboard-terraform-key"
+    public_key = file("~/.ssh/id_ed25519.pub")
+  }
+  ```
+
+  Then set `key_name = aws_key_pair.app.key_name` in the instance. This uploads only the public key (not a secret), eliminates the regional key-pair-not-found error class, and works well if you generated your key with a local tool (ssh-keygen, MobaXterm's MobaKeyGen, PuTTYgen — export OpenSSH format). What you should **not** do is generate the key inside Terraform with the `tls_private_key` resource: it stores the private key in **plaintext in the state file**, turning your SSH credential into state contents — the same problem as `db_password`, but worse.
 - `vpc_security_group_ids = [aws_security_group.app.id]` attaches the security group. Referencing it also tells Terraform to create the security group first.
 - `root_block_device` sizes the root disk to 30 GB (Docker images and build caches need more than the 8 GB default) and encrypts it at rest.
 - `user_data` is a script that cloud-init runs **once, on first boot, as root**. `templatefile()` reads `user-data.sh.tpl` and substitutes every `${db_password}` placeholder with the variable's value before handing the final script to AWS. This is how Terraform passes values from your configuration *into* the instance.
@@ -782,7 +792,32 @@ Terraform cannot find AWS credentials. Run `aws sts get-caller-identity` — if 
 
 ### Problem 2: `Error: creating EC2 Instance ... InvalidKeyPair.NotFound`
 
-The `key_name` in `terraform.tfvars` does not exist **in the region you are deploying to**. Key pairs are regional. Check EC2 Console > Key Pairs in your target region, or create one there and update the variable.
+`key_name` refers to an **EC2 Key Pair object registered in AWS**, not a key file on your machine — and key pairs are strictly regional. This error means the region in `terraform.tfvars` has no key pair with that name. See what actually exists there:
+
+```bash
+aws ec2 describe-key-pairs --region YOUR_AWS_REGION --query 'KeyPairs[].KeyName' --output table
+```
+
+Fix with whichever case matches:
+
+- **No key pair anywhere** (common if you generated your SSH key locally with MobaXterm's MobaKeyGen, PuTTYgen, or `ssh-keygen` — those create files, not AWS objects): create one in the target region and save the private key:
+
+```bash
+aws ec2 create-key-pair --key-name devops-launchboard-key --region YOUR_AWS_REGION \
+  --query 'KeyMaterial' --output text > devops-launchboard-key.pem
+chmod 400 devops-launchboard-key.pem
+```
+
+- **You already have a local key you want to keep using**: import its *public* half so AWS knows it (MobaKeyGen/PuTTYgen users: export the public key in OpenSSH format first):
+
+```bash
+aws ec2 import-key-pair --key-name devops-launchboard-key --region YOUR_AWS_REGION \
+  --public-key-material fileb://~/.ssh/id_ed25519.pub
+```
+
+- **A key pair exists under a different name**: set that name as `key_name` in `terraform.tfvars`.
+
+Then run `terraform apply` again — the security group created before the failure is already in state, so Terraform only retries the instance.
 
 ### Problem 3: Apply succeeds but the app never loads
 
