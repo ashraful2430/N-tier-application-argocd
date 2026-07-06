@@ -208,7 +208,13 @@ ssh-keygen -t ed25519 -C "devops-launchboard-phase-9" -f ~/.ssh/devops_launchboa
 cat ~/.ssh/devops_launchboard_github_key.pub
 ```
 
-Add it to GitHub as a read-only deploy key (repository > Settings > Deploy keys > Add deploy key, leave "Allow write access" unchecked).
+Command explanation:
+
+- `mkdir -p ~/.ssh` creates the SSH directory if it does not exist (`-p` makes it a no-op if it does), and `chmod 700` restricts it to your user only — SSH refuses to use keys stored in a directory other users can read.
+- `ssh-keygen -t ed25519` generates a modern Ed25519 key pair — shorter, faster, and at least as secure as the older RSA keys. `-C "devops-launchboard-phase-9"` is a comment label so you can recognize this key later in GitHub's key list, and `-f` names the files (`devops_launchboard_github_key` private, `.pub` public) instead of overwriting your default `id_ed25519`.
+- `cat ...pub` prints the **public** key — the half that is safe to share. This is what you paste into GitHub. The private key never leaves the workstation.
+
+Add it to GitHub as a read-only deploy key (repository > Settings > Deploy keys > Add deploy key, paste the key, leave "Allow write access" unchecked). A deploy key grants access to **this one repository only** — unlike an account-level SSH key, a leaked workstation cannot touch anything else you own, and read-only means it cannot push.
 
 Create SSH config:
 
@@ -226,6 +232,12 @@ Host github.com
   IdentitiesOnly yes
 ```
 
+Line explanation:
+
+- The config block tells SSH how to connect whenever the destination is `github.com`, so `git clone` needs no extra flags.
+- `IdentityFile` points at the key you just generated instead of the default `~/.ssh/id_ed25519`.
+- `IdentitiesOnly yes` makes SSH offer **only** this key. Without it, SSH tries every key it can find first — and GitHub rejects the connection after too many wrong keys, a confusing failure when you have several.
+
 Secure and test:
 
 ```bash
@@ -233,6 +245,11 @@ chmod 600 ~/.ssh/config ~/.ssh/devops_launchboard_github_key
 chmod 644 ~/.ssh/devops_launchboard_github_key.pub
 ssh -T git@github.com
 ```
+
+Command explanation:
+
+- `chmod 600` (owner read/write only) on the config and the **private** key — SSH refuses outright to use a private key that other users could read ("UNPROTECTED PRIVATE KEY FILE" error). The public key can stay world-readable (`644`).
+- `ssh -T git@github.com` tests authentication without opening a shell (`-T` = no terminal; GitHub does not offer shells anyway). Success looks like: `Hi ashraful2430/N-tier-application! You've successfully authenticated, but GitHub does not provide shell access.` — that message means the deploy key works. Type `yes` at the first-connection host-authenticity prompt.
 
 Clone:
 
@@ -243,6 +260,11 @@ cd /opt/devops-launchboard
 git clone git@github.com:ashraful2430/N-tier-application.git app-source
 cd app-source
 ```
+
+Command explanation:
+
+- `/opt` is the conventional Linux home for add-on software, but it is owned by root — hence `sudo mkdir` to create the folder and `sudo chown -R ubuntu:ubuntu` to hand it to your user, so every later `git` and `terraform` command runs **without** sudo.
+- `git clone git@github.com:...` uses the SSH URL (not HTTPS), which is what routes through the deploy key you just configured. The final `app-source` argument names the target folder — every later step in this guide assumes the repository lives at `/opt/devops-launchboard/app-source`.
 
 Reference:
 
@@ -368,6 +390,13 @@ Line explanation:
 - A `data` block **reads** existing infrastructure instead of creating it. `resource` creates; `data` looks up.
 - `data "aws_vpc" "default"` finds the default VPC that AWS creates in every region. The security group below needs a VPC ID, and using the default VPC keeps this lab simple (the production lab builds its own VPC).
 - `data "aws_ssm_parameter" "ubuntu_ami"` reads a public parameter that Canonical (the Ubuntu publisher) maintains in AWS Systems Manager. It always contains the **current** Ubuntu 24.04 AMI ID for your region. This is better than hardcoding an AMI ID for two reasons: AMI IDs are different in every region (a hardcoded ID breaks the moment someone changes `aws_region`), and Canonical rotates AMIs when patching, so the parameter always points at a patched image.
+- Common question: *"my workstation runs a newer Ubuntu — is `24.04` in this path a problem?"* No. This parameter selects the OS for the **instance Terraform creates**, which is completely independent of what your workstation runs — they never need to match. The guide pins 24.04 because it is an LTS release that every third-party apt repository (Docker especially) is guaranteed to support. If you want the instance on a different LTS, list what Canonical publishes and swap the version segment of the path:
+
+```bash
+aws ssm get-parameters-by-path \
+  --path /aws/service/canonical/ubuntu/server \
+  --recursive --query 'Parameters[].Name' --output text | tr '\t' '\n' | cut -d/ -f6 | sort -u
+```
 
 ### security.tf
 
