@@ -103,6 +103,9 @@ deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-basics/
 +-- user-data.sh.tpl            (first-boot script template)
 +-- outputs.tf                  (values printed after apply)
 +-- terraform.tfvars.example    (example variable values)
++-- Dockerfile.backend          (FastAPI image, built in Step 5)
++-- Dockerfile.frontend         (React/Nginx image, built in Step 5)
++-- nginx-frontend.conf         (Nginx config baked into the frontend image)
 +-- README.md
 ```
 
@@ -278,11 +281,11 @@ Reference:
 - Generate an SSH key: https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent
 - GitHub deploy keys: https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys#deploy-keys
 
-## Step 5: Build And Push The App Images To Docker Hub
+## Step 5: Create The Dockerfiles, Build, And Push To Docker Hub
 
-The server will not build anything — it pulls ready images. So the images must exist first. You build them here, on the workstation, using the Phase 4 Dockerfiles from the repository you just cloned, and publish them to your Docker Hub account.
+The server will not build anything — it pulls ready images. So the images must exist first. In this step you install Docker on the workstation, log in to Docker Hub, **write the Dockerfiles yourself**, build both images, and publish them.
 
-Install Docker on the workstation:
+### Install Docker on the workstation
 
 ```bash
 cd ~
@@ -305,15 +308,212 @@ docker login -u YOUR_DOCKERHUB_USERNAME
 
 For the password, use a **personal access token**, not your account password: hub.docker.com > your avatar > Account settings > Personal access tokens > Generate new token (Read & Write scope is enough). Tokens can be revoked individually and never unlock your whole account.
 
-Build and push both images:
+### Create the build files
+
+The build files live inside this phase's folder so the lab is self-contained. First the root `.dockerignore` (skip if your clone already has one):
+
+```bash
+cd /opt/devops-launchboard/app-source
+vim .dockerignore
+```
+
+Paste:
+
+```dockerignore
+.git
+.github
+.venv
+backend/.venv
+frontend/node_modules
+frontend/dist
+node_modules
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.env
+.env.*
+deployment/phase-04-docker-compose/.env
+```
+
+Without it, `COPY` instructions would drag `.git`, virtualenvs, and `node_modules` into the build context — slow builds and bloated images.
+
+### Dockerfile.backend
+
+```bash
+vim deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-basics/Dockerfile.backend
+```
+
+Paste:
+
+```dockerfile
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
+WORKDIR /app
+
+RUN python -m venv /opt/venv
+
+COPY backend/pyproject.toml backend/alembic.ini ./
+COPY backend/app ./app
+COPY backend/alembic ./alembic
+
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir .
+
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+ENV APP_ENV=production
+
+RUN groupadd --system --gid 10001 app \
+    && useradd --system \
+       --uid 10001 \
+       --gid 10001 \
+       --home-dir /app \
+       --shell /usr/sbin/nologin app
+
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /app /app
+
+RUN chown -R app:app /app /opt/venv
+
+USER app
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()" || exit 1
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+```
+
+Line explanation (the full deep-dive lives in Phase 3, where these builds were first developed):
+
+- Two `FROM` lines = a **multi-stage build**: the `builder` stage installs dependencies into a virtualenv; the `runtime` stage copies only that virtualenv and the app code. Compilers and caches never reach the final image.
+- `groupadd/useradd` with pinned UID/GID 10001 and `USER app` make the container run as a non-root user — if the app is ever compromised, the attacker is not root.
+- `HEALTHCHECK` polls `/health`; Compose uses this status to order startup on the server.
+- `CMD` starts Uvicorn with `--proxy-headers` so it trusts the `X-Forwarded-*` headers the frontend Nginx adds.
+
+### Dockerfile.frontend
+
+```bash
+vim deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-basics/Dockerfile.frontend
+```
+
+Paste:
+
+```dockerfile
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+ARG VITE_API_URL=""
+ENV VITE_API_URL=${VITE_API_URL}
+
+COPY frontend/package*.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
+
+COPY deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-basics/nginx-frontend.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+- The `builder` stage compiles the React app with Node; the `runtime` stage is just Nginx serving the compiled files — Node never ships to production.
+- `nginxinc/nginx-unprivileged` runs as a non-root user on port 8080.
+- The `COPY deployment/...` line installs this phase's own Nginx config (created next).
+
+### nginx-frontend.conf
+
+```bash
+vim deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-basics/nginx-frontend.conf
+```
+
+Paste:
+
+```nginx
+server {
+    listen 8080;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    client_max_body_size 10M;
+
+    location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "ok";
+    }
+
+    location /api/ {
+        proxy_pass http://launchboard-backend:8000/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /health {
+        proxy_pass http://launchboard-backend:8000/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /ready {
+        proxy_pass http://launchboard-backend:8000/ready;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+- `location = /healthz` answers health checks without touching the backend.
+- `/api/`, `/health`, and `/ready` are proxied to `http://launchboard-backend:8000` — on the server, that name resolves to the backend **container** through Compose's network DNS.
+- `try_files ... /index.html` lets React Router handle client-side routes.
+
+### Build and push
 
 ```bash
 cd /opt/devops-launchboard/app-source
 
-docker build -f deployment/phase-04-docker-compose/Dockerfile.backend \
+docker build -f deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-basics/Dockerfile.backend \
   -t YOUR_DOCKERHUB_USERNAME/launchboard-backend:phase-9 .
 
-docker build -f deployment/phase-04-docker-compose/Dockerfile.frontend \
+docker build -f deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-basics/Dockerfile.frontend \
   --build-arg VITE_API_URL= \
   -t YOUR_DOCKERHUB_USERNAME/launchboard-frontend:phase-9 .
 
@@ -324,7 +524,7 @@ docker push YOUR_DOCKERHUB_USERNAME/launchboard-frontend:phase-9
 Command explanation:
 
 - The image name format is `USERNAME/REPOSITORY:TAG` — for Docker Hub, the username prefix *is* the registry address (compare with ECR's `ACCOUNT.dkr.ecr.REGION.amazonaws.com/...` in the production lab).
-- `-f deployment/phase-04-docker-compose/Dockerfile.backend` reuses the proven Phase 4 build files; the trailing `.` makes the repository root the build context, which those Dockerfiles expect.
+- `-f` points at the Dockerfile you just wrote; the trailing `.` makes the repository root the build context, which the `COPY backend/...` / `COPY frontend/...` instructions expect.
 - `--build-arg VITE_API_URL=` (empty) makes the frontend call the API with relative `/api` paths, proxied by its own Nginx.
 - `docker push` uploads the layers. On a free Docker Hub account these repositories are **public** — anyone can pull them. That is what lets the app server pull anonymously with zero credentials. (Note what that implies: the *built app* inside the images is public even though your source repository is private. Fine for a course app; a company would use a private registry — which is exactly the production lab's ECR setup.)
 
@@ -334,6 +534,7 @@ Reference:
 
 - Docker Hub quickstart: https://docs.docker.com/docker-hub/quickstart/
 - Docker Hub access tokens: https://docs.docker.com/security/access-tokens/
+- Dockerfile reference: https://docs.docker.com/reference/dockerfile/
 
 ## Step 6: Create The Terraform Files
 

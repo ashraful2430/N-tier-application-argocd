@@ -5010,7 +5010,7 @@ argocd app create launchboard \
 Command explanation:
 
 - `argocd app create launchboard` creates an ArgoCD Application named `launchboard`.
-- `--repo` is the Git repository URL. HTTPS is used here so ArgoCD can read a public repository without an SSH key. If your repository is private, you need to add credentials to ArgoCD first.
+- `--repo` is the Git repository URL. HTTPS is used here so ArgoCD can read a **public** repository without an SSH key. If your repository is private, you have two options: register credentials first with `argocd repo add https://github.com/YOUR_USER/YOUR_REPO.git --username YOUR_USER --password YOUR_FINE_GRAINED_PAT` (read-only Contents permission is enough), or use a separate public practice repository that contains the same `deployment/phase-6-kubeadm/k8s` folder and push your GitOps test commits there instead. Either way, the repository ArgoCD watches must be the one you push the Step 7 change to.
 - `--path deployment/phase-6-kubeadm/k8s` is the folder inside the repository containing the Kubernetes manifests. ArgoCD reads the `kustomization.yaml` in this folder and renders all listed resources.
 - `--dest-server https://kubernetes.default.svc` tells ArgoCD to deploy to the cluster it is running inside. `kubernetes.default.svc` is the DNS name of the Kubernetes API server as seen from inside the cluster.
 - `--dest-namespace devops-launchboard` is the namespace where resources are deployed.
