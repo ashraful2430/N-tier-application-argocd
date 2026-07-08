@@ -122,7 +122,12 @@ Create one Ubuntu EC2 workstation from the AWS Console (this is the last instanc
 | Key Pair | `devops-launchboard-key` |
 | Security Group | SSH port 22, your IP only |
 
-The workstation is `t3.medium` (4 GB RAM) because it is where the app images are **built** in Step 5 — the frontend's `npm run build` needs the memory. The app server Terraform creates only pulls images, so it stays a cheaper `t3.small`.
+Field explanation:
+
+- **AMI** is the operating system image the instance boots from — Ubuntu Server 24.04 is a long-term-support release that every tool in this course supports.
+- **Instance Type** `t3.medium` gives 2 vCPUs and 4 GB RAM. The workstation needs that much because it is where the app images are **built** in Step 5 — the frontend's `npm run build` is memory-hungry. The app server Terraform creates later only *pulls* images, so it stays a cheaper `t3.small`.
+- **Key Pair** is the SSH credential: AWS keeps the public half and puts it on the instance; you download the private half as a `.pem` file exactly once. If you do not have one yet, create it in EC2 Console > Key Pairs and keep the file safe.
+- **Security Group** is the instance's firewall. "SSH port 22, your IP only" means nobody else on the internet can even attempt to log in.
 
 SSH in:
 
@@ -130,6 +135,11 @@ SSH in:
 chmod 400 devops-launchboard-key.pem
 ssh -i devops-launchboard-key.pem ubuntu@YOUR_WORKSTATION_PUBLIC_IP
 ```
+
+Command explanation:
+
+- `chmod 400 devops-launchboard-key.pem` makes the key file readable by you only. SSH refuses to use a private key with looser permissions (you would see "UNPROTECTED PRIVATE KEY FILE"), so this is required, not cosmetic.
+- `ssh -i devops-launchboard-key.pem ubuntu@...` connects using that key (`-i` = identity file) as the user `ubuntu`, the default account on Ubuntu AMIs. Always include the `ubuntu@` part — without it, SSH tries your local machine's username, which usually fails confusingly. Find the public IP in EC2 Console > Instances > select the instance.
 
 Reference:
 
@@ -144,6 +154,11 @@ sudo apt update
 sudo apt upgrade -y
 sudo apt install -y git curl wget vim unzip jq ca-certificates gnupg lsb-release
 ```
+
+Command explanation:
+
+- `sudo apt update` refreshes the package index (what versions exist); `sudo apt upgrade -y` installs available updates (`-y` answers "yes" for you). Standard first ritual on any fresh server.
+- The installed tools, and why each is here: `git` (clone the repository), `curl`/`wget` (download installers), `vim` (create every file in this guide), `unzip` (the AWS CLI ships as a zip), `jq` (pretty-print the JSON the app and AWS return), `ca-certificates`/`gnupg`/`lsb-release` (verify HTTPS downloads and signed apt repositories — the Terraform and Docker installs below rely on them).
 
 AWS CLI:
 
