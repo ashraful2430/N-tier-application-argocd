@@ -299,14 +299,24 @@ sudo usermod -aG docker ubuntu
 exit
 ```
 
-SSH back in (the group change needs a new session), then log in to Docker Hub:
+SSH back in (the group change needs a new session):
 
 ```bash
 ssh -i devops-launchboard-key.pem ubuntu@YOUR_WORKSTATION_PUBLIC_IP
+docker info
+```
+
+### Log in to Docker Hub
+
+The push at the end of this step uploads to *your* Docker Hub account, so Docker must be authenticated before then:
+
+```bash
 docker login -u YOUR_DOCKERHUB_USERNAME
 ```
 
 For the password, use a **personal access token**, not your account password: hub.docker.com > your avatar > Account settings > Personal access tokens > Generate new token (Read & Write scope is enough). Tokens can be revoked individually and never unlock your whole account.
+
+Expected: `Login Succeeded`. The login is saved to `~/.docker/config.json` on the workstation, so it survives SSH reconnects — you will not need to repeat it.
 
 ### Create the build files
 
@@ -398,12 +408,32 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 ```
 
-Line explanation (the full deep-dive lives in Phase 3, where these builds were first developed):
+Line-by-line explanation:
 
-- Two `FROM` lines = a **multi-stage build**: the `builder` stage installs dependencies into a virtualenv; the `runtime` stage copies only that virtualenv and the app code. Compilers and caches never reach the final image.
-- `groupadd/useradd` with pinned UID/GID 10001 and `USER app` make the container run as a non-root user — if the app is ever compromised, the attacker is not root.
-- `HEALTHCHECK` polls `/health`; Compose uses this status to order startup on the server.
-- `CMD` starts Uvicorn with `--proxy-headers` so it trusts the `X-Forwarded-*` headers the frontend Nginx adds.
+**The builder stage (first half):**
+
+- `FROM python:3.12-slim AS builder` — every Dockerfile starts `FROM` a base image. `python:3.12-slim` is the official Python image, "slim" meaning a smaller Debian with just enough to run Python. `AS builder` gives this stage a name, because this file has **two** `FROM` lines — a "multi-stage build." Think of the first stage as a workshop: it has the tools to install and compile things, but the workshop itself is thrown away at the end. Only the finished product moves to the second stage.
+- `ENV PYTHONDONTWRITEBYTECODE=1` — stops Python writing `.pyc` cache files. They just bloat the image.
+- `ENV PYTHONUNBUFFERED=1` — makes Python print output immediately instead of buffering it, so `docker logs` shows log lines in real time.
+- `ENV VIRTUAL_ENV=/opt/venv` and `ENV PATH="/opt/venv/bin:${PATH}"` — decide where the Python virtual environment will live and put its `bin` folder first on the PATH, so every later `pip` and `python` command automatically uses the venv. A fixed, known path matters because the venv gets copied to the second stage — both stages must agree on where it is.
+- `WORKDIR /app` — sets the working directory for everything below (creates it if missing). Like a permanent `cd /app`.
+- `RUN python -m venv /opt/venv` — creates the virtual environment: an isolated folder holding the app's Python packages, separate from the system Python.
+- `COPY backend/pyproject.toml backend/alembic.ini ./` — copies the **dependency definition files** into the image, before the source code. This ordering is a deliberate caching trick: Docker caches each instruction as a layer and reuses cached layers when their inputs have not changed. Dependencies change rarely; source code changes constantly. Copying dependency files first means "your code changed but dependencies did not" rebuilds skip the slow `pip install` entirely.
+- `COPY backend/app ./app` and `COPY backend/alembic ./alembic` — now the actual source: the FastAPI application code, and the Alembic database migration scripts (the server runs `alembic upgrade head` from this same image).
+- `RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir .` — upgrades pip, then installs the app and everything `pyproject.toml` declares, into the venv. `--no-cache-dir` skips pip's download cache — useless weight inside an image.
+
+**The runtime stage (second half):**
+
+- `FROM python:3.12-slim AS runtime` — a **fresh, clean** image. Nothing from the builder exists here yet; that is the point. Build leftovers, caches, and compilers stay behind.
+- The same four `ENV` lines are repeated because a new stage starts from zero — environment variables do not carry over.
+- `ENV APP_ENV=production` — a default the app reads to enable production behavior; Compose can override it.
+- `RUN groupadd --system --gid 10001 app && useradd --system --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin app` — creates a dedicated user and group named `app` with **fixed numeric IDs** (10001). By default containers run as **root**, so a compromised app means a root shell in the container. Running as a locked-down user (`--shell /usr/sbin/nologin` means it cannot even log in) shrinks that blast radius. The numbers are pinned instead of auto-assigned so later phases (Kubernetes) can verify "this is not root" numerically.
+- `COPY --from=builder /opt/venv /opt/venv` and `COPY --from=builder /app /app` — the magic of multi-stage: copy **only** the installed venv and the app code out of the builder. Everything else from stage one is discarded, which is why the final image is small.
+- `RUN chown -R app:app /app /opt/venv` — hands ownership of those folders to the `app` user, so the process can read its own files after the next line.
+- `USER app` — from here on (including at runtime), everything runs as `app`, not root.
+- `EXPOSE 8000` — documentation that the app listens on port 8000. It does not open anything by itself; Compose does the actual wiring.
+- `HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD python -c "...urlopen('http://127.0.0.1:8000/health'...)"` — teaches Docker how to ask the container "are you OK?": every 30 seconds (`--interval`), fetch the app's own `/health` endpoint, wait up to 5 seconds for an answer (`--timeout`), do not count failures during the first 20 seconds of startup (`--start-period`), and only mark the container `unhealthy` after 3 consecutive failures (`--retries`). This status is exactly what the compose file's `depends_on: condition: service_healthy` waits for on the server.
+- `CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]` — the command the container runs when it starts: Uvicorn serving the FastAPI app. `--host 0.0.0.0` listens on all interfaces (required in containers — `127.0.0.1` would be reachable only from inside the container itself). `--proxy-headers` makes Uvicorn trust the `X-Forwarded-*` headers added by the Nginx in front of it, so the app sees real client IPs instead of Nginx's.
 
 ### Dockerfile.frontend
 
@@ -440,9 +470,24 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 CMD ["nginx", "-g", "daemon off;"]
 ```
 
-- The `builder` stage compiles the React app with Node; the `runtime` stage is just Nginx serving the compiled files — Node never ships to production.
-- `nginxinc/nginx-unprivileged` runs as a non-root user on port 8080.
-- The `COPY deployment/...` line installs this phase's own Nginx config (created next).
+Line-by-line explanation:
+
+**The builder stage:**
+
+- `FROM node:22-alpine AS builder` — Node.js 22 on Alpine Linux (a tiny distribution). Node is needed only to **compile** the React app into static files; it will not exist in the final image at all.
+- `WORKDIR /app` — working directory for the build.
+- `ARG VITE_API_URL=""` and `ENV VITE_API_URL=${VITE_API_URL}` — `ARG` declares a value you can pass at build time with `--build-arg`; the `ENV` line makes it visible to the build. Vite bakes this value into the compiled JavaScript. You pass it as **empty** in the build command, which makes the frontend call the API with relative paths like `/api/summary` — and relative paths are exactly what the Nginx proxy (next file) handles. Bake in a full URL instead and the frontend would bypass the proxy.
+- `COPY frontend/package*.json ./` then `RUN npm ci` — the same dependency-caching trick as the backend: copy only `package.json` and `package-lock.json` first, install, and Docker reuses this slow layer as long as dependencies are unchanged. `npm ci` ("clean install") installs *exactly* what the lockfile says — reproducible builds, unlike plain `npm install` which may resolve newer versions.
+- `COPY frontend/ ./` then `RUN npm run build` — copy the source and compile. The result is a `dist/` folder of plain HTML, CSS, and JavaScript — no server code, just files.
+
+**The runtime stage:**
+
+- `FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime` — the official **unprivileged** Nginx image: it runs as a non-root user (UID 101) and listens on port 8080, because ports below 1024 require root. Same security idea as the backend's `app` user, prebuilt into the image.
+- `COPY deployment/phase-09-infrastructure-as-code-terraform/phase-09-terraform-basics/nginx-frontend.conf /etc/nginx/conf.d/default.conf` — installs the Nginx config you write in the next section as the default site. The path starts with `deployment/...` because the build context (the trailing `.` in the build command) is the repository root.
+- `COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html` — pulls the compiled `dist/` folder out of the builder stage into Nginx's web root, owned by UID/GID 101 (the nginx user) so the server can read it. Node, `node_modules`, and the source never reach this image — that is why it is ~50 MB instead of ~1 GB.
+- `EXPOSE 8080` — documents the non-root port.
+- `HEALTHCHECK ... CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1` — same idea as the backend's health check, using `wget` (present in Alpine) to hit the `/healthz` endpoint the Nginx config defines. `-qO-` means quiet, output to nowhere — only the success/failure matters.
+- `CMD ["nginx", "-g", "daemon off;"]` — starts Nginx in the foreground. Containers live exactly as long as their main process, so a daemonized (background) Nginx would end the container instantly.
 
 ### nginx-frontend.conf
 
@@ -501,11 +546,20 @@ server {
 }
 ```
 
-- `location = /healthz` answers health checks without touching the backend.
-- `/api/`, `/health`, and `/ready` are proxied to `http://launchboard-backend:8000` — on the server, that name resolves to the backend **container** through Compose's network DNS.
-- `try_files ... /index.html` lets React Router handle client-side routes.
+Line-by-line explanation:
+
+- `listen 8080;` — the port Nginx listens on inside the container. 8080 (not 80) because the unprivileged image runs as a non-root user, and non-root processes cannot bind ports below 1024. The compose file maps the server's real port 80 to this 8080.
+- `server_name _;` — the underscore is a catch-all: answer regardless of what hostname the request asked for. Fine here because this Nginx only ever receives traffic meant for it.
+- `root /usr/share/nginx/html;` and `index index.html;` — where the compiled React files live (the folder the Dockerfile copied `dist/` into), and which file to serve when a directory is requested.
+- `client_max_body_size 10M;` — raises the upload limit from Nginx's stingy 1 MB default, so API requests with larger bodies do not get rejected with HTTP 413 before the backend ever sees them.
+- `location = /healthz { ... return 200 "ok"; }` — a health endpoint that Nginx answers **itself**, instantly, without involving the backend. `access_log off` keeps the every-30-seconds health checks from flooding the logs. The `=` means exact match — only `/healthz`, nothing else. This is what the image's HEALTHCHECK curls.
+- `location /api/ { proxy_pass http://launchboard-backend:8000/api/; ... }` — the reverse proxy: any browser request starting with `/api/` is forwarded to the backend. `launchboard-backend` is not a real DNS name on the internet — it is the backend **container's name**, which Docker's internal DNS resolves because both containers share the compose network. The `proxy_set_header` lines pass the original request details along: `Host` (which hostname was asked for), `X-Real-IP` and `X-Forwarded-For` (the actual client's IP — otherwise the backend would think every request came from Nginx), and `X-Forwarded-Proto` (http or https). These headers are exactly what Uvicorn's `--proxy-headers` flag was told to trust.
+- `location = /health { ... }` and `location = /ready { ... }` — the backend's own health and readiness endpoints, proxied through so you can check the backend from outside (`curl http://SERVER_IP/health`) without exposing port 8000 to the world.
+- `location / { try_files $uri $uri/ /index.html; }` — the single-page-app fallback, and the subtlest line here: React Router handles routes like `/projects/42` **in the browser** — no such file exists on disk. `try_files` says: look for a real file matching the URL (`$uri`), then a directory (`$uri/`), and if neither exists, serve `index.html` — which loads the React app, which then reads the URL and renders the right page. Without this line, refreshing the browser on any non-home route would return 404.
 
 ### Build and push
+
+(You logged in to Docker Hub earlier in this step; if `docker push` below fails with `denied: requested access to the resource is denied`, either the login is missing — re-run `docker login -u YOUR_DOCKERHUB_USERNAME` — or the image name's username prefix does not match the account you logged in as.)
 
 ```bash
 cd /opt/devops-launchboard/app-source
