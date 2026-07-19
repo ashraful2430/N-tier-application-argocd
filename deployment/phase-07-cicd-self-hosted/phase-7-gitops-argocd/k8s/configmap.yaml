@@ -6,7 +6,7 @@ metadata:
 data:
   APP_NAME: DevOps LaunchBoard API
   APP_ENV: production
-  CORS_ORIGINS: http://YOUR_ALB_DNS_NAME
+  CORS_ORIGINS: http://launchboard-phase-7-gitops-1113567141.us-east-1.elb.amazonaws.com
   SEED_DEMO_DATA: "true"
   POSTGRES_DB: launchboard
   POSTGRES_USER: launchboard_user
