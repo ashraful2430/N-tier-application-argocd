@@ -389,7 +389,7 @@ Reference:
 Run:
 
 ```bash
-sudo useradd --system --create-home --home-dir /opt/devops-launchboard --shell /bin/bash launchboard || true
+sudo useradd --system --create-home --home-dir /opt/devops-launchboard --shell /usr/sbin/nologin launchboard || true
 sudo mkdir -p /opt/devops-launchboard/app-source
 sudo mkdir -p /etc/devops-launchboard
 sudo mkdir -p /var/www/devops-launchboard
@@ -401,12 +401,12 @@ sudo chown -R www-data:www-data /var/www/devops-launchboard
 
 Command explanation:
 
-- `sudo useradd --system --create-home --home-dir /opt/devops-launchboard --shell /bin/bash launchboard || true`
+- `sudo useradd --system --create-home --home-dir /opt/devops-launchboard --shell /usr/sbin/nologin launchboard || true`
   - `useradd` creates a new Linux user account.
   - `--system` marks this as a system user, not a regular login user. System users have lower user IDs and are intended for running services, not for human logins.
   - `--create-home` creates a home directory for the user so the process has a place to store its files.
   - `--home-dir /opt/devops-launchboard` sets that home directory to `/opt/devops-launchboard`. The `/opt` folder is the standard Linux location for optional, self-contained application software.
-  - `--shell /bin/bash` gives the user a working shell. This is needed so that systemd can start processes as this user.
+  - `--shell /usr/sbin/nologin` blocks interactive logins for this user: nobody can `ssh` in or `su` to it and get a shell. This is the production norm for service accounts — systemd does **not** need the user to have a shell to run processes as it (a common misconception), so the account can be fully locked down. If you ever need to run a one-off command as this user for debugging, `sudo -u launchboard command` still works.
   - `launchboard` is the name of the user being created.
   - `|| true` prevents the command from failing if the user already exists. This makes the command safe to run more than once.
 
@@ -440,6 +440,8 @@ Why this step exists:
 
 The app should not run as root. A dedicated `launchboard` user limits what the backend process can access. If the backend is ever compromised, the attacker only has the permissions of the `launchboard` user, not full root access to the server.
 
+Where this user actually gets used — so you can see the payoff coming: **Step 16's systemd service file** declares `User=launchboard` and `Group=launchboard`, which is the moment the backend process starts running as this user instead of root. Everything in this step is preparation for that one line: the config folder is owned by `launchboard` so the service can read its environment file, and the source permissions later get `go+rX` so it can execute the code. Three different users end up with three different jobs on this server: `ubuntu` (you — deploys and edits files), `launchboard` (runs the backend), `www-data` (Nginx serves the frontend). None of them is root, and none can touch the others' responsibilities.
+
 Folder purpose:
 
 | Folder | Purpose |
@@ -447,6 +449,166 @@ Folder purpose:
 | `/opt/devops-launchboard/app-source` | Application source code |
 | `/etc/devops-launchboard` | Runtime environment files |
 | `/var/www/devops-launchboard` | Built frontend static files |
+
+### What This User Does — And Does NOT — Protect Against
+
+A common and important question: *"if someone steals my SSH key and logs in as `ubuntu`, they can corrupt everything — so what did the `launchboard` user actually buy us?"*
+
+The answer is that a server has **two doors**, and each door needs its own defense:
+
+| | Door 1: the application (port 80) | Door 2: SSH (port 22) |
+| --- | --- | --- |
+| Who can knock | **The entire internet** | Only your IP (the security group) |
+| An attack looks like | A bug in the backend or one of its dependencies lets an attacker run commands — *as whatever user the app runs as* | Your `.pem` file is stolen or leaked |
+| What limits the damage | **The `launchboard` user**: no sudo, no login shell, cannot write the source code, cannot read `ubuntu`'s SSH keys, cannot touch the database files | Nothing on this table's left side helps here |
+
+The service user guards door 1 — and door 1 is the dangerous one, because the whole internet can knock on it, while door 2 only accepts connections from your IP with your key. If the backend is ever exploited, the attacker lands in a locked room instead of owning the server.
+
+But you are right to worry about door 2: on Ubuntu AMIs, the `ubuntu` user has **passwordless sudo** (see for yourself: `sudo cat /etc/sudoers.d/90-cloud-init-users`) — whoever holds it effectively *is* root, and the `launchboard` user is irrelevant to them. Door 2 has its own defense stack, parts of which you have already built and parts of which come later in the track:
+
+- **Key-only authentication** — Ubuntu AMIs disable password login entirely; there is nothing to brute-force. (Already true.)
+- **Security group: port 22 from your IP only** — the door is invisible to everyone else. (You did this in Step 1.)
+- **Named per-human accounts instead of the shared `ubuntu`** — so access is *attributable* and *individually revocable*. (Next section, optional.)
+- **No SSH at all** — the production endgame: Phase 9's Terraform production lab runs servers with no SSH port and no key pair, accessed only through AWS SSM Session Manager, where every session is IAM-authenticated and logged.
+
+### Optional: Named Admin Users Instead Of The Shared `ubuntu`
+
+Real companies do not share one `ubuntu` login among five engineers, for two reasons: the logs would only ever say "ubuntu did it" (no attribution), and offboarding someone would mean rotating a key everyone shares. Instead, each human gets a named account with their own key and sudo rights. Try it — create an account for yourself:
+
+```bash
+sudo adduser --disabled-password --gecos "" ashraful
+sudo usermod -aG sudo ashraful
+```
+
+Command explanation:
+
+- `adduser --disabled-password` creates the user with password login switched off — like the AMI's `ubuntu` user, this account will accept SSH keys only. `--gecos ""` skips the interactive full-name/phone prompts.
+- `usermod -aG sudo ashraful` adds the user to the `sudo` group (`-a` = append, without removing other groups). Unlike `ubuntu`'s cloud-init special case, this user will be asked for a password on `sudo` — and has none — so grant passwordless sudo the explicit way real teams do, with a drop-in file: `echo 'ashraful ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/ashraful` (in stricter companies, this line lists specific commands instead of `ALL`).
+
+Next, the account needs a key it will accept. First understand the file involved: `~/.ssh/authorized_keys` is a plain text file listing **public keys**, one per line — SSH's rule is "any private key matching a line in this file may log in as this user." The `ubuntu` account already has one: when you launched the instance and selected `devops-launchboard-key`, **AWS wrote that key pair's public half into `/home/ubuntu/.ssh/authorized_keys` for you**. Look at it:
+
+```bash
+sudo cat /home/ubuntu/.ssh/authorized_keys
+```
+
+One line, starting `ssh-ed25519 ...` or `ssh-rsa ...`, ending with the key name — that is the public half of the `.pem` on your laptop. Nothing secret is in this file; public keys are safe to show.
+
+There are two ways to give `ashraful` a key — the lab shortcut and the real-team way:
+
+**Option A — lab shortcut: reuse the same key.** Copy `ubuntu`'s file:
+
+```bash
+sudo mkdir -p /home/ashraful/.ssh
+sudo cp /home/ubuntu/.ssh/authorized_keys /home/ashraful/.ssh/authorized_keys
+sudo chown -R ashraful:ashraful /home/ashraful/.ssh
+sudo chmod 700 /home/ashraful/.ssh
+sudo chmod 600 /home/ashraful/.ssh/authorized_keys
+```
+
+Command explanation:
+
+- No key is *created* here — the existing public key line is copied, so `ashraful` now accepts **the same `devops-launchboard-key.pem`** that `ubuntu` does. Same key, different username, different account.
+- The `chown`/`chmod` lines matter: the folder must be owned by `ashraful` (SSH rejects keys it cannot verify belong to the user) with `700`/`600` permissions (SSH refuses loose ones).
+- Be clear about what this does and does not achieve: you get *account* attribution in the logs, but both accounts trust one shared private key — which is exactly what real teams avoid. Good enough to learn the mechanics; Option B is the real pattern.
+
+**Option B — real-team way: a personal key per human.** Each person generates their own pair on their own computer and hands over only the public half. Follow these numbered steps exactly — steps 1-3 happen on **your Windows laptop**, steps 4-5 happen on **the server** (in your existing `ubuntu` SSH session).
+
+**Step B1 — on your laptop: open PowerShell and create the `.ssh` folder.** Windows 10 and 11 have the OpenSSH client built in (`ssh` and `ssh-keygen` work in PowerShell with no installation), but the `.ssh` folder does not exist until you create it — and `ssh-keygen` fails if it is missing:
+
+```powershell
+mkdir $HOME\.ssh -Force
+```
+
+(`$HOME` is your user folder, e.g. `C:\Users\Ashraful`. `-Force` makes the command safe to re-run if the folder already exists.)
+
+**Step B2 — on your laptop: generate your personal key pair:**
+
+```powershell
+ssh-keygen -t ed25519 -C "ashraful-laptop" -f $HOME\.ssh\ashraful_admin_key
+```
+
+Press Enter twice at the passphrase prompts (or set a passphrase if you want the key itself password-protected). This creates two files in `C:\Users\YOU\.ssh\`: `ashraful_admin_key` (private — never leaves this laptop, never gets pasted anywhere) and `ashraful_admin_key.pub` (public — the half you hand over).
+
+**Step B3 — on your laptop: display the public key and copy it:**
+
+```powershell
+type $HOME\.ssh\ashraful_admin_key.pub
+```
+
+The output is **one single long line** that looks like this (yours will differ):
+
+```text
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFa9k2example1234exampleexampleexample5678 ashraful-laptop
+```
+
+Select the whole line and copy it. It must stay one line — no line breaks in the middle.
+
+**Step B4 — on the server (your `ubuntu` SSH session): paste it into the new account's `authorized_keys`.** Replace the text between the quotes with the line you copied:
+
+```bash
+sudo mkdir -p /home/ashraful/.ssh
+echo "PASTE_THE_ONE_LINE_HERE" | sudo tee -a /home/ashraful/.ssh/authorized_keys
+```
+
+Filled in, the command looks like this:
+
+```text
+echo "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFa9k2example1234exampleexampleexample5678 ashraful-laptop" | sudo tee -a /home/ashraful/.ssh/authorized_keys
+```
+
+`tee -a` appends (`-a`) rather than overwrites, so several people's keys can coexist — one line per person. Revoking someone later means deleting their line.
+
+**Step B5 — on the server: fix ownership and permissions** (SSH refuses keys in folders the user does not own, or with loose permissions):
+
+```bash
+sudo chown -R ashraful:ashraful /home/ashraful/.ssh
+sudo chmod 700 /home/ashraful/.ssh
+sudo chmod 600 /home/ashraful/.ssh/authorized_keys
+```
+
+**Step B6 — on your laptop: test the login from a NEW PowerShell window** (keep the `ubuntu` session open until this works):
+
+```powershell
+ssh -i $HOME\.ssh\ashraful_admin_key ashraful@YOUR_EC2_PUBLIC_IP
+```
+
+Notes for other tools: in **Git Bash**, the same commands work with `~/.ssh/` instead of `$HOME\.ssh\`. In **MobaXterm**, easiest is to run steps B1-B3 in its local terminal (it is bash-like, use `~/.ssh/`), or generate with MobaKeyGen and copy the OpenSSH-format public key it displays; for the session, point "Use private key" at your `ashraful_admin_key` file.
+
+- `tee -a` appends (`-a`) rather than overwrites, so multiple people's keys can coexist — one line each. Removing a person's access later means deleting their line (or their whole account).
+- The private key (`~/.ssh/ashraful_admin_key`, no `.pub`) never leaves the laptop. This is the difference from Option A: nobody shares private keys, so possession of a key identifies a person.
+
+**Who creates the key, and where?** Neither option creates a key as `ubuntu`. In Option A the pair was created **in the AWS Console before the server existed** (when you made `devops-launchboard-key`); the server-side commands only copy a text line. In Option B the pair is created **on your laptop, by you** — the server-side command only pastes the public line. The general rule: **a key pair is generated wherever the *connecting* side lives, and only the public half travels to the *accepting* side.** `ubuntu`'s job in both options is just editing the lock's list of accepted keys. This is also why Step 6 is *not* a contradiction even though there you run `ssh-keygen` on the server as `ubuntu`: for the GitHub deploy key, the **server is the connecting side** (it clones *from* GitHub), so the key lives on the server and its public half travels to GitHub. Same rule, opposite direction.
+
+Now test it — **from a NEW terminal, keeping your current `ubuntu` session open** (never lock the door you came through until the new one is proven). Use whichever key matches the option you chose:
+
+```bash
+# Option A - the same shared key:
+ssh -i devops-launchboard-key.pem ashraful@YOUR_EC2_PUBLIC_IP
+
+# Option B - your personal key (same command as Step B6):
+ssh -i $HOME\.ssh\ashraful_admin_key ashraful@YOUR_EC2_PUBLIC_IP
+
+sudo whoami        # expected: root
+```
+
+Only after that works, disable SSH for the shared account — reversibly, by moving its key file aside rather than deleting anything:
+
+```bash
+sudo mv /home/ubuntu/.ssh/authorized_keys /home/ubuntu/.ssh/authorized_keys.disabled
+```
+
+(Note: `usermod --lock ubuntu` would NOT do this job — locking only disables the *password*, and key-based SSH ignores passwords entirely. Moving `authorized_keys` is what actually closes key login. To undo: move the file back via your `ashraful` session.)
+
+The attribution payoff — see exactly who did what:
+
+```bash
+sudo grep -E "session opened|sudo" /var/log/auth.log | tail -10
+```
+
+Every login and every `sudo` command now carries a username. When someone leaves the team, you delete *their* account (`sudo deluser ashraful`) and nothing else changes — no shared key to rotate across every server.
+
+Where this goes in real companies: managing named users across 50 servers by hand does not scale, so this exact task — create users, install keys, grant sudo, remove leavers — is one of the classic jobs of **configuration management, which is Phase 10 (Ansible)**: one playbook run applies the user list to every server in the inventory. Larger organizations replace local users entirely with centralized identity (AWS IAM Identity Center, LDAP/SSO) or drop SSH in favor of SSM. The concept you practiced here — *personal, attributable, revocable access* — is the same at every scale.
+
 
 ## Step 6: Create GitHub SSH Key On EC2
 
@@ -964,7 +1126,7 @@ Backend service explanation:
 - `[Unit]` describes the service and startup ordering.
 - `Wants=network-online.target postgresql.service` asks for network and PostgreSQL to be available. `Wants` is a soft dependency: systemd will try to start them but will not fail if they are unavailable.
 - `After=network-online.target postgresql.service` ensures the backend starts only after the network and PostgreSQL are ready. Without this, the backend could start before the database is up and immediately crash.
-- `User=launchboard` runs the API as the app user, not root. This limits the damage if the process is ever exploited.
+- `User=launchboard` runs the API as the app user, not root — this single line is what Step 5's user creation was building toward. Before systemd starts Uvicorn, it switches to this user; from the kernel's point of view the backend has no more power than any unprivileged account. This limits the damage if the process is ever exploited: no reading other users' files, no installing packages, no binding privileged ports.
 - `WorkingDirectory` points to the backend folder so relative imports and file paths inside the app work correctly.
 - `EnvironmentFile` loads production env values from the file you created in Step 9. systemd reads this file and passes each variable to the process as an environment variable.
 - `ExecStart` starts Uvicorn on private localhost port `8000`. `--proxy-headers` tells Uvicorn to trust the `X-Forwarded-For` and `X-Forwarded-Proto` headers that Nginx sends. `--forwarded-allow-ips=127.0.0.1` limits trusted headers to requests coming from localhost, preventing header spoofing from the public internet.
