@@ -28,7 +28,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: backend
-          image: YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/launchboard-backend:phase-7-gitops
+          image: 274118516417.dkr.ecr.us-east-1.amazonaws.com/launchboard-backend:phase-7-gitops
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
