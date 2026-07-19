@@ -3,12 +3,12 @@ kind: ClusterConfig
 
 metadata:
   name: devops-launchboard-phase-7-gitops
-  region: us-east-1
+  region: YOUR_AWS_REGION
   version: "1.34"
 
 availabilityZones:
-  - us-east-1a
-  - us-east-1b
+  - YOUR_AWS_REGIONa
+  - YOUR_AWS_REGIONb
 
 iam:
   withOIDC: true
@@ -22,7 +22,7 @@ vpc:
 
 managedNodeGroups:
   - name: launchboard-workers
-    instanceType: c7i-flex.large
+    instanceType: t3.medium
     desiredCapacity: 2
     minSize: 2
     maxSize: 4
