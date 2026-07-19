@@ -6,7 +6,7 @@ metadata:
   labels:
     app: launchboard-frontend
 spec:
-  replicas: 2
+  replicas: 3
   strategy:
     type: RollingUpdate
     rollingUpdate:
