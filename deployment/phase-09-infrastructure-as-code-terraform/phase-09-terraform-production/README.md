@@ -63,6 +63,20 @@ What makes this "production" compared to the basics lab:
 | Code structure | Flat files | Reusable modules |
 | Server access | SSH | SSM Session Manager (no SSH port, no key pair) |
 
+## Wait — Real Companies Use Kubernetes. Is EC2-Without-Kubernetes A Mistake?
+
+No — and this question deserves a straight answer, because both beliefs floating around ("everything serious runs on Kubernetes" and "Kubernetes is overkill hype") are wrong.
+
+The architecture in this lab — containers on an Auto Scaling Group behind an ALB with RDS — is a **first-class production pattern that runs an enormous share of the real internet**. Add Amazon ECS on top (AWS's own orchestrator, which schedules containers onto exactly this kind of ASG, or onto Fargate) and you have arguably the most common production shape on AWS, period. Companies choose it deliberately when:
+
+- The service count is small (one to a handful) — a full Kubernetes platform is overhead with no one to share it.
+- The team wants AWS-native operations: IAM, ALB, CloudWatch, and ASGs they already know, with no cluster to upgrade, no CNI to debug, no control-plane bill.
+- Simplicity is a feature: fewer moving parts genuinely means fewer 2am pages.
+
+Kubernetes (your Phases 8 and 11–16) earns its complexity at a different point: **many services, many teams, one shared platform** — when the org needs a uniform deploy primitive, autoscaling policies, network policy, and an ecosystem (operators, ArgoCD, Helm) that plain ASGs do not have. Real companies run both patterns side by side all the time: the main product on EKS, the internal tools and edge services on ECS or plain ASGs.
+
+Why this *lab* stays off Kubernetes on purpose: the subject here is **Terraform** — modules, remote state, the VPC/IAM/ALB/RDS resource graph. Deploying to EKS from Terraform is absolutely a real-world pattern (the `terraform-aws-modules/eks` module is the standard route, and real platform teams provision whole clusters this way instead of eksctl) — but doing it here would bury the Terraform lessons under Kubernetes ones you learn elsewhere in this track. Once you have finished both this lab and Phase 8, combining them is a natural extension: swap this lab's `compute` module for an EKS module, keep the `network` and `database` modules as they are, and you have the full Terraform-managed Kubernetes platform. The capstone's manifests would deploy onto it unchanged.
+
 ## Cost Warning
 
 | Resource | Approximate Cost |

@@ -74,24 +74,14 @@ Users should reach the backend through Nginx only. Do not expose backend port `8
 
 ## Architecture Decision Guide
 
-Use Phase 2 when:
+Real situations where you deploy exactly like this on the job:
 
-- You want students to understand Linux deployment deeply.
-- You want to learn users, folders, permissions, logs, systemd, Nginx, PostgreSQL, and ports.
-- You are deploying a small app on one server.
-- You want a manual foundation before Docker and Kubernetes.
+- **The inherited server.** An agency client, a nonprofit, a small company — someone hands you SSH access to "the server" running their product. No containers, no cloud console: systemd, Nginx, a database, and logs. A huge share of the world's software still runs this way, and someone has to operate it — often the newest hire.
+- **The small internal tool.** A dashboard, a wiki, a booking tool for 50 colleagues. One $15/month instance with systemd and Nginx is the *correct* engineering answer — Kubernetes here would be malpractice by cost and complexity.
+- **The budget-constrained launch.** Plenty of real products served their first thousand users from one well-run box exactly like this one.
+- **The universal foundation.** Even at a pure-Kubernetes company, every node, CI agent, and bastion is a Linux box. When a pod's node misbehaves, the engineer who understands systemd, journald, users, and permissions is the one who can debug it. These skills never expire.
 
-Do not use Phase 2 when:
-
-- You need automatic scaling.
-- You need high availability.
-- You need managed database backups.
-- You need zero-downtime deployment.
-- You want container orchestration.
-
-Production note:
-
-This is production-style for a single server, but not highly available. Real production should also consider managed PostgreSQL, automated backups, CI/CD, monitoring, TLS renewal, vulnerability scanning, and infrastructure as code.
+Choose something else when: more than one server is needed (config drift begins), deploys happen weekly or more (manual steps start failing), downtime costs real money (no HA here), or the team is bigger than a couple of people (shared-box chaos).
 
 ## Cost Warning
 
@@ -513,26 +503,57 @@ Command explanation:
 
 **Option B — real-team way: a personal key per human.** Each person generates their own pair on their own computer and hands over only the public half. Follow these numbered steps exactly — steps 1-3 happen on **your Windows laptop**, steps 4-5 happen on **the server** (in your existing `ubuntu` SSH session).
 
-**Step B1 — on your laptop: open PowerShell and create the `.ssh` folder.** Windows 10 and 11 have the OpenSSH client built in (`ssh` and `ssh-keygen` work in PowerShell with no installation), but the `.ssh` folder does not exist until you create it — and `ssh-keygen` fails if it is missing:
+**Step B1 — on your laptop: identify your terminal, then create the `.ssh` folder.** Windows machines usually have TWO terminals that look similar but speak different languages — check your prompt before typing anything:
+
+| Your prompt looks like | You are in | Command style |
+| --- | --- | --- |
+| `PS C:\Users\Ashraful>` | **PowerShell** | Windows-style (`$HOME\.ssh`, `-Force`, `type`) |
+| `ashra@Ashik MINGW64 ~` | **Git Bash** | Linux-style (`~/.ssh`, `-p`, `cat`) |
+
+Both work fine for every step below — the commands just differ. Windows 10 and 11 have the OpenSSH client built in (`ssh` and `ssh-keygen` work in both terminals with no installation), but the `.ssh` folder does not exist until you create it — and `ssh-keygen` fails if it is missing.
+
+PowerShell:
 
 ```powershell
 mkdir $HOME\.ssh -Force
 ```
 
-(`$HOME` is your user folder, e.g. `C:\Users\Ashraful`. `-Force` makes the command safe to re-run if the folder already exists.)
+Git Bash:
 
-**Step B2 — on your laptop: generate your personal key pair:**
+```bash
+mkdir -p ~/.ssh
+```
+
+(`$HOME` and `~` are the same place — your user folder, e.g. `C:\Users\Ashraful`. `-Force` and `-p` both mean "do not fail if it already exists.")
+
+**Step B2 — on your laptop: generate your personal key pair.**
+
+PowerShell:
 
 ```powershell
 ssh-keygen -t ed25519 -C "ashraful-laptop" -f $HOME\.ssh\ashraful_admin_key
 ```
 
-Press Enter twice at the passphrase prompts (or set a passphrase if you want the key itself password-protected). This creates two files in `C:\Users\YOU\.ssh\`: `ashraful_admin_key` (private — never leaves this laptop, never gets pasted anywhere) and `ashraful_admin_key.pub` (public — the half you hand over).
+Git Bash:
 
-**Step B3 — on your laptop: display the public key and copy it:**
+```bash
+ssh-keygen -t ed25519 -C "ashraful-laptop" -f ~/.ssh/ashraful_admin_key
+```
+
+Press Enter twice at the passphrase prompts (or set a passphrase if you want the key itself password-protected). This creates two files in your `.ssh` folder: `ashraful_admin_key` (private — never leaves this laptop, never gets pasted anywhere) and `ashraful_admin_key.pub` (public — the half you hand over).
+
+**Step B3 — on your laptop: display the public key and copy it.**
+
+PowerShell:
 
 ```powershell
 type $HOME\.ssh\ashraful_admin_key.pub
+```
+
+Git Bash:
+
+```bash
+cat ~/.ssh/ashraful_admin_key.pub
 ```
 
 The output is **one single long line** that looks like this (yours will differ):
@@ -566,13 +587,21 @@ sudo chmod 700 /home/ashraful/.ssh
 sudo chmod 600 /home/ashraful/.ssh/authorized_keys
 ```
 
-**Step B6 — on your laptop: test the login from a NEW PowerShell window** (keep the `ubuntu` session open until this works):
+**Step B6 — on your laptop: test the login from a NEW terminal window** (keep the `ubuntu` session open until this works).
+
+PowerShell:
 
 ```powershell
 ssh -i $HOME\.ssh\ashraful_admin_key ashraful@YOUR_EC2_PUBLIC_IP
 ```
 
-Notes for other tools: in **Git Bash**, the same commands work with `~/.ssh/` instead of `$HOME\.ssh\`. In **MobaXterm**, easiest is to run steps B1-B3 in its local terminal (it is bash-like, use `~/.ssh/`), or generate with MobaKeyGen and copy the OpenSSH-format public key it displays; for the session, point "Use private key" at your `ashraful_admin_key` file.
+Git Bash:
+
+```bash
+ssh -i ~/.ssh/ashraful_admin_key ashraful@YOUR_EC2_PUBLIC_IP
+```
+
+Note for **MobaXterm** users: its local terminal is bash-like — use the Git Bash commands above. Alternatively generate with MobaKeyGen and copy the OpenSSH-format public key it displays; for the session, point "Use private key" at your `ashraful_admin_key` file.
 
 - `tee -a` appends (`-a`) rather than overwrites, so multiple people's keys can coexist — one line each. Removing a person's access later means deleting their line (or their whole account).
 - The private key (`~/.ssh/ashraful_admin_key`, no `.pub`) never leaves the laptop. This is the difference from Option A: nobody shares private keys, so possession of a key identifies a person.

@@ -47,28 +47,34 @@ The deployment includes:
 
 ## When To Use This Architecture
 
-Use this phase when:
+DR work is bought with fear and paid for after incidents — these are the real-world moments this phase prepares you for:
 
-- You want to learn how production teams prepare for failure.
-- You need Kubernetes namespace backup and restore.
-- You need persistent volume snapshot recovery.
-- You need database dump recovery practice.
-- You want to test whether the app survives pod failure.
-- You want students to understand RTO and RPO.
+- **There is data someone would cry over.** The moment a database contains orders, patient records, or three years of anyone's work, "we should have backups" becomes a professional obligation. This phase turns it from a wish into schedules, snapshots, and tested restores.
+- **A contract names RTO and RPO.** Enterprise customers put recovery objectives in procurement questionnaires; auditors ask for the *test evidence*, not the intention. The runbooks and drills here are that evidence.
+- **Ransomware changed the rules.** Modern attacks encrypt the primaries *and* hunt reachable backups. Off-cluster, separately-permissioned backups (Velero to S3 with its own IAM) are the pattern insurers and security teams now expect.
+- **The cluster is cattle, the data is not.** Real platform teams rehearse "rebuild the entire cluster from Git + restore state" because it converts the worst Tuesday of the year into a documented afternoon. That rehearsal is literally this phase's drill.
+- **The on-call truth.** An untested backup is a rumor. Companies discover this at the worst possible moment; you get to discover it in a lab.
 
-Do not use this phase as the first deployment if:
-
-- You only want to see the app running quickly.
-- You are not ready for EKS, S3, snapshots, and load balancer costs.
-- You do not have time to test restore.
-
-Important production idea:
-
-Backups are not useful until restore is tested. This phase focuses on both backup and restore.
+Skip the depth when: everything is stateless and rebuildable from Git in minutes — then Git *is* your DR, and this phase teaches you to recognize that too.
 
 ## Database Note: Why Still A Pod And Not RDS?
 
 This phase runs PostgreSQL as a Pod on an EBS volume, even though the production answer is a managed database. That is deliberate: this phase's lessons need a database *inside* the cluster — in fact it is most of the point: Velero's EBS volume snapshots, the pg_dump CronJob, and the restore drills all exist to protect in-cluster state. With RDS, AWS does this for you (automated snapshots, point-in-time recovery — the capstone shows that division); this phase teaches what that convenience is replacing, which is exactly what you need to understand to trust it. The managed-database pattern has its own homes in this track — Phase 9 (Terraform production) provisions RDS as code, and Phase 16 (capstone) runs the full Kubernetes stack against RDS with the security groups, `DB_HOST` wiring, and backup division of labor spelled out. If you want RDS here, the capstone's "Create The Database First" section is a drop-in recipe: create the instance, remove the postgres Deployment/Service/PVC from the kustomization, point `DATABASE_URL` and the wait loops at the RDS endpoint.
+
+## Cost Warning
+
+| Resource | Approximate Cost |
+| --- | --- |
+| EKS control plane | ~$0.10/hour |
+| 2 × t3.medium workers | ~$0.08/hour |
+| NAT Gateway | ~$0.045/hour |
+| ALB | ~$0.02/hour |
+| EBS volumes, ECR | ~$0.01/hour |
+| S3 backup bucket + EBS snapshots (Velero) | ~$0.01/hour, grows with each backup |
+
+Roughly **$0.27/hour** (~$2.20 for an 8-hour session; $190+/month if left running). Two extra cost traps specific to this phase: **EBS snapshots** created by Velero backups persist after the cluster is deleted — the Cleanup section deletes them explicitly (EC2 Console > Snapshots) — and the **S3 bucket** keeps charging for stored backups until emptied and deleted. Delete the cluster after each session.
+
+Create an AWS Budget before starting: AWS Console > Billing > Budgets > Create budget.
 
 ## Recommended AWS Setup
 

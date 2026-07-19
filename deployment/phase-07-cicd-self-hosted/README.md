@@ -64,23 +64,27 @@ DevOps LaunchBoard app
 
 ## When To Use This Architecture
 
-Use this CI/CD architecture when:
+This is the least optional phase in the track — in real jobs, CI/CD is simply the water you swim in:
 
-- You want students to learn CI/CD before using managed cloud Kubernetes.
-- You want automation but still want the deployment target to stay low cost.
-- You want to teach GitHub Actions, runners, Docker builds, image scanning, Kubernetes rollout, and rollback.
-- You want a bridge between local Kubernetes and EKS.
+- **The team with manual deploys.** Someone SSHes to the server and runs commands from a wiki page; releases depend on that one person being awake. Building the first pipeline for such a team — tests, image build, scan, deploy on push — is one of the highest-impact things a junior engineer can do, and this phase is that build.
+- **PR validation is table stakes everywhere.** Nearly every company gates merges on a green pipeline: lint, tests, image build, vulnerability scan. The workflows in this phase are the standard shape of that gate; on the job you will read, extend, and debug files exactly like them weekly.
+- **GitHub-hosted teams (most teams).** Actions is the default choice when the code already lives on GitHub — zero CI infrastructure to run. Knowing its workflow syntax, secrets handling, and caching is directly hireable.
+- **Testing Kubernetes manifests without a cluster bill.** The kind-in-CI trick — boot a throwaway cluster inside the pipeline, apply manifests, run smoke tests, discard — is how real teams validate k8s changes on every PR for free.
 
-Do not use this exact architecture when:
+The sub-labs map to real employer profiles: `phase-7-cicd-EKS` (GitHub-native team deploying to cloud Kubernetes — the mainstream mid-size stack), `phase-7-cicd-jenkins` (enterprises and regulated industries running self-hosted CI), and `phase-7-gitops-argocd` (platform teams standardizing delivery via Git).
 
-- You need a long-term production platform.
-- You need managed runner security boundaries.
-- You need highly available Kubernetes.
-- You need cloud load balancers and managed node groups.
+## Cost Warning
 
-Production note:
+| Resource | Approximate Cost |
+| --- | --- |
+| 1 × t3.small EC2 (runs kind + the pipeline targets) | ~$0.02/hour |
+| 20 GB gp3 EBS | ~$0.002/hour |
+| GitHub Actions minutes | free for public repositories (2,000 min/month free tier for private) |
+| Docker Hub | free tier (public repositories) |
 
-A self-hosted runner can access your server directly, so protect it carefully. For serious production, use short-lived runners, GitHub OIDC, least-privilege cloud roles, private networks, and a managed Kubernetes platform.
+The kind cluster is just containers on the one EC2 instance — no EKS, NAT, or load balancer charges in this parent lab. An 8-hour session costs well under $0.25. The `phase-7-cicd-EKS`, `phase-7-cicd-jenkins`, and `phase-7-gitops-argocd` sub-labs use real EKS clusters and carry their own (larger) cost warnings.
+
+Create an AWS Budget before starting: AWS Console > Billing > Budgets > Create budget.
 
 ## Recommended AWS Setup
 

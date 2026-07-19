@@ -103,20 +103,26 @@ For real company production, you would also add:
 
 ## When To Use This Architecture
 
-Use Docker Compose when:
+Compose on a single host is one of the most-used real deployment shapes in the industry — usually without fanfare:
 
-- You want to run a complete multi-container app on one server.
-- You want one file to describe the app stack.
-- You want simpler commands than many separate `docker run` commands.
-- You are deploying a small production-style app, student lab, internal tool, or demo.
-- You want students to understand services, networks, volumes, health checks, and startup order.
+- **Internal tools at any company size.** The admin backend, the reporting tool, the QA environment: a compose file on one instance serves hundreds of daily users perfectly well, and thousands of companies run exactly this.
+- **Self-hosted third-party software.** When a company runs its own GitLab, Sentry, Metabase, Grafana, or n8n, the vendor's official install *is a compose file*. Operating those is a routine ticket, and this phase is that ticket.
+- **Staging and preview environments.** Even Kubernetes-in-production teams often run staging as compose-on-a-VM because it is cheap and boots in seconds.
+- **The early-stage product.** A startup's MVP with its API, worker, database, and proxy on one box: compose gives it ordered startup, health checks, restarts, and one-command redeploys — real operational value for near-zero complexity.
+- **The local-dev standard everywhere.** At companies whose production is EKS, developers still type `docker compose up` every morning. Whoever maintains that compose file (you, after this phase) shapes the whole team's daily experience.
 
-Do not use Docker Compose when:
+Choose something else when: the app must survive the *host* dying (single machine = single point of failure), traffic needs more than one box, or deploys must be zero-downtime — those are the orchestration phases.
 
-- You need automatic multi-server scaling.
-- You need Kubernetes-style orchestration.
-- You need managed cloud databases and load balancers from the start.
-- You need high availability across multiple machines.
+## Cost Warning
+
+| Resource | Approximate Cost |
+| --- | --- |
+| 1 × t3.small EC2 | ~$0.02/hour |
+| 20 GB gp3 EBS | ~$0.002/hour |
+
+Running for 8 hours costs well under $0.25. A stopped instance stops the EC2 charge (the EBS volume keeps costing pennies until you terminate). Stop or terminate the server after each practice session, and delete leftover volumes.
+
+Create an AWS Budget before starting: AWS Console > Billing > Budgets > Create budget.
 
 ## Recommended AWS Setup
 

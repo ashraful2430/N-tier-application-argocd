@@ -45,20 +45,15 @@ Security controls you will implement:
 
 ## When To Use This Architecture
 
-Use this architecture when:
+Security work arrives at real teams on a schedule set by outsiders — these are the triggers, and this phase is the response:
 
-- You already know how to deploy the app on Kubernetes (Phases 6 or 8).
-- You want to learn the security controls that real platform teams add after the app is running.
-- You need least-privilege Kubernetes access.
-- You need network isolation between frontend, backend, and database Pods.
-- You need image vulnerability scanning before deployment.
-- You want to learn safer secret handling options.
+- **The audit lands.** A big customer demands SOC 2; suddenly "who can access the cluster," "are images scanned," and "where do secrets live" need documented answers by Q3. RBAC, scanning, and secret-manager integration — this phase — become the sprint board.
+- **The pentest report arrives.** Findings like "containers run as root," "any pod can reach the database," "secrets stored in plaintext manifests" map one-to-one onto this phase's Pod Security, NetworkPolicies, and External Secrets work. Remediating such a report is a rite of passage.
+- **Multi-tenancy begins.** Second team on the cluster, or customer workloads: quotas, RBAC boundaries, and network segmentation stop being optional the same day.
+- **A supply-chain email.** A customer asks for an SBOM, or a Log4j-class CVE drops and leadership asks "are we affected?" — the syft/cosign section is that exact fire drill, practiced calmly.
+- **Anything internet-facing at a company with something to lose** — which is every company that pays salaries.
 
-Do not start here if:
-
-- You only want a small local demo.
-- You are not ready for AWS costs.
-- You want the fastest beginner deployment path.
+Nothing here is speculative tooling: every control in this phase exists because some team, somewhere, needed it the hard way first.
 
 ## Database Note: Why Still A Pod And Not RDS?
 

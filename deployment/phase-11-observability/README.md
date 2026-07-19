@@ -94,20 +94,14 @@ Before diving into the steps, understand what you are building and why:
 
 ## When To Use This Architecture
 
-Use this architecture when:
+Observability is not a feature teams add — it is the condition for being allowed to run software that matters:
 
-- You want to learn metrics, logs, and traces on Kubernetes.
-- You want dashboards for cluster and app health.
-- You want searchable container logs.
-- You want a tracing UI before adopting a full tracing platform.
-- You are preparing for production operations.
+- **After the first invisible outage.** Every team has the founding trauma: the app was down for four hours and the first alert was a customer email. The Prometheus + Alertmanager + Grafana stack here is the standard cure, and "set up monitoring" lands on whoever is newest and can (you, after this phase).
+- **On-call exists.** The moment a rotation exists, dashboards and alert routes are the tools of the trade: a page fires, you open the dashboard the alert links to, you follow the graphs. This phase builds exactly that path, including the Slack delivery.
+- **The debugging triangle in daily work.** Real incident flow constantly pivots: metrics say *something* is slow (Grafana) → logs say *what* failed (Kibana) → traces say *where* in the request it happened (Jaeger). Companies run precisely this trio or its SaaS equivalents (Datadog, New Relic) — the concepts and even the query languages transfer.
+- **Capacity and cost questions.** "Do we need bigger nodes?" is unanswerable without the resource metrics this stack collects; the Phase 15 load tests read their results from it.
 
-Do not use this exact lab architecture when:
-
-- You need HA Elasticsearch (this lab runs a single-node instance).
-- You need long-term log retention (Elasticsearch here has no backup).
-- You need production-grade tracing storage (Jaeger all-in-one uses in-memory storage).
-- You want managed observability services from the start (use Amazon Managed Prometheus, Amazon Managed Grafana, CloudWatch, or OpenSearch instead).
+Choose the managed alternatives (CloudWatch, Datadog, Grafana Cloud) when: the team is small and the monitoring bill beats the engineering time. The concepts you learn here are what make those tools usable too.
 
 ## Database Note: Why Still A Pod And Not RDS?
 

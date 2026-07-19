@@ -46,24 +46,15 @@ The deployment includes:
 
 ## When To Use This Architecture
 
-Use this phase when:
+Load testing has specific, recurring triggers in real product teams — this phase is the standing playbook for them:
 
-- The app is already deployable and you need to prove it can handle traffic.
-- You want students to understand smoke, load, stress, and soak tests.
-- You need to validate backend HPA behavior.
-- You want to find bottlenecks before a production launch.
-- You want a repeatable performance report.
+- **A launch is coming.** Marketing bought a campaign, the press release is scheduled, Black-Friday-like traffic is expected. "Will we hold?" is answerable only by generating the load beforehand — the ramp/hold/ramp k6 profiles here are the industry-standard way.
+- **Capacity and cost planning.** "Do we need bigger nodes or more replicas?" Guessing wastes money in one direction and uptime in the other. Load tests + the HPA observation this phase practices produce the actual answer.
+- **An SLO needs proof.** Teams that promise p95 < 500ms verify it under realistic load before customers do. The thresholds in these test scripts are that promise, executable.
+- **The regression gate.** Mature teams run a smoke+load pass in CI before big releases, because the N+1 query that is invisible with one user takes the site down at five hundred. Finding it in a test run instead of production is the entire economic argument.
+- **Soak before you trust.** Memory leaks and connection-pool exhaustion only show up after hours under load — the soak test exists because "it was fine for the first twenty minutes" is a real incident report.
 
-Do not use this phase when:
-
-- You only need a quick local demo.
-- You do not have a stable deployed app yet.
-- You cannot afford temporary AWS load-test resources.
-- You are testing someone else's public service without permission.
-
-Important production idea:
-
-Performance testing is not only about high traffic. It is about proving what the system can handle, where it fails, and whether it recovers cleanly.
+Skip it when: nothing changed and no traffic event looms — load tests are targeted instruments, not daily rituals.
 
 ## Test Types
 
@@ -77,6 +68,20 @@ Performance testing is not only about high traffic. It is about proving what the
 ## Database Note: Why Still A Pod And Not RDS?
 
 This phase runs PostgreSQL as a Pod on an EBS volume, even though the production answer is a managed database. That is deliberate: this phase's lessons need a database *inside* the cluster, because the load tests exercise the whole stack including database CPU and I/O on the node — watching the database Pod saturate in Grafana during the stress test is one of this phase's best lessons. The managed-database pattern has its own homes in this track — Phase 9 (Terraform production) provisions RDS as code, and Phase 16 (capstone) runs the full Kubernetes stack against RDS with the security groups, `DB_HOST` wiring, and backup division of labor spelled out. If you want RDS here, the capstone's "Create The Database First" section is a drop-in recipe: create the instance, remove the postgres Deployment/Service/PVC from the kustomization, point `DATABASE_URL` and the wait loops at the RDS endpoint.
+
+## Cost Warning
+
+| Resource | Approximate Cost |
+| --- | --- |
+| EKS control plane | ~$0.10/hour |
+| 2 × t3.medium workers | ~$0.08/hour |
+| NAT Gateway | ~$0.045/hour |
+| ALB | ~$0.02/hour |
+| EBS volumes, ECR | ~$0.01/hour |
+
+Roughly **$0.26/hour** (~$2 for an 8-hour session; $190+/month if left running). The k6 load generator runs as a Docker container on your workstation, so load testing itself adds no AWS cost — test traffic to the ALB within the same region is negligible. The HPA may briefly scale extra backend Pods during tests; they fit the existing nodes. Delete the cluster after each session.
+
+Create an AWS Budget before starting: AWS Console > Billing > Budgets > Create budget.
 
 ## Recommended AWS Setup
 

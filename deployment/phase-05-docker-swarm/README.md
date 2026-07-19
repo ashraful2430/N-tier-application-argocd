@@ -76,23 +76,24 @@ This phase uses one EC2 server only, so students can learn Swarm without paying 
 
 ## When To Use This Architecture
 
-Use Docker Swarm when:
+Honest career framing first: **new projects rarely choose Swarm today** — Kubernetes and ECS won that war. You will still meet it in real work in three ways:
 
-- You want built-in Docker orchestration without Kubernetes.
-- You want to learn services, replicas, stacks, secrets, overlay networks, rolling updates, and rollbacks.
-- You want a small multi-service app with more orchestration than Docker Compose.
-- You want a stepping stone before Kubernetes.
+- **Maintaining an existing Swarm estate.** Companies that adopted Swarm in 2017 still run it, it still works, and someone gets paid to operate and eventually migrate it. Walking into one of those shops already knowing `docker service` and rolling updates is a genuine edge.
+- **Constrained environments.** Edge locations, retail sites, appliances, ships — dozens of small clusters where a full Kubernetes control plane per site is unaffordable. Swarm's near-zero operational overhead keeps it alive in these niches.
+- **The concepts are the curriculum.** Services, replicas, desired state, rolling updates, secrets, overlay networks — every one of these transfers verbatim to Kubernetes and ECS. This phase is where those ideas become muscle memory on an orchestrator simple enough to see through.
 
-Do not use Docker Swarm when:
+Choose something else when: building anything new and long-lived (Kubernetes/ECS have the ecosystem, hiring pool, and managed offerings), or when the team needs features Swarm never grew (HPA-style autoscaling, operators, the cloud controllers you meet in Phase 8).
 
-- Your team already uses Kubernetes.
-- You need the full Kubernetes ecosystem.
-- You need managed cloud Kubernetes features like EKS add-ons, managed node groups, and Kubernetes-native GitOps.
-- You need managed database high availability.
+## Cost Warning
 
-Important production note:
+| Resource | Approximate Cost |
+| --- | --- |
+| 1 × t3.small EC2 | ~$0.02/hour |
+| 20 GB gp3 EBS | ~$0.002/hour |
 
-This guide uses a single-node Swarm for student learning. Real Swarm production usually uses multiple manager and worker nodes, images stored in a registry, external backups, HTTPS, monitoring, and alerting.
+This phase runs a single-node Swarm — the same instance is manager and worker — so the cost profile matches Phase 4: well under $0.25 for an 8-hour session. Stop or terminate the server after practice.
+
+Create an AWS Budget before starting: AWS Console > Billing > Budgets > Create budget.
 
 ## Recommended AWS Setup
 

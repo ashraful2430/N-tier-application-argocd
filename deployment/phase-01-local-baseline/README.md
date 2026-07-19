@@ -60,23 +60,14 @@ Service map:
 
 ## Architecture Decision Guide
 
-Use Phase 1 when:
+Running the app locally is not a toy step — it is a move you will make constantly in real jobs:
 
-- You want to prove the app works before deploying to cloud.
-- You are debugging frontend/backend/database connection problems.
-- You are teaching beginners how a 3-tier app runs.
-- You want a baseline before Docker, EC2, Kubernetes, EKS, Terraform, or GitOps.
+- **Reproducing a production bug.** The first question in any incident triage is "does it happen locally?" If you cannot run the stack on your machine, you cannot isolate whether the bug is code or infrastructure.
+- **Onboarding to an unfamiliar codebase.** New team, week one: clone it, run it, click through it. Engineers who can bring up any project locally learn codebases in days instead of weeks.
+- **Verifying before blaming.** When a deployment misbehaves, running the same commit locally splits the world in half: works locally → look at infra/config; broken locally → look at code. That one split saves hours.
+- **Knowing what CI builds.** The commands in this phase are the same ones every later pipeline runs. When a pipeline fails, you debug it by running its steps locally.
 
-Do not skip Phase 1 when:
-
-- The app has never run on your machine.
-- You are unsure which env variables are required.
-- You are about to build Docker images.
-- You are about to deploy to AWS.
-
-Production note:
-
-Local baseline is not production deployment. It is a confidence check. Production phases later replace local dev servers with Nginx, systemd, Docker, Compose, Kubernetes, EKS, CI/CD, and other production tooling.
+What this is never for: serving anyone but yourself. The moment a second person needs the app, you are in Phase 2 territory or beyond.
 
 ## Cost Warning
 

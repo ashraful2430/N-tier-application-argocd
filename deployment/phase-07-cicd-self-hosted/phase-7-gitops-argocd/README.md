@@ -11,7 +11,7 @@ This guide assumes:
 - You have an AWS account with permissions to create EKS, EC2, IAM, ECR, ALB, EBS, and VPC resources.
 - No tools are installed yet.
 - You will create files with `vim` and type commands manually.
-- Your fork of the repository is **public** (ArgoCD reads it without credentials; a private repo needs one extra step, covered in Step 8).
+- You have your own GitHub account. In Step 3 you push a copy of the course repository to it — **your** repository is what ArgoCD watches and what you push deployments to. Keep your copy public (ArgoCD reads it anonymously; a private copy needs one extra step, covered in Step 8).
 
 Project repository:
 
@@ -186,7 +186,13 @@ Reference:
 
 - ArgoCD CLI installation: https://argo-cd.readthedocs.io/en/stable/cli_installation/
 
-## Step 3: Clone Repository
+## Step 3: Clone The Course Repository And Push It To YOUR GitHub
+
+This step is different from every other phase, and the difference is the whole point of GitOps: **pushing to the repository is how you deploy**. You cannot deploy through the instructor's repository, because you cannot push to it. So you make your own copy on your own GitHub account — ArgoCD will watch *your* repository, and every `git push` you make in Steps 10-13 goes there.
+
+**1. Create an empty repository on your GitHub account.** On github.com: New repository > name it `N-tier-application` > visibility **Public** > do NOT initialize with a README (it must be empty, or the first push conflicts). Note your username — every `YOUR_GITHUB_USERNAME` below means it.
+
+**2. Create the workstation's SSH key and give it write access to YOUR repository:**
 
 ```bash
 cd ~
@@ -195,7 +201,7 @@ ssh-keygen -t ed25519 -C "devops-launchboard-phase-7-gitops" -f ~/.ssh/devops_la
 cat ~/.ssh/devops_launchboard_github_key.pub
 ```
 
-Add the key to GitHub as a deploy key — **with "Allow write access" checked this time**. In every other phase the workstation only reads the repository; in GitOps the workstation is where you edit manifests and `git push`, because pushing *is* deploying.
+Add the printed key to **your** repository as a deploy key with **"Allow write access" CHECKED**: your repo > Settings > Deploy keys > Add deploy key. Write access matters here — in every other phase the workstation only reads; in GitOps it pushes, because pushing *is* deploying.
 
 ```bash
 vim ~/.ssh/config
@@ -212,17 +218,44 @@ Host github.com
 ```bash
 chmod 600 ~/.ssh/config ~/.ssh/devops_launchboard_github_key
 ssh -T git@github.com
+```
+
+Expected: `Hi YOUR_GITHUB_USERNAME/N-tier-application! You've successfully authenticated...` — a deploy key authenticates as the repository it belongs to.
+
+**3. Clone the course repository, then point it at YOUR repository:**
+
+```bash
 sudo mkdir -p /opt/devops-launchboard
 sudo chown -R ubuntu:ubuntu /opt/devops-launchboard
 cd /opt/devops-launchboard
-git clone git@github.com:ashraful2430/N-tier-application.git app-source
+git clone https://github.com/ashraful2430/N-tier-application.git app-source
 cd app-source
 git checkout deployment
+
+git remote rename origin upstream
+git remote add origin git@github.com:YOUR_GITHUB_USERNAME/N-tier-application.git
+git remote -v
+```
+
+Command explanation:
+
+- The clone uses HTTPS because it only needs to *read* the course repository; your deploy key is for *your* repository. (If the course repository is private in your class, clone it however your instructor gave you access — the rest of this step is identical.)
+- `git checkout deployment` — the manifests live on the `deployment` branch, and your Application will watch that branch **of your repository**.
+- `git remote rename origin upstream` keeps the course repository reachable under the conventional name `upstream` (useful later for pulling course updates: `git pull upstream deployment`).
+- `git remote add origin git@github.com:YOUR_GITHUB_USERNAME/...` makes **your** repository the default push target. This is the standard fork workflow used at every company: `origin` = yours, `upstream` = the source you copied from. From now on, every `git push origin deployment` in this guide lands on your GitHub — which is exactly what ArgoCD will be watching.
+- `git remote -v` verifies: `origin` should show your username over SSH, `upstream` the course repository over HTTPS.
+
+**4. Push the branch to your repository and set your identity:**
+
+```bash
+git push -u origin deployment
+
 git config user.name "Your Name"
 git config user.email "you@example.com"
 ```
 
-`git checkout deployment` matters: the manifests ArgoCD watches live on the `deployment` branch, and the `Application` you create later points its `targetRevision` there.
+- `git push -u origin deployment` uploads the whole branch to your empty repository and (`-u`) remembers the pairing, so later pushes are just `git push`. Check github.com — your repository now contains the full project on a `deployment` branch.
+- `git config user.name/email` (no `--global`: this repo only) labels your future commits — in GitOps those commits are your deployment audit log, so they should carry your name.
 
 ## Step 4: Create The EKS Cluster
 
@@ -427,10 +460,10 @@ kubectl create secret generic launchboard-secret \
 
 In a full production setup this gap is closed with the tools from Phase 12: External Secrets Operator (the ExternalSecret manifest IS committed to Git, and it pulls the value from AWS Secrets Manager) or Sealed Secrets (the encrypted blob is committed). Either makes secrets GitOps-compatible; for this lab, one manual `kubectl create secret` keeps the focus on the sync loop.
 
-**2. Repository access (only if your repository is private).** ArgoCD reads public repositories anonymously. For a private repo, register credentials first:
+**2. Repository access (only if you made YOUR repository private).** ArgoCD reads public repositories anonymously, and Step 3 told you to keep yours public — so most students skip this. If yours is private, register credentials first:
 
 ```bash
-argocd repo add https://github.com/ashraful2430/N-tier-application.git \
+argocd repo add https://github.com/YOUR_GITHUB_USERNAME/N-tier-application.git \
   --username YOUR_GITHUB_USERNAME --password YOUR_GITHUB_PAT
 ```
 
@@ -458,7 +491,7 @@ An `Application` is ArgoCD's custom resource that says: *this Git path, at this 
 vim deployment/phase-07-cicd-self-hosted/phase-7-gitops-argocd/argocd/application.yaml
 ```
 
-Paste (replace the repoURL with your fork if you forked):
+Paste, then replace `YOUR_GITHUB_USERNAME` with your GitHub username — the Application must point at **your** repository, the one you push to:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -469,7 +502,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/ashraful2430/N-tier-application.git
+    repoURL: https://github.com/YOUR_GITHUB_USERNAME/N-tier-application.git
     targetRevision: deployment
     path: deployment/phase-07-cicd-self-hosted/phase-7-gitops-argocd/k8s
   destination:

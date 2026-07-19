@@ -45,34 +45,33 @@ The deployment includes:
 
 ## When To Use This Architecture
 
-Use this architecture when:
+These release strategies are what separate teams that deploy on Friday afternoons from teams that fear Tuesdays:
 
-- You need safer releases than a normal rolling update.
-- You want to test a new backend version before sending all users to it.
-- You need a fast rollback path.
-- You want to compare blue-green, canary, and feature-flag release styles.
-- You are running a production Kubernetes application.
-- Your team can monitor logs, health checks, and user impact during deployment.
+- **Revenue rides on every release.** E-commerce, SaaS, anything where ten bad minutes is measured in money and churn: blue-green's instant rollback and canary's blast-radius control are how such products ship weekly (or daily) without gambling.
+- **Deploys must happen during business hours.** Modern teams refuse 2am deploy windows; that refusal is only possible when a bad release affects 5% of traffic for 3 minutes instead of everyone until someone notices.
+- **The experimentation culture.** Product wants to test the new checkout on 10% of users; legal wants the new banner only in one region. Feature flags decouple *releasing code* from *enabling behavior* — a distinction real product teams rely on daily.
+- **The migration with no second chance.** Swapping payment providers or database schemas behind a flag with an instant kill switch is standard practice at careful companies.
+- **Multi-environment discipline.** The dev/prod overlays here are the answer to the most common config question in any Kubernetes shop: "how do we keep staging and production almost-but-not-quite identical, reviewably?"
 
-Do not use this architecture when:
-
-- The app is a tiny one-person demo.
-- The team cannot afford the extra pods during blue-green releases.
-- You do not have monitoring or clear health checks.
-- You need the simplest possible deployment path.
-
-Simple decision guide:
-
-| Strategy | Best For | Tradeoff |
-| --- | --- | --- |
-| Rolling update | Normal low-risk updates | Slower rollback and mixed versions during rollout |
-| Blue-green | Fast switch and fast rollback | Runs two versions at the same time |
-| Canary | Gradual traffic exposure | Needs careful monitoring |
-| Feature flags | Turning features on or off without redeploying | App code must support the flag |
+Skip the ceremony when: the app is internal, ten users, downtime is a shrug — rolling updates (Phase 8) are already enough there. These techniques earn their complexity exactly when releases carry risk.
 
 ## Database Note: Why Still A Pod And Not RDS?
 
 This phase runs PostgreSQL as a Pod on an EBS volume, even though the production answer is a managed database. That is deliberate: this phase's lessons need a database *inside* the cluster: blue-green and canary strategies need a stable stateful backend both app versions share, and keeping it in-cluster keeps this already-busy phase self-contained. The managed-database pattern has its own homes in this track — Phase 9 (Terraform production) provisions RDS as code, and Phase 16 (capstone) runs the full Kubernetes stack against RDS with the security groups, `DB_HOST` wiring, and backup division of labor spelled out. If you want RDS here, the capstone's "Create The Database First" section is a drop-in recipe: create the instance, remove the postgres Deployment/Service/PVC from the kustomization, point `DATABASE_URL` and the wait loops at the RDS endpoint.
+
+## Cost Warning
+
+| Resource | Approximate Cost |
+| --- | --- |
+| EKS control plane | ~$0.10/hour |
+| 2 × t3.medium workers | ~$0.08/hour |
+| NAT Gateway | ~$0.045/hour |
+| ALB | ~$0.02/hour |
+| EBS volumes, ECR | ~$0.01/hour |
+
+Roughly **$0.26/hour** (~$2 for an 8-hour session; $190+/month if left running). Blue-green practice briefly runs two full app stacks side by side, which fits the two t3.medium workers — no extra nodes needed. Delete the cluster after each session.
+
+Create an AWS Budget before starting: AWS Console > Billing > Budgets > Create budget.
 
 ## Recommended AWS Setup
 

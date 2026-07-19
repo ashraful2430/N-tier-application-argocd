@@ -81,24 +81,14 @@ Users should reach only the frontend Nginx container through EC2 port `80`. The 
 
 ## Architecture Decision Guide
 
-Use Phase 3 when:
+Real situations where this phase's skills are exactly what the job needs:
 
-- You want students to understand raw Docker commands before Docker Compose.
-- You want to teach images, containers, networks, volumes, logs, ports, and health checks.
-- You want a manual bridge between bare-metal deployment and Docker Compose.
-- You want students to see how each container is started by hand.
+- **The "works on my machine" epidemic.** A team where dev laptops, the CI runner, and the server all behave differently. Containerizing the app — one image, identical everywhere — is the fix, and *you* writing the Dockerfile is the job.
+- **Shipping to servers you do not control.** Selling software that customers run on-premises? A container image is the deliverable that works on their RHEL, their Ubuntu, their VM — without a support call per distro.
+- **The single-service deployment.** One API plus a managed database (RDS, or a DB another team owns): a single container on a single host is a legitimate, common production shape.
+- **The prerequisite for everything.** ECS, Kubernetes, Cloud Run, CI pipelines — every modern deployment target consumes container images. The Dockerfile skills here (multi-stage builds, non-root users, small images, health checks) are evaluated in almost every DevOps interview because they are used almost every day on the job.
 
-Do not use Phase 3 when:
-
-- You want one command to run the full stack.
-- You need easier environment management.
-- You need multi-server orchestration.
-- You need automatic rolling updates.
-- You need Kubernetes-style scheduling or service discovery.
-
-Production note:
-
-This is production-style for learning Docker on one server, but not a complete production platform. Real production should also consider Docker Compose or an orchestrator, managed database backups, image registry scanning, CI/CD, monitoring, centralized logs, secrets management, TLS, and automated rollback. This phase now includes Docker Hub push steps so students learn how image registries fit into the deployment flow.
+Choose something else when: multiple services must start in order and talk to each other (Phase 4's Compose is the tool), or the service needs replicas and self-healing (orchestrators, Phase 6+).
 
 ## Cost Warning
 

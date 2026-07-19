@@ -69,18 +69,14 @@ The three commands you will use constantly:
 
 ## When To Use This Architecture
 
-Use this lab when:
+Terraform fluency is assumed in nearly every cloud job now — these are the on-the-job moments this lab trains:
 
-- You want to learn Terraform fundamentals: providers, resources, variables, data sources, outputs, state.
-- You want to see a full app come up from a single command.
+- **Your first week at a cloud shop.** Someone assigns you a ticket: "add an S3 bucket for the export feature." The change is a pull request with a `plan` output attached, a reviewer approves it, CI applies it. That workflow — infra change as reviewed code — is this lab's core loop, and it is how most companies touch AWS at all.
+- **Reproducing environments on demand.** "Spin up a test copy of the stack for the demo" becomes `terraform apply -var env=demo` instead of an afternoon of console clicking. Small teams live on this.
+- **The drift hunt.** Something in the account changed and nobody knows who or why. `terraform plan` against the repo answers it in seconds — a party trick that becomes a compliance requirement at bigger companies.
+- **Reading before writing.** Most engineers *inherit* Terraform long before they write it greenfield. The resource/variable/state/plan mental model here is what makes a 40-file repo readable on day one.
 
-Do not use this exact architecture for production:
-
-- One instance is a single point of failure.
-- The database runs in a container on the same instance as the app.
-- State is stored in a local file that only exists on your machine.
-
-The `phase-09-terraform-production` lab fixes all three.
+The single-instance architecture in this lab is deliberately modest — it exists to make Terraform itself the subject. The production sub-lab is where the architecture becomes hire-worthy.
 
 ## Cost Warning
 

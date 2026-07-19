@@ -69,27 +69,14 @@ The Jenkins EC2 instance is purely a CI controller in this version of the lab. U
 
 ## When To Use This Architecture
 
-Use Jenkins instead of GitHub Actions when:
+Jenkins is where a large share of real-world CI still happens — knowing it is a direct employment filter for a specific set of companies:
 
-- Your organization already runs Jenkins and you need to fit into existing pipelines.
-- You want a CI server that is not tied to any single Git host (GitHub, GitLab, Bitbucket all work the same way with Jenkins).
-- You need Jenkins' large plugin ecosystem (artifact repositories, ticketing system integrations, notification channels) that a specific Git host's native CI may not offer.
-- You want full control over the CI server's OS, patching schedule, and installed tooling.
+- **Regulated and security-conscious enterprises.** Banks, insurers, telcos, healthcare, defense: code and build artifacts often may not leave company infrastructure, ruling out hosted CI. Self-hosted Jenkins (or GitLab CE) on their own machines is the standard answer, and those industries hire continuously.
+- **The installed base.** Jenkins has been the default CI for fifteen years; the world is full of business-critical Jenkins servers with hundreds of jobs. "Maintain, harden, and eventually migrate our Jenkins" is a real job description, and it pays well precisely because fewer juniors learn it now.
+- **Pipelines that outgrow hosted CI.** Custom build hardware (GPU, mobile device farms), exotic plugins, multi-hour builds, fine-grained credential control — self-hosted CI keeps these feasible.
+- **The transferable core.** Declarative pipelines, credential stores, agents, polling vs webhooks, parameterized rollback jobs — the concepts here map one-to-one onto every other CI system. Learn them on Jenkins and GitLab CI/CircleCI/Actions all read like dialects.
 
-Use this EKS-backed variant instead of the Kind-backed variant when:
-
-- You want to practice deploying to a real managed Kubernetes control plane, AWS networking, and a cloud load balancer, the same skills exercised in Phase 8, but triggered by Jenkins instead of by hand.
-- You want rollback and scaling lessons to carry over directly to a production-shaped target instead of a single-node local cluster.
-
-Do not use this exact architecture when:
-
-- You only need basic CI/CD and your code already lives on GitHub — GitHub Actions (the main Phase 7 guide) needs less infrastructure to operate and patch.
-- You cannot dedicate a server to running Jenkins continuously. Unlike GitHub-hosted runners, Jenkins itself is a process you must patch, back up, and keep running.
-- You are cost-sensitive and only need a teaching-only target — the Kind-backed `phase-7-cicd-jenkins` setup this guide replaces is free to run locally; this EKS-backed setup is not.
-
-Production note:
-
-Jenkins runs continuously on a server you fully control, so it carries the same risk as any self-hosted runner: anyone who can push a malicious Jenkinsfile to a repository Jenkins builds can run arbitrary commands on that server, and in this version that server also holds AWS credentials with EKS and ECR access. For serious production use, run build agents on ephemeral, isolated nodes (Jenkins agents on Kubernetes or Docker), restrict which repositories and branches can trigger builds, prefer short-lived credentials (an IAM role assumed per build) over long-lived access keys stored in Jenkins, and keep Jenkins itself patched and behind a reverse proxy with HTTPS.
+Choose something else when: the team is small, on GitHub, with standard build needs — hosted Actions (the parent lab) wins on maintenance cost; nobody should run a CI server they do not need.
 
 ## Cost Warning
 

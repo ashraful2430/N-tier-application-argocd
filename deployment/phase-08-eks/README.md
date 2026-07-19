@@ -87,22 +87,14 @@ How this differs from Phase 6 kubeadm:
 
 ## When To Use This Architecture
 
-Use EKS when:
+Managed Kubernetes on AWS is the mainstream production platform for containerized products — these are the moments a real team reaches for it:
 
-- You want managed Kubernetes on AWS.
-- You need production-style Kubernetes features without managing the control plane yourself.
-- You want to learn IAM, ECR, node groups, managed add-ons, ALB Ingress, and cloud Kubernetes operations.
-- You want a path toward autoscaling, GitOps, observability, security, and disaster recovery.
+- **The product outgrew one machine.** Traffic needs multiple replicas, deploys must not drop requests, and a died-at-2am host must replace itself without a human. Those three requirements together are the Kubernetes threshold.
+- **Multiple services, one platform.** Once a company runs five, ten, fifty services, per-VM handcrafting collapses. A cluster gives every team the same deploy primitive (a Deployment), the same ingress, the same secrets pattern — this is why platform teams exist.
+- **EKS specifically, because managed.** Real AWS shops overwhelmingly choose EKS over self-managed control planes: AWS runs etcd and the API server, upgrades are a command, and the IAM/VPC/ALB integrations (which this phase wires by hand so you understand them) are supported paths.
+- **Hiring-market reality.** "Kubernetes on a managed cloud" is the single most requested platform skill in DevOps/SRE job postings. This phase is that line on the resume, done honestly.
 
-Do not use this architecture when:
-
-- You only need a tiny app and do not need Kubernetes.
-- You cannot accept EKS, EC2, ALB, NAT Gateway, EBS, and data transfer costs.
-- You are not ready to manage Kubernetes operations.
-
-Production note:
-
-This lab runs PostgreSQL inside Kubernetes to keep the phase self-contained. Serious production should use Amazon RDS or another managed database with backups, monitoring, encryption, and high availability.
+Choose something else when: it is one small app (a $15 VM beats a $150 cluster), the team has no container operations maturity yet (ECS or Compose first is wiser), or latency-to-learn matters more than scale (Kubernetes has a real learning tax, which is exactly why this track delayed it to Phase 8).
 
 ## Cost Warning
 
@@ -2007,7 +1999,13 @@ kubectl create secret generic launchboard-secret \
   --from-literal=DATABASE_URL='postgresql+asyncpg://launchboard_user:CHANGE_ME_STRONG_PASSWORD@launchboard-db:5432/launchboard'
 ```
 
-Use the same password in both values. Choose a stronger password than the placeholder.
+Command explanation:
+
+- The namespace is applied first because a Secret is a namespaced object — its target namespace must exist before it can be created in it.
+- `kubectl create secret generic` builds the Secret imperatively, so the real password never touches a file that could be committed — the repository only ships `secret.example.yaml` as a template. `generic` is the Secret type for arbitrary key-value pairs (as opposed to `tls` or `docker-registry`).
+- Each `--from-literal=KEY='value'` becomes one key in the Secret. The single quotes matter: passwords often contain characters the shell would otherwise interpret (`$`, `!`, spaces).
+- Use the same password in both literals (and something stronger than the placeholder) — `DATABASE_URL` embeds it for the backend, while the postgres container reads `POSTGRES_PASSWORD`; if they differ, the backend fails authentication.
+- Verify with `kubectl -n devops-launchboard get secret launchboard-secret` — it shows the Secret exists and how many keys it holds, without printing the values.
 
 ## Step 20: Replace Image Placeholders In Manifests
 

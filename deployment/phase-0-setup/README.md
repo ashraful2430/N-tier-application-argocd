@@ -62,20 +62,11 @@ Important backend endpoints:
 
 ## Architecture Decision Guide
 
-Use Phase 0 when:
+This phase has no architecture to choose — but the habits in it are how real teams operate from day one:
 
-- You are new to the project.
-- You do not know how the frontend and backend connect.
-- You want to identify required tools before deployment.
-- You want to avoid guessing ports, commands, and environment variables.
-- You want to create deployment notes before touching AWS.
-
-Do not skip Phase 0 when:
-
-- The project is unfamiliar.
-- The app has more than one service.
-- You are teaching beginners.
-- You plan to deploy to AWS, Docker, Kubernetes, or Terraform later.
+- **Every company you join has a version of this phase.** It is called the onboarding doc, the "dev environment setup" wiki page, or the platform team's bootstrap guide. Sloppy ones cost every new hire a lost week; good ones get you shipping on day two. Learning to *follow* one precisely — and later to *write* one — is a genuine job skill.
+- **Naming conventions and tagging are not bureaucracy.** In a real AWS account with 40 engineers, the difference between `devops-launchboard-phase-2` and `test-instance-3` is whether the cost report means anything and whether anyone dares delete a resource.
+- **Budgets before resources** is how professionals treat any cloud account, personal or corporate. The engineer who sets a billing alarm before their first `terraform apply` is the one who never has the $3,000-surprise story.
 
 ## Cost Warning
 
