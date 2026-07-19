@@ -16,7 +16,7 @@ This guide assumes:
 Project repository:
 
 ```text
-git@github.com:ashraful2430/N-tier-application.git
+git@github.com:Ashik-DevOps-Class/N-tier-application.git
 ```
 
 ## What You Will Deploy
@@ -256,12 +256,14 @@ Paste with a real password:
 
 ```yaml
 db_password: CHANGE_ME_STRONG_PASSWORD
-app_repo: https://github.com/ashraful2430/N-tier-application.git
+app_repo: https://github.com/Ashik-DevOps-Class/N-tier-application.git
 app_dir: /opt/launchboard
 compose_dir: /opt/launchboard/deployment/phase-04-docker-compose
 ```
 
 This file contains a secret, so keep it out of Git (the repository ships `app_servers.yml.example` instead — the same `secret.example.yaml` pattern as the Kubernetes phases). The production lab replaces this with Ansible Vault.
+
+Note on `app_repo`: the managed nodes clone this URL **anonymously over HTTPS**, which only works while the repository is public. If your class repository is private, either point `app_repo` at a public copy of the project, or skip cloning entirely by converting the app tasks to pull prebuilt images from Docker Hub — the exact pattern the Phase 9 Terraform basics lab uses.
 
 ## Step 5: First Contact — Ad-Hoc Commands
 

@@ -18,7 +18,7 @@ This guide assumes:
 Project repository:
 
 ```text
-git@github.com:ashraful2430/N-tier-application.git
+git@github.com:Ashik-DevOps-Class/N-tier-application.git
 ```
 
 ## What You Will Deploy
@@ -270,7 +270,7 @@ ssh -T git@github.com
 Command explanation:
 
 - `chmod 600` (owner read/write only) on the config and the **private** key — SSH refuses outright to use a private key that other users could read ("UNPROTECTED PRIVATE KEY FILE" error). The public key can stay world-readable (`644`).
-- `ssh -T git@github.com` tests authentication without opening a shell (`-T` = no terminal; GitHub does not offer shells anyway). Success looks like: `Hi ashraful2430/N-tier-application! You've successfully authenticated, but GitHub does not provide shell access.` — that message means the deploy key works. Type `yes` at the first-connection host-authenticity prompt.
+- `ssh -T git@github.com` tests authentication without opening a shell (`-T` = no terminal; GitHub does not offer shells anyway). Success looks like: `Hi Ashik-DevOps-Class/N-tier-application! You've successfully authenticated, but GitHub does not provide shell access.` — that message means the deploy key works. Type `yes` at the first-connection host-authenticity prompt.
 
 Clone:
 
@@ -278,7 +278,7 @@ Clone:
 sudo mkdir -p /opt/devops-launchboard
 sudo chown -R ubuntu:ubuntu /opt/devops-launchboard
 cd /opt/devops-launchboard
-git clone git@github.com:ashraful2430/N-tier-application.git app-source
+git clone git@github.com:Ashik-DevOps-Class/N-tier-application.git app-source
 cd app-source
 ```
 

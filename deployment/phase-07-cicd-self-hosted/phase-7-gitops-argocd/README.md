@@ -16,7 +16,7 @@ This guide assumes:
 Project repository:
 
 ```text
-git@github.com:ashraful2430/N-tier-application.git
+git@github.com:Ashik-DevOps-Class/N-tier-application.git
 ```
 
 ## What Is GitOps, And Why Does It Beat "Pipeline Runs kubectl"?
@@ -192,7 +192,7 @@ This step is different from every other phase, and the difference is the whole p
 
 **1. Create an empty repository on your GitHub account.** On github.com: New repository > name it `N-tier-application` > visibility **Public** > do NOT initialize with a README (it must be empty, or the first push conflicts). Note your username — every `YOUR_GITHUB_USERNAME` below means it.
 
-**2. Create the workstation's SSH key and give it write access to YOUR repository:**
+**2. Create the workstation's SSH key and add it to your GitHub ACCOUNT (not as a deploy key):**
 
 ```bash
 cd ~
@@ -201,7 +201,9 @@ ssh-keygen -t ed25519 -C "devops-launchboard-phase-7-gitops" -f ~/.ssh/devops_la
 cat ~/.ssh/devops_launchboard_github_key.pub
 ```
 
-Add the printed key to **your** repository as a deploy key with **"Allow write access" CHECKED**: your repo > Settings > Deploy keys > Add deploy key. Write access matters here — in every other phase the workstation only reads; in GitOps it pushes, because pushing *is* deploying.
+Add the printed key to your **account**: github.com > your avatar > Settings > **SSH and GPG keys** > New SSH key > paste > save.
+
+Why an account key here, when every other phase used a deploy key? A **deploy key** is attached to exactly *one* repository — it cannot serve two. This phase needs one key that can do two different things: **read the private course repository** (which you can access because your instructor added you to the class organization) and **write to your own repository** (pushing is deploying). An **account key** authenticates *you*, so it carries every permission your GitHub account has — read where you are a member, write where you are the owner. That is exactly the pair this lab needs.
 
 ```bash
 vim ~/.ssh/config
@@ -220,7 +222,7 @@ chmod 600 ~/.ssh/config ~/.ssh/devops_launchboard_github_key
 ssh -T git@github.com
 ```
 
-Expected: `Hi YOUR_GITHUB_USERNAME/N-tier-application! You've successfully authenticated...` — a deploy key authenticates as the repository it belongs to.
+Expected: `Hi YOUR_GITHUB_USERNAME! You've successfully authenticated...` — note it greets **you**, not a repository: an account key authenticates the person, which is what lets one key read the course org's private repo and write to yours.
 
 **3. Clone the course repository, then point it at YOUR repository:**
 
@@ -228,7 +230,7 @@ Expected: `Hi YOUR_GITHUB_USERNAME/N-tier-application! You've successfully authe
 sudo mkdir -p /opt/devops-launchboard
 sudo chown -R ubuntu:ubuntu /opt/devops-launchboard
 cd /opt/devops-launchboard
-git clone https://github.com/ashraful2430/N-tier-application.git app-source
+git clone git@github.com:Ashik-DevOps-Class/N-tier-application.git app-source
 cd app-source
 git checkout deployment
 
@@ -239,7 +241,7 @@ git remote -v
 
 Command explanation:
 
-- The clone uses HTTPS because it only needs to *read* the course repository; your deploy key is for *your* repository. (If the course repository is private in your class, clone it however your instructor gave you access — the rest of this step is identical.)
+- The clone uses the **SSH URL** because the course repository is **private** — anonymous HTTPS would be refused. Your account key (step 2) authenticates the read, which works because you are a member of the class organization. If the clone fails with `Repository not found`, you have not accepted the organization invitation yet — check your GitHub notifications/email first.
 - `git checkout deployment` — the manifests live on the `deployment` branch, and your Application will watch that branch **of your repository**.
 - `git remote rename origin upstream` keeps the course repository reachable under the conventional name `upstream` (useful later for pulling course updates: `git pull upstream deployment`).
 - `git remote add origin git@github.com:YOUR_GITHUB_USERNAME/...` makes **your** repository the default push target. This is the standard fork workflow used at every company: `origin` = yours, `upstream` = the source you copied from. From now on, every `git push origin deployment` in this guide lands on your GitHub — which is exactly what ArgoCD will be watching.

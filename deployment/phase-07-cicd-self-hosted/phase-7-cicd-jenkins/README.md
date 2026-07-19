@@ -20,7 +20,7 @@ This guide assumes:
 Project repository:
 
 ```text
-git@github.com:ashraful2430/N-tier-application.git
+git@github.com:Ashik-DevOps-Class/N-tier-application.git
 ```
 
 ## What You Will Build
@@ -461,7 +461,7 @@ Clone:
 sudo mkdir -p /opt/devops-launchboard
 sudo chown -R ubuntu:ubuntu /opt/devops-launchboard
 cd /opt/devops-launchboard
-git clone git@github.com:ashraful2430/N-tier-application.git app-source
+git clone git@github.com:Ashik-DevOps-Class/N-tier-application.git app-source
 cd app-source
 git branch --show-current
 ```
@@ -2093,7 +2093,7 @@ cat ~/jenkins_deploy_key
 
 Why this step exists:
 
-When you configure the Pipeline job in the next step to check out from `git@github.com:ashraful2430/N-tier-application.git`, Jenkins needs a credential with permission to do that over SSH. This credential is scoped only to Jenkins and only allows reading this one repository — a separate concern entirely from the `aws-jenkins-credentials` credential from Step 19, which only allows talking to AWS.
+When you configure the Pipeline job in the next step to check out from `git@github.com:Ashik-DevOps-Class/N-tier-application.git`, Jenkins needs a credential with permission to do that over SSH. This credential is scoped only to Jenkins and only allows reading this one repository — a separate concern entirely from the `aws-jenkins-credentials` credential from Step 19, which only allows talking to AWS.
 
 Reference:
 
@@ -2121,7 +2121,7 @@ Build Triggers:
 Pipeline:
   Definition: Pipeline script from SCM
   SCM: Git
-  Repository URL: git@github.com:ashraful2430/N-tier-application.git
+  Repository URL: git@github.com:Ashik-DevOps-Class/N-tier-application.git
   Credentials: github-jenkins-deploy-key
   Branch Specifier: */main
   Script Path: deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/Jenkinsfile
@@ -2209,7 +2209,7 @@ Configure the job:
 Pipeline:
   Definition: Pipeline script from SCM
   SCM: Git
-  Repository URL: git@github.com:ashraful2430/N-tier-application.git
+  Repository URL: git@github.com:Ashik-DevOps-Class/N-tier-application.git
   Credentials: github-jenkins-deploy-key
   Branch Specifier: */main
   Script Path: deployment/phase-07-cicd-self-hosted/phase-7-cicd-jenkins/Jenkinsfile.rollback

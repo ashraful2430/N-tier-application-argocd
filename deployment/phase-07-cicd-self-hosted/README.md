@@ -20,7 +20,7 @@ This guide assumes:
 Project repository:
 
 ```text
-git@github.com:ashraful2430/N-tier-application.git
+git@github.com:Ashik-DevOps-Class/N-tier-application.git
 ```
 
 ## What You Will Build
@@ -362,7 +362,7 @@ Run:
 sudo mkdir -p /opt/devops-launchboard
 sudo chown -R ubuntu:ubuntu /opt/devops-launchboard
 cd /opt/devops-launchboard
-git clone git@github.com:ashraful2430/N-tier-application.git app-source
+git clone git@github.com:Ashik-DevOps-Class/N-tier-application.git app-source
 cd app-source
 git branch --show-current
 ```
@@ -440,7 +440,7 @@ GitHub will show download and configure commands generated for your repository, 
 mkdir actions-runner && cd actions-runner
 curl -o actions-runner-linux-x64-X.Y.Z.tar.gz -L https://github.com/actions/runner/releases/download/...
 tar xzf ./actions-runner-linux-x64-X.Y.Z.tar.gz
-./config.sh --url https://github.com/ashraful2430/N-tier-application --token XXXXXXXX
+./config.sh --url https://github.com/Ashik-DevOps-Class/N-tier-application --token XXXXXXXX
 ```
 
 During `./config.sh`, accept the defaults. The default labels include `self-hosted`, which is the label the deploy workflow targets.

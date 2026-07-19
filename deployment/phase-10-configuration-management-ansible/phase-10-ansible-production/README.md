@@ -15,7 +15,7 @@ This guide assumes:
 Project repository:
 
 ```text
-git@github.com:ashraful2430/N-tier-application.git
+git@github.com:Ashik-DevOps-Class/N-tier-application.git
 ```
 
 ## What You Will Deploy
@@ -273,11 +273,13 @@ lb_public_ip: "{{ hostvars[groups['loadbalancer'][0]].ansible_host }}"
 cors_origins: "http://{{ lb_public_ip }}"
 
 # App source
-app_repo: https://github.com/ashraful2430/N-tier-application.git
+app_repo: https://github.com/Ashik-DevOps-Class/N-tier-application.git
 app_dir: /opt/launchboard
 app_version: main
 image_tag: phase-10
 ```
+
+Note on `app_repo`: the managed nodes clone this URL **anonymously over HTTPS**, which only works while the repository is public. If your class repository is private, either point `app_repo` at a public copy of the project, or skip cloning entirely by converting the app tasks to pull prebuilt images from Docker Hub — the exact pattern the Phase 9 Terraform basics lab uses.
 
 Line explanation:
 

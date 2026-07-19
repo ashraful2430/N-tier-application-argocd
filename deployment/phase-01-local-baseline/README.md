@@ -82,7 +82,7 @@ If you run this on EC2, the EC2 instance and EBS volume may cost money.
 Project repository:
 
 ```text
-git@github.com:ashraful2430/N-tier-application.git
+git@github.com:Ashik-DevOps-Class/N-tier-application.git
 ```
 
 Recommended branch:
@@ -225,7 +225,7 @@ Run:
 sudo mkdir -p /opt/ntier-launchboard
 sudo chown -R "$USER:$USER" /opt/ntier-launchboard
 cd /opt/ntier-launchboard
-git clone git@github.com:ashraful2430/N-tier-application.git app-source
+git clone git@github.com:Ashik-DevOps-Class/N-tier-application.git app-source
 cd app-source
 git branch --show-current
 tree -L 2 -a

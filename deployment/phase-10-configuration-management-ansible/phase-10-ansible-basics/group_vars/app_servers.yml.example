@@ -1,4 +1,4 @@
 db_password: CHANGE_ME_STRONG_PASSWORD
-app_repo: https://github.com/ashraful2430/N-tier-application.git
+app_repo: https://github.com/Ashik-DevOps-Class/N-tier-application.git
 app_dir: /opt/launchboard
 compose_dir: /opt/launchboard/deployment/phase-04-docker-compose

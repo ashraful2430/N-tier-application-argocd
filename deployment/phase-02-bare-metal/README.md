@@ -746,7 +746,7 @@ Run:
 
 ```bash
 cd /opt/devops-launchboard/app-source
-git clone git@github.com:ashraful2430/N-tier-application.git .
+git clone git@github.com:Ashik-DevOps-Class/N-tier-application.git .
 git branch --show-current
 tree -L 2 -a
 ```
@@ -754,7 +754,7 @@ tree -L 2 -a
 Command explanation:
 
 - `cd /opt/devops-launchboard/app-source` moves you into the folder created for the app source code.
-- `git clone git@github.com:ashraful2430/N-tier-application.git .` clones the repository into the current directory. The `.` at the end means "clone here" instead of creating a new subfolder. This uses the SSH key you configured in Step 6.
+- `git clone git@github.com:Ashik-DevOps-Class/N-tier-application.git .` clones the repository into the current directory. The `.` at the end means "clone here" instead of creating a new subfolder. This uses the SSH key you configured in Step 6.
 - `git branch --show-current` prints the active branch name. Confirm it shows `main` before continuing.
 - `tree -L 2 -a` shows the folder structure two levels deep, including hidden files. Use this to confirm the project files are present and look correct.
 

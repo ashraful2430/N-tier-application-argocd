@@ -466,7 +466,7 @@ Run:
 sudo mkdir -p /opt/devops-launchboard
 sudo chown -R ubuntu:ubuntu /opt/devops-launchboard
 cd /opt/devops-launchboard
-git clone git@github.com:ashraful2430/N-tier-application.git app-source
+git clone git@github.com:Ashik-DevOps-Class/N-tier-application.git app-source
 cd app-source
 git branch --show-current
 ```
@@ -475,7 +475,7 @@ Command explanation:
 
 - `sudo mkdir -p /opt/devops-launchboard` creates the deployment directory under `/opt`. The `/opt` directory is the conventional Linux location for optional third-party software. Using it instead of the home directory keeps the project separate from personal files.
 - `sudo chown -R ubuntu:ubuntu /opt/devops-launchboard` changes ownership of the directory recursively (`-R`) to the ubuntu user and ubuntu group. This means the ubuntu user can create, read, and modify files inside without needing sudo.
-- `git clone git@github.com:ashraful2430/N-tier-application.git app-source` clones the repository into a subdirectory named `app-source`. Using a clear name like `app-source` instead of the default repository name makes the path more readable.
+- `git clone git@github.com:Ashik-DevOps-Class/N-tier-application.git app-source` clones the repository into a subdirectory named `app-source`. Using a clear name like `app-source` instead of the default repository name makes the path more readable.
 - `git branch --show-current` prints the currently checked out branch name to confirm you are on `main`.
 
 Expected:
@@ -2992,7 +2992,7 @@ Set up the project:
 sudo mkdir -p /opt/devops-launchboard
 sudo chown -R ubuntu:ubuntu /opt/devops-launchboard
 cd /opt/devops-launchboard
-git clone git@github.com:ashraful2430/N-tier-application.git app-source
+git clone git@github.com:Ashik-DevOps-Class/N-tier-application.git app-source
 cd app-source
 ```
 
@@ -3069,7 +3069,7 @@ The repository is public, so the build machine can clone it read-only over HTTPS
 sudo mkdir -p /opt/devops-launchboard
 sudo chown -R ubuntu:ubuntu /opt/devops-launchboard
 cd /opt/devops-launchboard
-git clone https://github.com/ashraful2430/N-tier-application.git app-source
+git clone https://github.com/Ashik-DevOps-Class/N-tier-application.git app-source
 cd app-source
 ```
 
@@ -4998,7 +4998,7 @@ This tells ArgoCD to watch your Git repository and keep the cluster in sync with
 
 ```bash
 argocd app create launchboard \
-  --repo https://github.com/ashraful2430/N-tier-application.git \
+  --repo https://github.com/Ashik-DevOps-Class/N-tier-application.git \
   --path deployment/phase-6-kubeadm/k8s \
   --dest-server https://kubernetes.default.svc \
   --dest-namespace devops-launchboard \

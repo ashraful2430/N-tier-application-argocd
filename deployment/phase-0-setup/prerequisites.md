@@ -56,7 +56,7 @@ k6 version
 | Item | Value |
 | --- | --- |
 | Project name | `devops-launchboard` |
-| Repository | `git@github.com:ashraful2430/N-tier-application.git` |
+| Repository | `git@github.com:Ashik-DevOps-Class/N-tier-application.git` |
 | Frontend local port | `5173` |
 | Backend local port | `8000` |
 | PostgreSQL port | `5432` |
